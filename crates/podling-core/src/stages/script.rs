@@ -1,6 +1,8 @@
 //! Asks the LLM for a script and turns its quote references into real quotes.
 
-use podling_types::{Chunk, Document, Ledger, Quote, Script, TextSpan, Turn};
+use std::collections::BTreeSet;
+
+use podling_types::{Chunk, ClaimId, Document, Ledger, Quote, Script, TextSpan, Turn};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -27,7 +29,8 @@ pub struct WriteScript<'a> {
 
 impl Stage for WriteScript<'_> {
     const ID: &'static str = "script";
-    const VERSION: u32 = 1;
+    // 2: citations must name a claim in the ledger.
+    const VERSION: u32 = 2;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -49,8 +52,19 @@ impl Stage for WriteScript<'_> {
         let draft: ScriptDraft =
             serde_json::from_str(&completion.text).map_err(|err| invalid(err.to_string()))?;
 
+        let known: BTreeSet<&ClaimId> = input
+            .ledger
+            .entries()
+            .iter()
+            .map(|e| e.claim.id())
+            .collect();
         let mut turns = Vec::with_capacity(draft.turns.len());
         for (i, turn) in draft.turns.into_iter().enumerate() {
+            if let Some(unknown) = turn.citations.iter().find(|id| !known.contains(id)) {
+                return Err(invalid(format!(
+                    "turn {i} cites claim {unknown}, which is not in the ledger"
+                )));
+            }
             let quotes = turn
                 .quotes
                 .iter()
@@ -154,6 +168,44 @@ mod tests {
                 text: text.to_string(),
             })
         }
+    }
+
+    /// Cites a claim that no source made.
+    struct FabricatedCitation;
+
+    impl LlmProvider for FabricatedCitation {
+        fn id(&self) -> &str {
+            "fabricated_citation"
+        }
+        fn fingerprint(&self) -> Value {
+            Value::Null
+        }
+        fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+            let text = json!({
+                "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
+                "turns": [{
+                    "speaker": "host", "text": "Aliens did it.", "emotion": "neutral",
+                    "citations": [podling_types::Claim::id_for("Aliens did it.")], "quotes": [],
+                }],
+            });
+            Ok(Completion {
+                text: text.to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn citation_outside_the_ledger_is_invalid_provider_output() {
+        let err = WriteScript {
+            llm: &FabricatedCitation,
+        }
+        .run(&empty_input(vec![]))
+        .unwrap_err();
+        assert!(
+            matches!(&err, CoreError::InvalidProviderOutput { stage: "script", message }
+                if message.contains("not in the ledger")),
+            "{err}"
+        );
     }
 
     fn empty_input(documents: Vec<Document>) -> ScriptInput {

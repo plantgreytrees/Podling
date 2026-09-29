@@ -25,15 +25,28 @@ pub const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct LocalFilesConnector {
     root: PathBuf,
+    /// Prefix for each document's locator, so same-named files under
+    /// different roots get different source and document ids.
+    label: String,
     independence_group: String,
 }
 
 impl LocalFilesConnector {
+    /// The locator label defaults to `root` as given; see [`Self::with_label`].
     pub fn new(root: impl Into<PathBuf>, independence_group: impl Into<String>) -> Self {
+        let root = root.into();
         Self {
-            root: root.into(),
+            label: slash_path(&root),
+            root,
             independence_group: independence_group.into(),
         }
+    }
+
+    /// Sets the locator label, e.g. the root as written in the episode file,
+    /// so ids don't depend on where the episode happens to live on disk.
+    pub fn with_label(mut self, label: &Path) -> Self {
+        self.label = slash_path(label);
+        self
     }
 
     fn read_document(&self, path: &Path, root: &Path) -> Result<Option<Document>> {
@@ -68,10 +81,11 @@ impl LocalFilesConnector {
             path: path.to_owned(),
             message: "file is not valid UTF-8".into(),
         })?;
-        let locator = path
+        let file_name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let locator = format!("{}/{file_name}", self.label);
         let title = markdown_title(&text).unwrap_or_else(|| {
             path.file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
@@ -118,6 +132,15 @@ impl SourceConnector for LocalFilesConnector {
     }
 }
 
+/// `path` with `/` separators on every platform, without a trailing slash.
+fn slash_path(path: &Path) -> String {
+    let joined: Vec<_> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect();
+    joined.join("/").replace("//", "/")
+}
+
 /// The text of the first `# ` heading, if the file starts with one.
 fn markdown_title(text: &str) -> Option<String> {
     let first = text.lines().find(|line| !line.trim().is_empty())?;
@@ -137,12 +160,15 @@ mod tests {
         fs::write(dir.path().join("a.md"), "# Heading\n\nBody.").unwrap();
         fs::write(dir.path().join("ignored.pdf"), "binary").unwrap();
 
-        let docs = LocalFilesConnector::new(dir.path(), "g").fetch().unwrap();
+        let docs = LocalFilesConnector::new(dir.path(), "g")
+            .with_label(Path::new("src"))
+            .fetch()
+            .unwrap();
         let summary: Vec<_> = docs
             .iter()
             .map(|d| (d.source().locator.as_str(), d.title()))
             .collect();
-        assert_eq!(summary, vec![("a.md", "Heading"), ("b.txt", "b")]);
+        assert_eq!(summary, vec![("src/a.md", "Heading"), ("src/b.txt", "b")]);
         assert!(docs.iter().all(|d| d.source().connector == "local_files"));
     }
 
@@ -159,9 +185,26 @@ mod tests {
         std::os::unix::fs::symlink(dir.path().join("inside.md"), dir.path().join("alias.md"))
             .unwrap();
 
-        let docs = LocalFilesConnector::new(dir.path(), "g").fetch().unwrap();
+        let docs = LocalFilesConnector::new(dir.path(), "g")
+            .with_label(Path::new("src"))
+            .fetch()
+            .unwrap();
         let locators: Vec<_> = docs.iter().map(|d| d.source().locator.as_str()).collect();
-        assert_eq!(locators, vec!["alias.md", "inside.md"]);
+        assert_eq!(locators, vec!["src/alias.md", "src/inside.md"]);
+    }
+
+    #[test]
+    fn same_file_name_under_different_roots_gets_different_ids() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        fs::write(a.path().join("notes.md"), "Same text.").unwrap();
+        fs::write(b.path().join("notes.md"), "Same text.").unwrap();
+
+        let doc_a = &LocalFilesConnector::new(a.path(), "g").fetch().unwrap()[0];
+        let doc_b = &LocalFilesConnector::new(b.path(), "g").fetch().unwrap()[0];
+        assert!(doc_a.source().locator.ends_with("/notes.md"));
+        assert_ne!(doc_a.source().id(), doc_b.source().id());
+        assert_ne!(doc_a.id(), doc_b.id());
     }
 
     #[test]
@@ -171,9 +214,12 @@ mod tests {
         big.set_len(MAX_FILE_BYTES + 1).unwrap();
         fs::write(dir.path().join("small.txt"), "Small.").unwrap();
 
-        let docs = LocalFilesConnector::new(dir.path(), "g").fetch().unwrap();
+        let docs = LocalFilesConnector::new(dir.path(), "g")
+            .with_label(Path::new("src"))
+            .fetch()
+            .unwrap();
         assert_eq!(docs.len(), 1);
-        assert_eq!(docs[0].source().locator, "small.txt");
+        assert_eq!(docs[0].source().locator, "src/small.txt");
     }
 
     #[test]

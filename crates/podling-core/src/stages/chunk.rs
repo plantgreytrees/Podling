@@ -21,7 +21,8 @@ impl Default for ChunkDocuments {
 
 impl Stage for ChunkDocuments {
     const ID: &'static str = "chunk";
-    const VERSION: u32 = 1;
+    // 2: heading syntax inside fenced code blocks is text, not a heading.
+    const VERSION: u32 = 2;
     type Input = Vec<Document>;
     type Output = Vec<Chunk>;
 
@@ -59,12 +60,21 @@ impl ChunkDocuments {
             };
 
         let mut offset = 0;
+        // The marker (``` or ~~~) of the fenced code block we're inside, if any.
+        let mut fence: Option<&str> = None;
         for raw_line in doc.text().split_inclusive('\n') {
             let line_start = offset;
             offset += raw_line.len();
             let line = raw_line.trim_end();
 
-            if let Some((level, title)) = heading(line) {
+            if let Some(marker) = fence_marker(line) {
+                match fence {
+                    None => fence = Some(marker),
+                    Some(open) if open == marker => fence = None,
+                    Some(_) => {}
+                }
+            }
+            if let Some((level, title)) = heading(line).filter(|_| fence.is_none()) {
                 flush(&mut open, &headings, &mut chunks);
                 headings.retain(|(l, _)| *l < level);
                 headings.push((level, title.to_owned()));
@@ -96,6 +106,14 @@ impl ChunkDocuments {
         flush(&mut open, &headings, &mut chunks);
         chunks
     }
+}
+
+/// `Some("```")` or `Some("~~~")` if `line` opens or closes a fenced code block.
+fn fence_marker(line: &str) -> Option<&'static str> {
+    let line = line.trim_start();
+    ["```", "~~~"]
+        .into_iter()
+        .find(|marker| line.starts_with(marker))
 }
 
 /// `(level, title)` for an ATX heading such as `## Aftermath`.
@@ -151,6 +169,15 @@ mod tests {
         let chunks = ChunkDocuments { max_words: 3 }.run(&vec![d]).unwrap();
         let texts: Vec<_> = chunks.iter().map(|c| c.text()).collect();
         assert_eq!(texts, vec!["one two three", "four five\n\nsix"]);
+    }
+
+    #[test]
+    fn heading_syntax_inside_a_code_fence_is_text() {
+        let d = doc("# Real\n\n```sh\n# a shell comment\n```\nAfter.\n");
+        let chunks = ChunkDocuments::default().run(&vec![d]).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].heading_path(), ["Real"]);
+        assert_eq!(chunks[0].text(), "```sh\n# a shell comment\n```\nAfter.");
     }
 
     #[test]

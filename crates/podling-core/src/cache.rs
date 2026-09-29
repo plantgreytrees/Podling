@@ -156,11 +156,11 @@ impl DiskCache {
     pub fn stats(&self) -> Result<CacheStats> {
         let mut stats = CacheStats::default();
         for shard in read_dir_if_exists(&self.root)? {
-            if !shard.is_dir() {
+            if !(shard.is_dir() && is_shard_dir(&shard)) {
                 continue;
             }
             for entry in read_dir_if_exists(&shard)? {
-                if entry.extension().is_some_and(|ext| ext == "json") {
+                if is_entry_file(&entry) {
                     let len = fs::metadata(&entry)
                         .map_err(|err| CoreError::io(&entry, err))?
                         .len();
@@ -172,13 +172,64 @@ impl DiskCache {
         Ok(stats)
     }
 
-    /// Deletes every cached entry.
+    /// Deletes every cached entry, then any directories left empty.
+    ///
+    /// Safety: only files shaped like cache entries (`<2 hex>/<64 hex>.json`,
+    /// plus leftover temp files in those shards) are removed. Anything else
+    /// is left alone with a warning, so pointing `--cache-dir` at the wrong
+    /// directory cannot delete it.
     pub fn clear(&self) -> Result<()> {
-        match fs::remove_dir_all(&self.root) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(CoreError::io(&self.root, err)),
+        for entry in read_dir_if_exists(&self.root)? {
+            if !(entry.is_dir() && is_shard_dir(&entry)) {
+                tracing::warn!(path = %entry.display(), "not a cache entry; leaving it");
+                continue;
+            }
+            for file in read_dir_if_exists(&entry)? {
+                if is_entry_file(&file) || is_temp_file(&file) {
+                    fs::remove_file(&file).map_err(|err| CoreError::io(&file, err))?;
+                } else {
+                    tracing::warn!(path = %file.display(), "not a cache entry; leaving it");
+                }
+            }
+            remove_dir_if_empty(&entry)?;
         }
+        remove_dir_if_empty(&self.root)
+    }
+}
+
+fn file_name(path: &Path) -> &str {
+    path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+}
+
+fn is_lower_hex(s: &str, len: usize) -> bool {
+    s.len() == len
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn is_shard_dir(path: &Path) -> bool {
+    is_lower_hex(file_name(path), 2)
+}
+
+fn is_entry_file(path: &Path) -> bool {
+    path.is_file()
+        && file_name(path)
+            .strip_suffix(".json")
+            .is_some_and(|stem| is_lower_hex(stem, 64))
+}
+
+/// `tempfile::NamedTempFile`'s default names start with `.tmp`.
+fn is_temp_file(path: &Path) -> bool {
+    path.is_file() && file_name(path).starts_with(".tmp")
+}
+
+fn remove_dir_if_empty(dir: &Path) -> Result<()> {
+    match fs::remove_dir(dir) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        // Not empty: something we deliberately left behind.
+        Err(_) if fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some()) => Ok(()),
+        Err(err) => Err(CoreError::io(dir, err)),
     }
 }
 
@@ -293,6 +344,31 @@ mod tests {
         assert!(stats.bytes > 0);
         cache.clear().unwrap();
         assert_eq!(cache.stats().unwrap().entries, 0);
+        assert!(!dir.path().join("cache").exists(), "empty dirs are removed");
         cache.clear().unwrap();
+    }
+
+    #[test]
+    fn clear_never_deletes_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // As if the user ran `podling --cache-dir . cache clear` in a project.
+        let cache = DiskCache::new(dir.path());
+        let k = key(&json!(1));
+        cache.put(&k, "s", &1u8).unwrap();
+        let shard = dir.path().join(&k.as_str()[..2]);
+        fs::write(dir.path().join("Cargo.toml"), "precious").unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src/main.rs"), "precious").unwrap();
+        fs::write(shard.join("notes.txt"), "precious").unwrap();
+        fs::write(shard.join(".tmpABC123"), "partial write").unwrap();
+
+        cache.clear().unwrap();
+
+        assert_eq!(cache.stats().unwrap().entries, 0);
+        assert!(!shard.join(".tmpABC123").exists());
+        for kept in ["Cargo.toml", "src/main.rs"] {
+            assert!(dir.path().join(kept).exists(), "{kept} was deleted");
+        }
+        assert!(shard.join("notes.txt").exists());
     }
 }

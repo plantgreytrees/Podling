@@ -24,10 +24,11 @@ tokio arrives with the first network-bound provider.
       │ Vec<Document>
       ▼
  ingest ─────────► Vec<Document>   BOM/CRLF normalised; duplicates within a group dropped
- chunk ──────────► Vec<Chunk>      split at Markdown headings, then paragraphs (~800 words)
+ chunk ──────────► Vec<Chunk>      split at Markdown headings (not inside code fences), then paragraphs (~800 words)
  extract_claims ─► Vec<Claim>      one LLM call per chunk; merged by ClaimId + Evidence
  ledger ─────────► Ledger          classify(): status from distinct independence groups
- script ─────────► Script          LLM returns QuoteRefs → Quote::from_document copies words
+ script ─────────► Script          LLM returns QuoteRefs → Quote::from_document copies words;
+                                   every citation must name a claim in the ledger
  analyse ────────► AnalysisReport  opt-in analysers, e.g. quote_verifier
 ```
 
@@ -37,6 +38,14 @@ stages in order. Each call goes through
 `tracing` span `stage{id, version}`, logs `cache_hit` and `elapsed_ms`, and
 adds a `StageRecord` to the `RunReport`. Every artifact is written as
 `<out>/<kind>.json` inside an `Envelope { schema_version, kind, body }`.
+
+Provider output is never trusted. The following are `InvalidProviderOutput` errors:
+- malformed JSON;
+- a quote span that doesn't resolve in its document;
+- a citation of a claim id that isn't in the ledger.
+
+`pipeline::run` also fails closed if two fetched documents share an id but
+come from different sources. Without that check, their evidence would merge silently.
 
 ## Cache key
 
@@ -57,6 +66,11 @@ Entries are stored at `<cache>/<first two hex chars>/<key>.json` as an
 `Envelope`. They are written through a temp file plus rename, so writes are atomic. An entry
 that is corrupt or was written under another `SCHEMA_VERSION` is a **miss**
 with a warning, never an error.
+
+`podling cache clear` deletes only files shaped like cache entries
+(`<2 hex>/<64 hex>.json` and leftover `.tmp*` files in those shards), then any
+directories that are left empty. Anything else stays, with a warning. Pointing
+`--cache-dir` at the wrong directory therefore cannot destroy it.
 
 The cache is keyed by content, which gives *early cutoff*. If a stage
 re-runs but produces identical output, the downstream stages see the same input
@@ -86,7 +100,7 @@ add one arm to the factory.
 | Kind | Trait | Phase 1 implementations |
 |---|---|---|
 | Provider (LLM) | `LlmProvider` | `FakeLlm`: deterministic, offline |
-| Source connector | `SourceConnector` | `LocalFilesConnector`: `.md`/`.txt` in one directory, symlinks confined to the root, 10 MiB cap |
+| Source connector | `SourceConnector` | `LocalFilesConnector`: `.md`/`.txt` in one directory, symlinks confined to the root, 10 MiB cap. The locator is `<root as written in the episode>/<file name>`, so same-named files in different roots get distinct ids. |
 | Analyser | `Analyser` | `QuoteVerifier`: every quote matches its source span, and the turn speaks it verbatim |
 
 Deferred to later phases:

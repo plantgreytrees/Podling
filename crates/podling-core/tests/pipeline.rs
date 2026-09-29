@@ -166,3 +166,56 @@ fn a_missing_source_directory_is_an_error() {
     let err = pipeline::run(&spec(&base), &base, None, &tmp.path().join("out")).unwrap_err();
     assert!(err.to_string().contains("expedition"), "{err}");
 }
+
+/// Writes an episode with one `local_files` source per `(root, group)`.
+fn episode_with_sources(base: &Path, sources: &[(&str, &str)]) -> EpisodeSpec {
+    let list: Vec<String> = sources
+        .iter()
+        .map(|(root, group)| {
+            format!(
+                r#"{{ kind = "local_files", root = "{root}", independence_group = "{group}" }}"#
+            )
+        })
+        .collect();
+    let toml = format!(
+        "title = \"t\"\ntopic = \"t\"\ntarget_minutes = 1\nllm = {{ kind = \"fake\" }}\nsources = [{}]\n",
+        list.join(", ")
+    );
+    fs::write(base.join("episode.toml"), toml).unwrap();
+    spec(base)
+}
+
+/// Regression: same-named, identical files under two roots used to share a
+/// document id, so one group's evidence overwrote the other's.
+#[test]
+fn identical_files_in_two_groups_are_corroborated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path();
+    for root in ["a", "b"] {
+        fs::create_dir(base.join(root)).unwrap();
+        fs::write(base.join(root).join("notes.md"), "Shared fact here.\n").unwrap();
+    }
+    let spec = episode_with_sources(base, &[("a", "ga"), ("b", "gb")]);
+    let out = base.join("out");
+    pipeline::run(&spec, base, None, &out).unwrap();
+
+    let ledger: Ledger = read_body(&out, "ledger");
+    assert_eq!(
+        ledger.entries()[0].status,
+        ClaimStatus::Corroborated {
+            groups: vec!["ga".into(), "gb".into()]
+        }
+    );
+}
+
+#[test]
+fn one_document_claimed_by_two_groups_is_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path();
+    fs::create_dir(base.join("a")).unwrap();
+    fs::write(base.join("a/notes.md"), "Shared fact here.\n").unwrap();
+    let spec = episode_with_sources(base, &[("a", "ga"), ("a", "gb")]);
+
+    let err = pipeline::run(&spec, base, None, &base.join("out")).unwrap_err();
+    assert!(err.to_string().contains("a/notes.md"), "{err}");
+}

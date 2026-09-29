@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use podling_types::{ArtifactKind, Envelope, EpisodeSpec, Severity};
+use podling_types::{ArtifactKind, Document, DocumentId, Envelope, EpisodeSpec, SourceRef};
 use serde::Serialize;
 
 use crate::cache::DiskCache;
@@ -48,10 +48,7 @@ pub fn run(
     let chunks = cached(&ChunkDocuments::default(), &documents, cache, &mut report)?;
 
     let claim_input = ClaimInput {
-        sources: documents
-            .iter()
-            .map(|d| (d.id().clone(), d.source().clone()))
-            .collect::<BTreeMap<_, _>>(),
+        sources: source_map(&documents)?,
         chunks,
     };
     let claims = cached(
@@ -88,11 +85,7 @@ pub fn run(
         cache,
         &mut report,
     )?;
-    report.error_findings = analysis
-        .findings
-        .iter()
-        .filter(|f| f.severity == Severity::Error)
-        .count();
+    report.error_findings = analysis.error_count();
 
     fs::create_dir_all(out_dir).map_err(|err| CoreError::io(out_dir, err))?;
     write(out_dir, ArtifactKind::Episode, spec)?;
@@ -103,6 +96,27 @@ pub fn run(
     write(out_dir, ArtifactKind::Script, &analyse_input.script)?;
     write(out_dir, ArtifactKind::Analysis, &analysis)?;
     Ok(report)
+}
+
+/// Maps each document to its source. Two documents with one id but different
+/// sources would silently merge their evidence, so that is an error.
+fn source_map(documents: &[Document]) -> Result<BTreeMap<DocumentId, SourceRef>> {
+    let mut map = BTreeMap::new();
+    for doc in documents {
+        if let Some(existing) = map.insert(doc.id().clone(), doc.source().clone())
+            && existing != *doc.source()
+        {
+            return Err(CoreError::Source {
+                path: doc.source().locator.clone().into(),
+                message: format!(
+                    "document id {} is shared with {}; give the sources distinct locators",
+                    doc.id(),
+                    existing.locator
+                ),
+            });
+        }
+    }
+    Ok(map)
 }
 
 fn write<T: Serialize>(out_dir: &Path, kind: ArtifactKind, body: &T) -> Result<()> {

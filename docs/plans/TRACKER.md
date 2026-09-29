@@ -9,3 +9,4 @@
 | [phase1-core-contracts](./phase1-core-contracts.md) | 5 | stage-pipeline | crates/podling-core/src/pipeline | rust | normal | PARKED | 2026-09-29 |
 | [phase1-core-contracts](./phase1-core-contracts.md) | 6 | cli | crates/podling-cli | rust | normal | PARKED | 2026-09-29 |
 | [phase1-core-contracts](./phase1-core-contracts.md) | 7 | docs | README.md, docs/architecture.md | markdown | normal | PARKED | 2026-09-29 |
+| [scrutinise-phase1-core-contracts](./scrutinise-phase1-core-contracts.md) | 1 | scrutinise-fixes | crates/podling-core | rust | high | IN_PROGRESS | 2026-09-29 |

@@ -29,6 +29,13 @@ pub struct AnalysisReport {
 
 impl AnalysisReport {
     pub fn has_errors(&self) -> bool {
-        self.findings.iter().any(|f| f.severity == Severity::Error)
+        self.error_count() > 0
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|f| f.severity == Severity::Error)
+            .count()
     }
 }

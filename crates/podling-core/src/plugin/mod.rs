@@ -35,10 +35,10 @@ pub fn build_sources(specs: &[SourceSpec], base_dir: &Path) -> Vec<Box<dyn Sourc
                 SourceSpec::LocalFiles {
                     root,
                     independence_group,
-                } => Box::new(LocalFilesConnector::new(
-                    base_dir.join(root),
-                    independence_group.clone(),
-                )),
+                } => Box::new(
+                    LocalFilesConnector::new(base_dir.join(root), independence_group.clone())
+                        .with_label(root),
+                ),
             }
         })
         .collect()
