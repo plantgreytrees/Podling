@@ -46,7 +46,7 @@ units:
       write: [crates/podling-types/Cargo.toml, crates/podling-types/src/lib.rs, crates/podling-types/src/ids.rs,
               crates/podling-types/src/document.rs, crates/podling-types/src/quote.rs, crates/podling-types/src/claim.rs,
               crates/podling-types/src/ledger.rs, crates/podling-types/src/script.rs, crates/podling-types/src/episode.rs,
-              crates/podling-types/src/envelope.rs, crates/podling-types/src/schema.rs,
+              crates/podling-types/src/envelope.rs, crates/podling-types/src/schema.rs, crates/podling-types/src/analysis.rs,
               crates/podling-types/tests/roundtrip.rs, crates/podling-types/tests/schema_snapshot.rs,
               crates/podling-types/tests/snapshots/*]
     tooling: { implementer: implementer, gates: [code-reviewer, api-reviewer, idiom-reviewer], skills: [language-aware-planning], guards: [secrets-scan], mcp: [] }

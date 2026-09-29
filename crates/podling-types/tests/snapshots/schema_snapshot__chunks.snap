@@ -1,0 +1,107 @@
+---
+source: crates/podling-types/tests/schema_snapshot.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envelope",
+  "type": "object",
+  "properties": {
+    "body": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Chunk"
+      }
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "body"
+  ],
+  "$defs": {
+    "ArtifactKind": {
+      "type": "string",
+      "enum": [
+        "episode",
+        "documents",
+        "chunks",
+        "claims",
+        "ledger",
+        "script",
+        "analysis"
+      ]
+    },
+    "Chunk": {
+      "description": "A contiguous piece of a document. Its text is always exactly the document\ntext at its span, because the only constructor copies it from there.",
+      "type": "object",
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "heading_path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "$ref": "#/$defs/ChunkId"
+        },
+        "span": {
+          "$ref": "#/$defs/TextSpan"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "document",
+        "span",
+        "heading_path",
+        "text"
+      ]
+    },
+    "ChunkId": {
+      "description": "Identifies a chunk by its document and span.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "DocumentId": {
+      "description": "Identifies a document by its source and text.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "TextSpan": {
+      "description": "A half-open byte range `[start, end)` into a document's text.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    }
+  }
+}

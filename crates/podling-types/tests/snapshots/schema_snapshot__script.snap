@@ -1,0 +1,186 @@
+---
+source: crates/podling-types/tests/schema_snapshot.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envelope",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "#/$defs/Script"
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "body"
+  ],
+  "$defs": {
+    "ArtifactKind": {
+      "type": "string",
+      "enum": [
+        "episode",
+        "documents",
+        "chunks",
+        "claims",
+        "ledger",
+        "script",
+        "analysis"
+      ]
+    },
+    "ClaimId": {
+      "description": "Identifies a claim by its normalised text.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "DocumentId": {
+      "description": "Identifies a document by its source and text.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "Emotion": {
+      "description": "Delivery hint for text-to-speech.",
+      "type": "string",
+      "enum": [
+        "neutral",
+        "curious",
+        "excited",
+        "serious",
+        "amused",
+        "somber"
+      ]
+    },
+    "Quote": {
+      "description": "The unchecked wire shape. Deserialising can only check the quote's shape;\nwhether the words really appear in the source is checked against the\ndocument by the `QuoteVerifier` analyser.",
+      "type": "object",
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "span": {
+          "$ref": "#/$defs/TextSpan"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "document",
+        "span",
+        "text"
+      ]
+    },
+    "Script": {
+      "description": "A validated script: the cast is non-empty with unique ids, and every turn\nis spoken by a cast member. Deserialisation runs the same checks.",
+      "type": "object",
+      "properties": {
+        "cast": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Speaker"
+          }
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Turn"
+          }
+        }
+      },
+      "required": [
+        "cast",
+        "turns"
+      ]
+    },
+    "Speaker": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/SpeakerId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "description": "Free-form role, e.g. `host` or `narrator`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role"
+      ]
+    },
+    "SpeakerId": {
+      "description": "A human-readable speaker handle such as `host` or `guest`.",
+      "type": "string"
+    },
+    "TextSpan": {
+      "description": "A half-open byte range `[start, end)` into a document's text.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "Turn": {
+      "type": "object",
+      "properties": {
+        "citations": {
+          "description": "Ledger claims this turn relies on.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ClaimId"
+          }
+        },
+        "emotion": {
+          "$ref": "#/$defs/Emotion",
+          "default": "neutral"
+        },
+        "quotes": {
+          "description": "Verbatim quotes spoken in this turn.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Quote"
+          }
+        },
+        "speaker": {
+          "$ref": "#/$defs/SpeakerId"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "speaker",
+        "text"
+      ]
+    }
+  }
+}

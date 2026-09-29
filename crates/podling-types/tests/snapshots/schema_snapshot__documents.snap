@@ -1,0 +1,99 @@
+---
+source: crates/podling-types/tests/schema_snapshot.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envelope",
+  "type": "object",
+  "properties": {
+    "body": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Document"
+      }
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "body"
+  ],
+  "$defs": {
+    "ArtifactKind": {
+      "type": "string",
+      "enum": [
+        "episode",
+        "documents",
+        "chunks",
+        "claims",
+        "ledger",
+        "script",
+        "analysis"
+      ]
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Document": {
+      "description": "A fetched source text. Its id is derived from the source and the text, so\nediting the text produces a new id.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceRef"
+        },
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "title",
+        "text"
+      ]
+    },
+    "DocumentId": {
+      "description": "Identifies a document by its source and text.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "SourceRef": {
+      "description": "Where a document came from.",
+      "type": "object",
+      "properties": {
+        "connector": {
+          "description": "The connector that fetched it, e.g. `local_files`.",
+          "type": "string"
+        },
+        "independence_group": {
+          "description": "Sources in the same group are not independent evidence (for example,\nseveral articles rewriting one wire report).",
+          "type": "string"
+        },
+        "locator": {
+          "description": "Connector-specific location, e.g. a relative path or URL.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "connector",
+        "locator",
+        "independence_group"
+      ]
+    }
+  }
+}

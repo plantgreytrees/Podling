@@ -1,0 +1,114 @@
+---
+source: crates/podling-types/tests/schema_snapshot.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envelope",
+  "type": "object",
+  "properties": {
+    "body": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Claim"
+      }
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "body"
+  ],
+  "$defs": {
+    "ArtifactKind": {
+      "type": "string",
+      "enum": [
+        "episode",
+        "documents",
+        "chunks",
+        "claims",
+        "ledger",
+        "script",
+        "analysis"
+      ]
+    },
+    "ChunkId": {
+      "description": "Identifies a chunk by its document and span.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "Claim": {
+      "description": "A single checkable statement. Claims whose text differs only in case or\nwhitespace share an id, so the same fact from two sources merges into one\nclaim with two pieces of evidence.",
+      "type": "object",
+      "properties": {
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "id": {
+          "$ref": "#/$defs/ClaimId"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "evidence"
+      ]
+    },
+    "ClaimId": {
+      "description": "Identifies a claim by its normalised text.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Evidence": {
+      "description": "One chunk's position on a claim.",
+      "type": "object",
+      "properties": {
+        "chunk": {
+          "$ref": "#/$defs/ChunkId"
+        },
+        "independence_group": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "stance": {
+          "$ref": "#/$defs/Stance"
+        }
+      },
+      "required": [
+        "chunk",
+        "source",
+        "independence_group",
+        "stance"
+      ]
+    },
+    "SourceId": {
+      "description": "Identifies a source (connector + locator), independent of its content.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "Stance": {
+      "type": "string",
+      "enum": [
+        "supports",
+        "contradicts"
+      ]
+    }
+  }
+}

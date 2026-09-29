@@ -1,0 +1,122 @@
+---
+source: crates/podling-types/tests/schema_snapshot.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EpisodeSpec",
+  "type": "object",
+  "properties": {
+    "analysers": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AnalyserConfig"
+      }
+    },
+    "llm": {
+      "$ref": "#/$defs/LlmConfig"
+    },
+    "mode": {
+      "$ref": "#/$defs/Mode",
+      "default": "non_fiction"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceSpec"
+      }
+    },
+    "target_minutes": {
+      "type": "integer",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0
+    },
+    "title": {
+      "type": "string"
+    },
+    "topic": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "topic",
+    "target_minutes",
+    "sources",
+    "llm"
+  ],
+  "$defs": {
+    "AnalyserConfig": {
+      "oneOf": [
+        {
+          "description": "Checks every quote against its source, word for word.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "quote_verifier"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "LlmConfig": {
+      "oneOf": [
+        {
+          "description": "Deterministic offline stand-in, for development and tests.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fake"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "Mode": {
+      "description": "What kind of episode to make. Only non-fiction exists today; fiction modes\nare planned, so matches on this enum must stay open-ended.",
+      "type": "string",
+      "enum": [
+        "non_fiction"
+      ]
+    },
+    "SourceSpec": {
+      "oneOf": [
+        {
+          "description": "Every `.md` / `.txt` file directly under `root`. A relative `root` is\nresolved against the episode file's directory.",
+          "type": "object",
+          "properties": {
+            "independence_group": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "local_files"
+            },
+            "root": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "root",
+            "independence_group"
+          ]
+        }
+      ]
+    }
+  }
+}
