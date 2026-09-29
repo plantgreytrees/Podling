@@ -17,8 +17,9 @@ use crate::error::Result;
 
 pub use analyser::{Analyser, QuoteVerifier};
 pub use llm::{
-    ClaimDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LlmProvider, LlmTask, QuoteRef,
-    ScriptDraft,
+    ClaimDraft, ClaimsDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LlmProvider,
+    LlmTask, NumberedSentence, PROMPT_VERSION, QuoteRef, ScriptDraft, SourceText,
+    complete_validated,
 };
 pub use openai::OpenAiCompat;
 pub use source::{LocalFilesConnector, SourceConnector};
