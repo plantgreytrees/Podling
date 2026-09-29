@@ -1,0 +1,32 @@
+# Craftsman managed .claudeignore
+.git/
+.craftsman/
+.claude/settings.local.json
+.DS_Store
+docs/errors/KNOWN_ISSUES.md
+*.log
+*.tmp
+*.swp
+.env
+.env.*
+node_modules/
+**/node_modules/**
+coverage/
+**/coverage/**
+dist/
+**/dist/**
+build/
+**/build/**
+out/
+**/out/**
+tmp/
+temp/
+*.min.js
+*.map
+.cache/
+**/.cache/**
+.idea/
+*.pyc
+__pycache__/
+**/__pycache__/**
+# End Craftsman managed .claudeignore
