@@ -1,9 +1,9 @@
 # Architecture
 
 > **Status:** current as of 2026-09-30. It covers Phase 1 (core contracts), the
-> `/scrutinise` fixes and Phase 2 (the OpenAI-compatible LLM provider). Synced
-> through commit `5059b6f` (the Phase 2 code); the CLI hints and these docs
-> landed in the commit after it.
+> `/scrutinise` fixes and Phase 2 (the OpenAI-compatible LLM provider), plus the
+> Phase 2 scrutinise fixes (unreferenced-quotation check, claim grounding, script
+> input size warning). Synced through commit `92d9d2c`.
 
 This document describes the state after Phase 2. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -92,7 +92,7 @@ The cache is keyed by content, which gives *early cutoff*. If a stage
 re-runs but produces identical output, the downstream stages see the same input
 and are still cache hits.
 
-## The three bump rules
+## The four bump rules
 
 1. **You changed an artifact's fields.** The `insta` schema snapshot test in
    [`crates/podling-types/tests/schema_snapshot.rs`](../crates/podling-types/tests/schema_snapshot.rs)
