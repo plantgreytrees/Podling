@@ -121,7 +121,7 @@ add one arm to the factory.
 |---|---|---|
 | Provider (LLM) | `LlmProvider` | `FakeLlm`: deterministic, offline. `OpenAiCompat`: any OpenAI chat-completions server (see below). |
 | Source connector | `SourceConnector` | `LocalFilesConnector`: `.md`/`.txt` in one directory, symlinks confined to the root, 10 MiB cap. The locator is `<root as written in the episode>/<file name>`, so same-named files in different roots get distinct ids. |
-| Analyser | `Analyser` | `QuoteVerifier`: every quote matches its source span, and the turn speaks it verbatim |
+| Analyser | `Analyser` | `QuoteVerifier`: every quote matches its source span, the turn speaks it verbatim, and no other quoted span of three or more words appears in a turn |
 
 Deferred to later phases:
 - Non-OpenAI-compatible LLM protocols, streaming, token budgeting.
@@ -158,8 +158,11 @@ The stage looks the chunk up, takes the sentence's span, and calls
 The instructions call ledger and source text untrusted data, and that text reaches the
 model only inside the JSON input, never in the instructions. Whatever the model
 returns is checked afterwards. Quotes come from the source, citations must be ledger
-ids, and `QuoteVerifier` re-checks every quote. A successful injection can therefore
-change wording, but it can't invent a quote or a citation.
+ids, and `QuoteVerifier` re-checks every quote. It also reports an error for any
+quoted span (straight or curly marks, three or more words) in a turn that none of the
+turn's quote refs covers, so invented words can't pass as a quotation by skipping
+the ref. A successful injection can therefore change wording, but it can't invent a
+quote or a citation without the run reporting it.
 
 **Known limit.** Claims merge by exact normalised text. A model that paraphrases one
 fact from two sources will not corroborate it. Semantic clustering belongs with the
@@ -179,4 +182,5 @@ sampling, and you can't audit them afterwards. The ledger makes trust
 
 The same reasoning applies to quotes. The model can only *point* at a sentence (`QuoteRef`), and
 [`Quote::from_document`](../crates/podling-types/src/quote.rs) copies the words
-from the source. A model therefore cannot put words in a source's mouth.
+from the source. A model therefore cannot put words in a source's mouth, and
+`QuoteVerifier` flags it if it tries to do so in quotation marks anyway.

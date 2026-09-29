@@ -357,6 +357,44 @@ fn changing_the_model_invalidates_the_llm_stages_only() {
     assert!(!hit("script"));
 }
 
+/// Replays the canned answers, but the script's first turn also puts invented
+/// words in quotation marks with no quote ref behind them.
+struct Fabricating;
+
+impl LlmProvider for Fabricating {
+    fn id(&self) -> &str {
+        "fabricating"
+    }
+
+    fn fingerprint(&self) -> Value {
+        json!({ "provider": "fabricating" })
+    }
+
+    fn complete(&self, request: &CompletionRequest) -> Result<Completion, CoreError> {
+        let mut completion = Replay { model: "m" }.complete(request)?;
+        if matches!(request.task, LlmTask::WriteScript) {
+            let mut script: Value = serde_json::from_str(&completion.text).unwrap();
+            let text = script["turns"][0]["text"].as_str().unwrap().to_owned();
+            script["turns"][0]["text"] =
+                format!("{text} He added \"the forest screamed for hours\".").into();
+            completion.text = script.to_string();
+        }
+        Ok(completion)
+    }
+}
+
+#[test]
+fn a_quotation_no_quote_ref_covers_is_an_analysis_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    let report =
+        pipeline::run_with_llm(&spec(&fixtures()), &Fabricating, &fixtures(), None, &out).unwrap();
+
+    assert_eq!(report.error_findings, 1);
+    let analysis = fs::read_to_string(out.join("analysis.json")).unwrap();
+    assert!(analysis.contains("the forest screamed for hours"));
+}
+
 /// A source that tries to steer the model changes nothing: its sentence is one
 /// more claim, and the script can still only cite the ledger.
 #[test]
