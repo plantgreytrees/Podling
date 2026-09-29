@@ -1,5 +1,8 @@
 # Architecture
 
+> **Status:** current as of 2026-09-30. It covers Phase 1 (core contracts) and the
+> `/scrutinise` fixes. Synced through commit `807d77d`.
+
 This document describes the state after Phase 1 (core contracts). Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
 
