@@ -412,8 +412,13 @@ fn live_run_against_a_real_server() {
         std::env::var("PODLING_LIVE_LLM_URL"),
         std::env::var("PODLING_LIVE_LLM_MODEL"),
     ) else {
-        eprintln!("PODLING_LIVE_LLM_URL / PODLING_LIVE_LLM_MODEL not set; skipping");
-        return;
+        // Fail, don't skip: an ignored test that returns early reports "ok"
+        // for a run that tested nothing.
+        panic!(
+            "set PODLING_LIVE_LLM_URL and PODLING_LIVE_LLM_MODEL to run this test, e.g. \
+             PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b \
+             cargo test -p podling-cli -- --ignored live"
+        );
     };
     let key_env = std::env::var("PODLING_LIVE_LLM_KEY_ENV").ok();
     let mut llm = compat_llm(&url, key_env.as_deref());

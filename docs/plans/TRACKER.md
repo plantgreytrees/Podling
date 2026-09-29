@@ -16,6 +16,6 @@
 | [phase2-llm-provider](./phase2-llm-provider.md) | 4 | llm-cli-docs | crates/podling-cli | rust | normal | COMPLETE | 2026-09-30 |
 | [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 1 | quote-verifier | crates/podling-core/src/plugin/analyser.rs | rust | high | COMPLETE | 2026-09-30 |
 | [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 2 | claim-grounding | crates/podling-core/src/stages/extract_claims.rs | rust | high | COMPLETE | 2026-09-30 |
-| [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 3 | live-test-guard | crates/podling-cli/tests/cli.rs | rust | normal | PENDING | 2026-09-30 |
-| [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 4 | script-input-size | crates/podling-core/src/stages/script.rs | rust | normal | PENDING | 2026-09-30 |
+| [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 3 | live-test-guard | crates/podling-cli/tests/cli.rs | rust | normal | COMPLETE | 2026-09-30 |
+| [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 4 | script-input-size | crates/podling-core/src/stages/script.rs | rust | normal | COMPLETE | 2026-09-30 |
 | [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 5 | typed-provider-error (follow-up, not driven) | crates/podling-cli/src/commands.rs | rust | normal | PENDING | 2026-09-30 |

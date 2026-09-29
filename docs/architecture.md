@@ -125,7 +125,10 @@ add one arm to the factory.
 | Analyser | `Analyser` | `QuoteVerifier`: every quote matches its source span, the turn speaks it verbatim, and no other quoted span of three or more words appears in a turn |
 
 Deferred to later phases:
-- Non-OpenAI-compatible LLM protocols, streaming, token budgeting.
+- Non-OpenAI-compatible LLM protocols, streaming, token budgeting. Until then
+  `WriteScript` logs a warning when its input is over 24 KiB, because a small server
+  context window truncates it silently; raise the server's context (for Ollama,
+  `OLLAMA_CONTEXT_LENGTH`).
 - TTS, embedding, NLI and ASR provider traits.
 - MCP source connectors.
 - PDF ingestion (Docling / pdfium).

@@ -143,7 +143,16 @@ handles JSON well. A rate-limited (429) or failing (5xx) server is retried twice
 Failures print one line naming what to fix: an unset key variable, an
 unreachable server, a 401 (which variable to check) or a 404 (the model name).
 
-To run the test that talks to a real server (skipped by default):
+**Context window.** The script call sends the whole claim ledger plus every chunk's
+numbered sentences. A server with a small context window (Ollama defaults to a few
+thousand tokens) silently cuts that off, and the model then answers with invalid
+JSON. Podling logs a warning when the request is large (over about 24 KiB). Raise
+the server's context, for example `OLLAMA_CONTEXT_LENGTH=16384 ollama serve`.
+Token budgeting is not built yet.
+
+To run the test that talks to a real server (it is `#[ignore]`d, so a normal
+`cargo test` skips it). It fails unless both variables are set, and
+`PODLING_LIVE_LLM_KEY_ENV` may name a variable that holds an API key:
 
 ```sh
 PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b \

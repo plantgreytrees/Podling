@@ -66,10 +66,30 @@ impl Stage for WriteScript<'_> {
                 "sources": source_texts(&input.chunks, &input.documents),
             }),
         };
+        if let Some(bytes) = large_input_bytes(&request.input) {
+            // Sizes only, never the text.
+            tracing::warn!(
+                bytes,
+                "the script request is large; a server with a small context window \
+                 (Ollama defaults to a few thousand tokens) may silently truncate it \
+                 and answer with invalid JSON: raise the server's context, \
+                 e.g. OLLAMA_CONTEXT_LENGTH=16384"
+            );
+        }
         complete_validated(self.llm, Self::ID, &request, |text| {
             build_script(text, input)
         })
     }
+}
+
+/// Size above which the script request is likely to overflow a small default
+/// context window (about 6k tokens once the instructions are added).
+const LARGE_INPUT_BYTES: usize = 24 * 1024;
+
+/// The serialised size of `input`, if it is over [`LARGE_INPUT_BYTES`].
+fn large_input_bytes(input: &Value) -> Option<usize> {
+    let bytes = input.to_string().len();
+    (bytes > LARGE_INPUT_BYTES).then_some(bytes)
 }
 
 /// Every chunk as numbered sentences. [`resolve`] counts sentences the same
@@ -171,6 +191,13 @@ mod tests {
     use crate::error::CoreError;
     use crate::plugin::{Completion, FakeLlm};
     use podling_types::SourceRef;
+
+    #[test]
+    fn only_a_large_input_is_flagged() {
+        assert_eq!(large_input_bytes(&json!({ "sources": "short" })), None);
+        let big = json!({ "sources": "x".repeat(LARGE_INPUT_BYTES) });
+        assert!(large_input_bytes(&big).is_some_and(|b| b > LARGE_INPUT_BYTES));
+    }
 
     fn document(text: &str) -> Document {
         let source = SourceRef {
