@@ -12,7 +12,7 @@ use crate::plugin::{
     ScriptDraft, SourceText, complete_validated,
 };
 use crate::stage::Stage;
-use crate::text::sentences;
+use crate::text::{quotations, sentences};
 
 const INSTRUCTIONS: &str = "\
 You write a two-host podcast script from a claim ledger and the source passages behind it.
@@ -43,7 +43,8 @@ impl Stage for WriteScript<'_> {
     // 2: citations must name a claim in the ledger.
     // 3: quotes are `{ chunk, sentence }` references into numbered sentences,
     //    and a rejected reply is retried once.
-    const VERSION: u32 = 3;
+    // 4: a turn must speak its quotes verbatim and quote nothing else.
+    const VERSION: u32 = 4;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -141,6 +142,7 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
                 resolve(r, &input.chunks, &input.documents).map_err(|m| format!("turn {i}: {m}"))
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
+        check_quotes_are_spoken(i, &turn.text, &quotes)?;
         turns.push(Turn {
             speaker: turn.speaker,
             text: turn.text,
@@ -150,6 +152,38 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
         });
     }
     Script::new(draft.cast, turns).map_err(|err| err.to_string())
+}
+
+/// The same rules `QuoteVerifier` applies afterwards, checked here so the
+/// model gets the reason and one retry instead of the run failing at
+/// analysis: a turn speaks each quote it references word for word, and puts
+/// no other words in quotation marks.
+fn check_quotes_are_spoken(
+    turn: usize,
+    text: &str,
+    quotes: &[Quote],
+) -> std::result::Result<(), String> {
+    if let Some((n, quote)) = quotes
+        .iter()
+        .enumerate()
+        .find(|(_, q)| !text.contains(q.text()))
+    {
+        return Err(format!(
+            "turn {turn} must speak quote {n} word for word, exactly as \"{}\"; \
+             use the source's words in the turn's text or drop the reference",
+            quote.text()
+        ));
+    }
+    if let Some(span) = quotations(text)
+        .into_iter()
+        .find(|span| !quotes.iter().any(|q| q.text().contains(span)))
+    {
+        return Err(format!(
+            "turn {turn} puts \"{span}\" in quotation marks, but no quote reference \
+             covers it; add the reference or drop the quotation marks"
+        ));
+    }
+    Ok(())
 }
 
 /// Copies the quoted sentence out of the source document. The LLM only ever
@@ -386,6 +420,94 @@ mod tests {
                     ..
                 }
             ),
+            "{err}"
+        );
+    }
+
+    /// Answers each call with the next of `texts` (the last one repeats) for a
+    /// turn that references sentence 0, and counts the calls.
+    struct Speaking {
+        chunk: Value,
+        texts: &'static [&'static str],
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl Speaking {
+        fn new(chunk: &Chunk, texts: &'static [&'static str]) -> Self {
+            Speaking {
+                chunk: serde_json::to_value(chunk.id()).unwrap(),
+                texts,
+                calls: Default::default(),
+            }
+        }
+    }
+
+    impl LlmProvider for Speaking {
+        fn id(&self) -> &str {
+            "speaking"
+        }
+        fn fingerprint(&self) -> Value {
+            Value::Null
+        }
+        fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+            let n = self.calls.get();
+            self.calls.set(n + 1);
+            let text = self.texts[n.min(self.texts.len() - 1)];
+            let reply = json!({
+                "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
+                "turns": [{
+                    "speaker": "host", "text": text, "emotion": "neutral", "citations": [],
+                    "quotes": [{ "chunk": self.chunk, "sentence": 0 }],
+                }],
+            });
+            Ok(Completion {
+                text: reply.to_string(),
+            })
+        }
+    }
+
+    const PARAPHRASE: &str = "A witness said the sky broke apart.";
+    const VERBATIM: &str = "A witness said: \"The sky split in two.\"";
+
+    #[test]
+    fn a_paraphrased_quote_is_corrected_on_the_retry() {
+        let (doc, chunk) = doc_and_chunk();
+        let llm = Speaking::new(&chunk, &[PARAPHRASE, VERBATIM]);
+        let script = WriteScript { llm: &llm }
+            .run(&empty_input(vec![doc], vec![chunk]))
+            .unwrap();
+        assert_eq!(llm.calls.get(), 2);
+        assert_eq!(script.turns()[0].text, VERBATIM);
+    }
+
+    #[test]
+    fn a_quote_never_spoken_verbatim_names_the_turn_and_the_words() {
+        let (doc, chunk) = doc_and_chunk();
+        let llm = Speaking::new(&chunk, &[PARAPHRASE]);
+        let err = WriteScript { llm: &llm }
+            .run(&empty_input(vec![doc], vec![chunk]))
+            .unwrap_err();
+        assert_eq!(llm.calls.get(), 2);
+        assert!(
+            matches!(&err, CoreError::InvalidProviderOutput { stage: "script", message }
+                if message.contains("turn 0") && message.contains("The sky split in two.")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn an_unreferenced_quotation_is_rejected() {
+        let (doc, chunk) = doc_and_chunk();
+        let llm = Speaking::new(
+            &chunk,
+            &["\"The sky split in two.\" Then \"every tree caught fire at once\"."],
+        );
+        let err = WriteScript { llm: &llm }
+            .run(&empty_input(vec![doc], vec![chunk]))
+            .unwrap_err();
+        assert!(
+            matches!(&err, CoreError::InvalidProviderOutput { message, .. }
+                if message.contains("every tree caught fire at once")),
             "{err}"
         );
     }

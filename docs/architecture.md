@@ -51,6 +51,9 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
 - a quote that names an unknown chunk or a sentence the chunk doesn't have
   (or that doesn't resolve in its document);
 - a citation of a claim id that isn't in the ledger;
+- a turn that doesn't speak a quote it references word for word, or that puts
+  three or more words in quotation marks without a reference covering them
+  (`QuoteVerifier` still re-checks both afterwards, independently);
 - a claim the chunk doesn't state (see the grounding check below).
 
 Both LLM stages call the model through

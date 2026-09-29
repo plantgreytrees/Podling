@@ -383,16 +383,23 @@ impl LlmProvider for Fabricating {
     }
 }
 
+/// The script stage rejects it (after one retry) before analysis runs;
+/// `QuoteVerifier`'s own tests cover the independent check afterwards.
 #[test]
-fn a_quotation_no_quote_ref_covers_is_an_analysis_error() {
+fn a_quotation_no_quote_ref_covers_fails_the_script_stage() {
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out");
-    let report =
-        pipeline::run_with_llm(&spec(&fixtures()), &Fabricating, &fixtures(), None, &out).unwrap();
+    let err = pipeline::run_with_llm(&spec(&fixtures()), &Fabricating, &fixtures(), None, &out)
+        .unwrap_err();
 
-    assert_eq!(report.error_findings, 1);
-    let analysis = fs::read_to_string(out.join("analysis.json")).unwrap();
-    assert!(analysis.contains("the forest screamed for hours"));
+    let CoreError::Stage { source, .. } = &err else {
+        panic!("expected a stage error, got {err}");
+    };
+    assert!(
+        matches!(source.as_ref(), CoreError::InvalidProviderOutput { stage: "script", message }
+            if message.contains("the forest screamed for hours")),
+        "{source}"
+    );
 }
 
 /// A source that tries to steer the model changes nothing: its sentence is one

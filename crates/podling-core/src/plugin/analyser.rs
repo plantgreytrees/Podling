@@ -2,6 +2,8 @@
 
 use podling_types::{Document, Finding, Script, Severity};
 
+use crate::text::quotations;
+
 pub trait Analyser {
     fn id(&self) -> &str;
 
@@ -14,32 +16,6 @@ pub trait Analyser {
 /// don't cover is text a model invented, however it is dressed up.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QuoteVerifier;
-
-/// Shortest quoted span, in words, treated as a quotation. Shorter spans
-/// ("so-called") read as scare quotes, not speech.
-const MIN_QUOTED_WORDS: usize = 3;
-
-/// Spans between straight (`"…"`) or curly (`“…”`) quotation marks. An
-/// unmatched opening mark yields nothing, so unbalanced text can't panic.
-fn quoted_spans(text: &str) -> Vec<&str> {
-    let mut spans = Vec::new();
-    let mut open: Option<(usize, char)> = None;
-    for (i, c) in text.char_indices() {
-        match open {
-            None => match c {
-                '"' => open = Some((i + 1, '"')),
-                '\u{201C}' => open = Some((i + c.len_utf8(), '\u{201D}')),
-                _ => {}
-            },
-            Some((start, close)) if c == close => {
-                spans.push(&text[start..i]);
-                open = None;
-            }
-            Some(_) => {}
-        }
-    }
-    spans
-}
 
 impl QuoteVerifier {
     fn error(&self, turn: usize, message: String) -> Finding {
@@ -85,9 +61,8 @@ impl Analyser for QuoteVerifier {
                     ));
                 }
             }
-            for span in quoted_spans(&turn.text) {
-                let covered = turn.quotes.iter().any(|q| q.text().contains(span));
-                if span.split_whitespace().count() >= MIN_QUOTED_WORDS && !covered {
+            for span in quotations(&turn.text) {
+                if !turn.quotes.iter().any(|q| q.text().contains(span)) {
                     findings.push(self.error(
                         i,
                         format!("turn quotes words no quote ref covers: {span:?}"),
