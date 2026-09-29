@@ -29,7 +29,7 @@ pub fn run(
     cache: Option<&DiskCache>,
     out_dir: &Path,
 ) -> Result<RunReport> {
-    let llm = build_llm(&spec.llm);
+    let llm = build_llm(&spec.llm)?;
     let analysers = build_analysers(&spec.analysers);
     let mut report = RunReport::default();
 

@@ -88,9 +88,9 @@ steps:
 ### Step 1 — llm-config (., rust, normal)
 Tooling: implementer · gates code-reviewer, api-reviewer · guards secrets-scan
 Depends on: none
-- [ ] 1.1 `episode.rs`: add `LlmConfig::OpenAiCompat { base_url: String, model: String, api_key_env: Option<String>, temperature: Option<f32>, timeout_secs: Option<u64>, max_output_tokens: Option<u32> }` (`deny_unknown_fields`, snake_case tag `open_ai_compat`, doc comments on every field). A field named like a secret (`api_key`, `token`) must not exist → accept: an episode with `api_key = "…"` fails to parse naming the field.
-- [ ] 1.2 `build_llm` becomes `Result<Box<dyn LlmProvider>>` (a missing env var or an invalid URL is a configuration error, not a panic). Update `pipeline::run` and the plugin tests to match. Add `CoreError::Config { message }` → accept: `cargo test --workspace` passes with `FakeLlm` behaviour unchanged.
-- [ ] 1.3 Accept the schema snapshot change, bump `SCHEMA_VERSION`, and extend `tests/roundtrip.rs` with an `open_ai_compat` episode → accept: the snapshot diff shows only the new variant.
+- [x] 1.1 `episode.rs`: add `LlmConfig::OpenAiCompat { base_url: String, model: String, api_key_env: Option<String>, temperature: Option<f32>, timeout_secs: Option<u64>, max_output_tokens: Option<u32> }` (`deny_unknown_fields`, snake_case tag `open_ai_compat`, doc comments on every field). A field named like a secret (`api_key`, `token`) must not exist → accept: an episode with `api_key = "…"` fails to parse naming the field.
+- [x] 1.2 `build_llm` becomes `Result<Box<dyn LlmProvider>>` (a missing env var or an invalid URL is a configuration error, not a panic). Update `pipeline::run` and the plugin tests to match. Add `CoreError::Config { message }` → accept: `cargo test --workspace` passes with `FakeLlm` behaviour unchanged.
+- [x] 1.3 Accept the schema snapshot change, bump `SCHEMA_VERSION`, and extend `tests/roundtrip.rs` with an `open_ai_compat` episode → accept: the snapshot diff shows only the new variant.
 
 ### Step 2 — openai-provider (., rust, high)
 Tooling: implementer · gates code-reviewer, security-auditor, dependency-auditor, idiom-reviewer · guards secrets-scan

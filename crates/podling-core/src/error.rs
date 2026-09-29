@@ -17,6 +17,9 @@ pub enum CoreError {
     #[error("source {path}: {message}")]
     Source { path: PathBuf, message: String },
 
+    #[error("configuration error: {message}")]
+    Config { message: String },
+
     #[error("provider {plugin} failed: {message}")]
     Provider { plugin: String, message: String },
 

@@ -111,3 +111,52 @@ fn episode_rejects_unknown_keys() {
         .to_string();
     assert!(err.contains("temperature"), "{err}");
 }
+
+#[test]
+fn open_ai_compat_episode_parses_and_roundtrips() {
+    let full = EPISODE.replace(
+        "kind = \"fake\"",
+        "kind = \"open_ai_compat\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"llama3.1:8b\"\napi_key_env = \"OPENAI_API_KEY\"\ntemperature = 0.5\ntimeout_secs = 120\nmax_output_tokens = 2048",
+    );
+    let spec: EpisodeSpec = toml::from_str(&full).unwrap();
+    assert_eq!(
+        spec.llm,
+        LlmConfig::OpenAiCompat {
+            base_url: "http://localhost:11434/v1".into(),
+            model: "llama3.1:8b".into(),
+            api_key_env: Some("OPENAI_API_KEY".into()),
+            temperature: Some(0.5),
+            timeout_secs: Some(120),
+            max_output_tokens: Some(2048),
+        }
+    );
+    roundtrip(&spec);
+
+    // Optional fields may be left out entirely (a local server needs no key).
+    let minimal = EPISODE.replace(
+        "kind = \"fake\"",
+        "kind = \"open_ai_compat\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"m\"",
+    );
+    let spec: EpisodeSpec = toml::from_str(&minimal).unwrap();
+    assert!(matches!(
+        spec.llm,
+        LlmConfig::OpenAiCompat {
+            api_key_env: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn open_ai_compat_rejects_a_key_value_in_the_episode() {
+    for field in ["api_key", "token"] {
+        let src = EPISODE.replace(
+            "kind = \"fake\"",
+            &format!(
+                "kind = \"open_ai_compat\"\nbase_url = \"http://x/v1\"\nmodel = \"m\"\n{field} = \"sk-123\""
+            ),
+        );
+        let err = toml::from_str::<EpisodeSpec>(&src).unwrap_err().to_string();
+        assert!(err.contains(field), "{err}");
+    }
+}
