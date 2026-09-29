@@ -1,0 +1,15 @@
+# A tiny non-fiction episode: two independent sources about the 1908
+# Tunguska event. Each directory is one independence group, so a claim both
+# make is Corroborated and a claim only one makes is SingleSource.
+#
+#   cargo run -p podling-cli -- run --episode examples/tunguska/episode.toml
+
+title = "The Tunguska event"
+topic = "the 1908 Tunguska explosion"
+target_minutes = 5
+llm = { kind = "fake" }
+sources = [
+  { kind = "local_files", root = "sources/eyewitness", independence_group = "eyewitness" },
+  { kind = "local_files", root = "sources/expedition", independence_group = "expedition" },
+]
+analysers = [{ kind = "quote_verifier" }]
