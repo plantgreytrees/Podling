@@ -74,7 +74,7 @@ units:
              crates/podling-types/src/script.rs, crates/podling-types/src/episode.rs, crates/podling-core/src/error.rs]
       docs: [docs/plans/phase1-core-contracts.md, .claude/CLAUDE.md]
       write: [crates/podling-core/Cargo.toml, crates/podling-core/src/lib.rs, crates/podling-core/src/error.rs,
-              crates/podling-core/src/plugin/mod.rs, crates/podling-core/src/plugin/llm.rs,
+              crates/podling-core/src/text.rs, crates/podling-core/src/plugin/mod.rs, crates/podling-core/src/plugin/llm.rs,
               crates/podling-core/src/plugin/source.rs, crates/podling-core/src/plugin/analyser.rs]
     tooling: { implementer: implementer, gates: [code-reviewer, security-auditor, idiom-reviewer], skills: [language-aware-planning], guards: [secrets-scan], mcp: [] }
   - id: 5
