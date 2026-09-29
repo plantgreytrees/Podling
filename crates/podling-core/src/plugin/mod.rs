@@ -6,19 +6,21 @@
 
 pub mod analyser;
 pub mod llm;
+pub mod openai;
 pub mod source;
 
 use std::path::Path;
 
 use podling_types::{AnalyserConfig, LlmConfig, SourceSpec};
 
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 
 pub use analyser::{Analyser, QuoteVerifier};
 pub use llm::{
     ClaimDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LlmProvider, LlmTask, QuoteRef,
     ScriptDraft,
 };
+pub use openai::OpenAiCompat;
 pub use source::{LocalFilesConnector, SourceConnector};
 
 /// Builds the LLM provider. Fallible because a real provider reads its
@@ -26,11 +28,7 @@ pub use source::{LocalFilesConnector, SourceConnector};
 pub fn build_llm(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
     match config {
         LlmConfig::Fake {} => Ok(Box::new(FakeLlm)),
-        // The provider itself arrives in the next unit; until then a real
-        // config is reported, not silently faked.
-        LlmConfig::OpenAiCompat { .. } => Err(CoreError::Config {
-            message: "the open_ai_compat provider is not built yet".into(),
-        }),
+        LlmConfig::OpenAiCompat { .. } => Ok(Box::new(OpenAiCompat::from_config(config)?)),
     }
 }
 
