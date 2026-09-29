@@ -10,3 +10,7 @@
 | [phase1-core-contracts](./phase1-core-contracts.md) | 6 | cli | crates/podling-cli | rust | normal | COMPLETE | 2026-09-30 |
 | [phase1-core-contracts](./phase1-core-contracts.md) | 7 | docs | README.md, docs/architecture.md | markdown | normal | COMPLETE | 2026-09-30 |
 | [scrutinise-phase1-core-contracts](./scrutinise-phase1-core-contracts.md) | 1 | scrutinise-fixes | crates/podling-core | rust | high | COMPLETE | 2026-09-30 |
+| [phase2-llm-provider](./phase2-llm-provider.md) | 1 | llm-config | crates/podling-types | rust | normal | PENDING | 2026-09-30 |
+| [phase2-llm-provider](./phase2-llm-provider.md) | 2 | openai-provider | crates/podling-core/src/plugin/openai.rs | rust | high | PENDING | 2026-09-30 |
+| [phase2-llm-provider](./phase2-llm-provider.md) | 3 | grounded-prompts | crates/podling-core/src/stages | rust | high | PENDING | 2026-09-30 |
+| [phase2-llm-provider](./phase2-llm-provider.md) | 4 | llm-cli-docs | crates/podling-cli | rust | normal | PENDING | 2026-09-30 |
