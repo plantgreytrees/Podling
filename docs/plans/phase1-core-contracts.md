@@ -206,7 +206,7 @@ Depends on: cli
 - [ ] No `HashMap`/`HashSet` in any crate (enforced by `clippy.toml` `disallowed-types`).
 - [ ] `podling schema export --out <dir>` writes one parseable `<kind>.schema.json` per artifact kind, and an `insta` snapshot test fails when any artifact type changes.
 - [ ] `podling run --episode examples/tunguska/episode.toml` completes offline (FakeLlm) and writes documents/chunks/claims/ledger/script/analysis JSON envelopes carrying `schema_version`.
-- [ ] A second identical run reports every stage as a cache hit; editing a source file invalidates ingest and all downstream stages; bumping a `Stage::VERSION` invalidates that stage and downstream.
+- [ ] A second identical run reports every stage as a cache hit; editing a source file invalidates ingest and all downstream stages; bumping a `Stage::VERSION` invalidates that stage, and downstream stages whenever its output changes (early cutoff: identical output is safely reused).
 - [ ] A `Quote` can only be built from a document span (`Quote::from_document`); the script stage resolves LLM `QuoteRef`s through it, and `QuoteVerifier` reports an Error for tampered or paraphrased quotes.
 - [ ] `classify` is a pure function covering all four `ClaimStatus` variants; `Corroborated` requires ≥2 distinct independence groups (two documents in one group → `SingleSource`).
 - [ ] `Script::new` rejects an empty cast and turns with unknown speakers; `EpisodeSpec` rejects unknown TOML keys and has no secret-valued fields.

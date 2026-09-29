@@ -1,0 +1,9 @@
+title = "The Tunguska event"
+topic = "the 1908 Tunguska explosion"
+target_minutes = 5
+llm = { kind = "fake" }
+sources = [
+  { kind = "local_files", root = "eyewitness", independence_group = "eyewitness" },
+  { kind = "local_files", root = "expedition", independence_group = "expedition" },
+]
+analysers = [{ kind = "quote_verifier" }]
