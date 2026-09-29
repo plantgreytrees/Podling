@@ -1,10 +1,15 @@
 //! Drives the real `podling` binary against the Tunguska example.
 
 use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use serde_json::{Value, json};
 
 const STAGES: [&str; 6] = [
     "ingest",
@@ -154,6 +159,277 @@ fn missing_episode_file_is_a_readable_error() {
         .stderr(predicate::str::contains(
             "error: reading episode file does-not-exist.toml",
         ));
+}
+
+// --- An OpenAI-compatible provider, against a mock server ------------------
+
+/// What the mock server was asked: the `Authorization` header and the body.
+type Seen = Arc<Mutex<Vec<(Option<String>, Value)>>>;
+
+/// Serves `POST /v1/chat/completions` on 127.0.0.1 until the test process
+/// exits; `handler` maps a request body to `(status, response body)`.
+fn mock_server(
+    handler: impl Fn(&Value) -> (u16, String) + Send + Sync + 'static,
+) -> (String, Seen) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let seen = Seen::default();
+    let (log, handler) = (Arc::clone(&seen), Arc::new(handler));
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let (log, handler) = (Arc::clone(&log), Arc::clone(&handler));
+            thread::spawn(move || serve(stream, &log, handler.as_ref()));
+        }
+    });
+    (base_url, seen)
+}
+
+fn serve(stream: TcpStream, log: &Seen, handler: &dyn Fn(&Value) -> (u16, String)) {
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let (mut auth, mut length) = (None, 0usize);
+    loop {
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        let header = line.trim_end();
+        if header.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = header.split_once(':') {
+            match name.to_ascii_lowercase().as_str() {
+                "authorization" => auth = Some(value.trim().to_owned()),
+                "content-length" => length = value.trim().parse().unwrap(),
+                _ => {}
+            }
+        }
+    }
+    let mut body = vec![0u8; length];
+    reader.read_exact(&mut body).unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    let (status, reply) = handler(&body);
+    log.lock().unwrap().push((auth, body));
+
+    let mut stream = stream;
+    let head = format!(
+        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        reply.len()
+    );
+    let _ = stream.write_all(head.as_bytes());
+    let _ = stream.write_all(reply.as_bytes());
+}
+
+fn completion(content: &Value) -> (u16, String) {
+    let body = json!({
+        "choices": [{ "message": { "content": content.to_string() }, "finish_reason": "stop" }],
+        "usage": { "prompt_tokens": 1, "completion_tokens": 1 },
+    });
+    (200, body.to_string())
+}
+
+/// A stand-in model: every chunk is one claim, and the script cites the first
+/// claim and quotes the first sentence of the first source.
+fn tiny_model(request: &Value) -> (u16, String) {
+    let instructions = request["messages"][0]["content"].as_str().unwrap();
+    let input: Value =
+        serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+    if instructions.contains("extract factual claims") {
+        let text = input["chunk_text"].as_str().unwrap().trim();
+        return completion(&json!({ "claims": [{ "text": text }] }));
+    }
+    let claim = &input["ledger"]["entries"][0]["claim"]["id"];
+    let source = input["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| !s["sentences"].as_array().unwrap().is_empty())
+        .unwrap();
+    let first = &source["sentences"][0];
+    completion(&json!({
+        "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
+        "turns": [{
+            "speaker": "host",
+            "text": format!("The first source says: {}", first["text"].as_str().unwrap()),
+            "emotion": "neutral",
+            "citations": [claim],
+            "quotes": [{ "chunk": source["chunk"], "sentence": first["sentence"] }],
+        }],
+    }))
+}
+
+/// The Tunguska sources with the `llm` table filled in by the caller.
+fn episode_with_llm(dir: &Path, llm: &str) -> PathBuf {
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tunguska/sources");
+    let root = |name: &str| format!("{:?}", sources.join(name).display().to_string());
+    let text = format!(
+        "title = \"Tunguska\"\ntopic = \"the 1908 explosion\"\ntarget_minutes = 5\n\
+         sources = [\n  {{ kind = \"local_files\", root = {}, independence_group = \"eyewitness\" }},\n  \
+         {{ kind = \"local_files\", root = {}, independence_group = \"expedition\" }},\n]\n\
+         analysers = [{{ kind = \"quote_verifier\" }}]\n\n[llm]\n{llm}\n",
+        root("eyewitness"),
+        root("expedition"),
+    );
+    let path = dir.join("episode.toml");
+    fs::write(&path, text).unwrap();
+    path
+}
+
+fn compat_llm(base_url: &str, api_key_env: Option<&str>) -> String {
+    let key = api_key_env
+        .map(|var| format!("api_key_env = \"{var}\"\n"))
+        .unwrap_or_default();
+    format!("kind = \"open_ai_compat\"\nbase_url = \"{base_url}\"\nmodel = \"tiny\"\n{key}")
+}
+
+/// stderr must be exactly one `error:` line: no stack dump, no panic.
+fn stderr_of(assert: &assert_cmd::assert::Assert) -> String {
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert!(stderr.starts_with("error: "), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    stderr
+}
+
+#[test]
+fn a_run_against_an_openai_compatible_server_writes_verbatim_quotes() {
+    let (base_url, seen) = mock_server(tiny_model);
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(tmp.path(), &compat_llm(&base_url, Some("PODLING_TEST_KEY")));
+    let out = tmp.path().join("out");
+
+    let assert = podling(&tmp.path().join("cache"))
+        .env("PODLING_TEST_KEY", "sk-cli-test-key")
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .arg("--out")
+        .arg(&out)
+        .assert()
+        .success();
+    let printed = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(!printed.contains("sk-cli-test-key"), "{printed}");
+
+    // The key went out only as a bearer header, on every request.
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.len() >= 3,
+        "expected several requests, got {}",
+        seen.len()
+    );
+    assert!(
+        seen.iter()
+            .all(|(auth, _)| auth.as_deref() == Some("Bearer sk-cli-test-key"))
+    );
+
+    // The quote is copied from the source, not typed by the "model".
+    let script: Value =
+        serde_json::from_str(&fs::read_to_string(out.join("script.json")).unwrap()).unwrap();
+    let quote = &script["body"]["turns"][0]["quotes"][0];
+    let document = fs::read_to_string(out.join("documents.json")).unwrap();
+    assert!(document.contains(quote["text"].as_str().unwrap()));
+    assert!(!quote["text"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn an_unset_key_variable_is_one_readable_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(
+        tmp.path(),
+        &compat_llm("http://127.0.0.1:1/v1", Some("PODLING_UNSET_TEST_KEY")),
+    );
+    let assert = podling(&tmp.path().join("cache"))
+        .env_remove("PODLING_UNSET_TEST_KEY")
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(stderr.contains("PODLING_UNSET_TEST_KEY"), "{stderr}");
+    assert!(stderr.contains("not set"), "{stderr}");
+}
+
+#[test]
+fn an_unreachable_server_is_one_readable_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Nothing listens on port 1.
+    let episode = episode_with_llm(tmp.path(), &compat_llm("http://127.0.0.1:1/v1", None));
+    let assert = podling(&tmp.path().join("cache"))
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(stderr.contains("http://127.0.0.1:1/v1"), "{stderr}");
+    assert!(stderr.contains("running and reachable"), "{stderr}");
+}
+
+#[test]
+fn a_404_suggests_checking_the_model_name() {
+    let (base_url, _) = mock_server(|_| (404, r#"{"error":{"message":"model not found"}}"#.into()));
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(tmp.path(), &compat_llm(&base_url, None));
+    let assert = podling(&tmp.path().join("cache"))
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(stderr.contains("HTTP 404"), "{stderr}");
+    assert!(stderr.contains("a model called \"tiny\""), "{stderr}");
+}
+
+#[test]
+fn a_401_names_the_key_variable_and_never_prints_the_key() {
+    let key = "sk-cli-401-key";
+    let echo = format!(r#"{{"error":{{"message":"Incorrect API key provided: {key}"}}}}"#);
+    let (base_url, _) = mock_server(move |_| (401, echo.clone()));
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(tmp.path(), &compat_llm(&base_url, Some("PODLING_TEST_KEY")));
+    let assert = podling(&tmp.path().join("cache"))
+        .env("PODLING_TEST_KEY", key)
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(stderr.contains("HTTP 401"), "{stderr}");
+    assert!(stderr.contains("$PODLING_TEST_KEY"), "{stderr}");
+    assert!(!stderr.contains(key), "{stderr}");
+}
+
+/// Runs the Tunguska example against a real server:
+///
+/// ```text
+/// PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b \
+///   cargo test -p podling-cli -- --ignored live
+/// ```
+///
+/// `PODLING_LIVE_LLM_KEY_ENV` may name a variable that holds an API key.
+#[test]
+#[ignore = "needs a real server: set PODLING_LIVE_LLM_URL and PODLING_LIVE_LLM_MODEL"]
+fn live_run_against_a_real_server() {
+    let (Ok(url), Ok(model)) = (
+        std::env::var("PODLING_LIVE_LLM_URL"),
+        std::env::var("PODLING_LIVE_LLM_MODEL"),
+    ) else {
+        eprintln!("PODLING_LIVE_LLM_URL / PODLING_LIVE_LLM_MODEL not set; skipping");
+        return;
+    };
+    let key_env = std::env::var("PODLING_LIVE_LLM_KEY_ENV").ok();
+    let mut llm = compat_llm(&url, key_env.as_deref());
+    llm = llm.replace("model = \"tiny\"", &format!("model = \"{model}\""));
+
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(tmp.path(), &llm);
+    let out = tmp.path().join("out");
+    podling(&tmp.path().join("cache"))
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .arg("--out")
+        .arg(&out)
+        .assert()
+        .success();
+    assert!(out.join("script.json").is_file());
 }
 
 #[test]

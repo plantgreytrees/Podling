@@ -280,7 +280,9 @@ impl LlmProvider for OpenAiCompat {
                     attempt += 1;
                 }
                 Err(failure) => {
-                    tracing::warn!(
+                    // Not a warning: the error below is the report, and the
+                    // caller shows it. Logging it too would print it twice.
+                    tracing::info!(
                         elapsed_ms = started.elapsed().as_millis() as u64,
                         attempts = attempt + 1,
                         "llm request failed"

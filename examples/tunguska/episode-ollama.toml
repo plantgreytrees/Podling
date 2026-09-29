@@ -1,0 +1,27 @@
+# The Tunguska episode, written by a local model instead of the offline fake.
+# Any server that speaks the OpenAI chat-completions protocol works: Ollama
+# (below), llama.cpp `llama-server`, vLLM, LM Studio, or OpenAI itself.
+#
+#   ollama pull llama3.1:8b
+#   cargo run -p podling-cli -- run --episode examples/tunguska/episode-ollama.toml
+#
+# For a hosted provider, change `base_url` and `model`, and add
+#   api_key_env = "OPENAI_API_KEY"
+# naming the environment variable that holds your key. The key itself never
+# goes in this file. Note that a hosted provider receives your source text.
+
+title = "The Tunguska event"
+topic = "the 1908 Tunguska explosion"
+target_minutes = 5
+sources = [
+  { kind = "local_files", root = "sources/eyewitness", independence_group = "eyewitness" },
+  { kind = "local_files", root = "sources/expedition", independence_group = "expedition" },
+]
+analysers = [{ kind = "quote_verifier" }]
+
+[llm]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+# A placeholder: use any instruct model your server has.
+model = "llama3.1:8b"
+temperature = 0.2

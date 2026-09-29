@@ -111,19 +111,19 @@ Depends on: openai-provider
 ### Step 4 — llm-cli-docs (., rust, normal)
 Tooling: implementer · gates code-reviewer · guards secrets-scan
 Depends on: grounded-prompts
-- [ ] 4.1 CLI errors: an unset key variable, an unreachable server and a 401 each print one readable line naming what to fix (the variable name, the URL), with no key and no stack dump → accept: CLI tests against the mock server and an unset variable assert the messages.
-- [ ] 4.2 `examples/tunguska/episode-ollama.toml` (`open_ai_compat`, `http://localhost:11434/v1`, a small instruct model name as a placeholder the user can change). A live smoke test in `tests/cli.rs` marked `#[ignore]` and gated on `PODLING_LIVE_LLM_URL` / `PODLING_LIVE_LLM_MODEL` → accept: `cargo test` skips it; `cargo test -- --ignored` runs it against a real server when the variables are set.
-- [ ] 4.3 `README.md` (how to point at Ollama or OpenAI, which environment variable holds the key, what privacy means when a hosted provider is used) and `docs/architecture.md` (provider table, the sentence-addressed quote flow, the retry policy, the updated status banner) → accept: every command shown was run against the mock or a live server, and every path resolves.
+- [x] 4.1 CLI errors: an unset key variable, an unreachable server and a 401 each print one readable line naming what to fix (the variable name, the URL), with no key and no stack dump → accept: CLI tests against the mock server and an unset variable assert the messages.
+- [x] 4.2 `examples/tunguska/episode-ollama.toml` (`open_ai_compat`, `http://localhost:11434/v1`, a small instruct model name as a placeholder the user can change). A live smoke test in `tests/cli.rs` marked `#[ignore]` and gated on `PODLING_LIVE_LLM_URL` / `PODLING_LIVE_LLM_MODEL` → accept: `cargo test` skips it; `cargo test -- --ignored` runs it against a real server when the variables are set.
+- [x] 4.3 `README.md` (how to point at Ollama or OpenAI, which environment variable holds the key, what privacy means when a hosted provider is used) and `docs/architecture.md` (provider table, the sentence-addressed quote flow, the retry policy, the updated status banner) → accept: every command shown was run against the mock or a live server, and every path resolves.
 
 ## Acceptance criteria
-- [ ] `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass offline.
-- [ ] An `open_ai_compat` episode parses; an episode containing an API key value is rejected; `SCHEMA_VERSION` was bumped for the schema change.
-- [ ] The API key never appears in a log line, an error message, a `Debug` output, a cache key, a fingerprint or an output artifact.
-- [ ] A non-http(s) `base_url`, an oversized response, a timeout, a 4xx and repeated 5xx each end in a readable `CoreError`; 429 and 5xx are retried at most twice.
-- [ ] Quotes from a real model are resolved through `Quote::from_document`; an invalid chunk or sentence reference is `InvalidProviderOutput`; `QuoteVerifier` reports zero errors on the canned end-to-end run.
-- [ ] A script citing a claim outside the ledger is still rejected (the Phase 1 check stays intact).
-- [ ] Changing the model, base URL, temperature or `PROMPT_VERSION` invalidates the claim and script stages in the cache; changing only the API key does not.
-- [ ] `README.md` and `docs/architecture.md` describe the provider and its privacy implications, and cited paths resolve.
+- [x] `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass offline.
+- [x] An `open_ai_compat` episode parses; an episode containing an API key value is rejected; `SCHEMA_VERSION` was bumped for the schema change.
+- [x] The API key never appears in a log line, an error message, a `Debug` output, a cache key, a fingerprint or an output artifact.
+- [x] A non-http(s) `base_url`, an oversized response, a timeout, a 4xx and repeated 5xx each end in a readable `CoreError`; 429 and 5xx are retried at most twice.
+- [x] Quotes from a real model are resolved through `Quote::from_document`; an invalid chunk or sentence reference is `InvalidProviderOutput`; `QuoteVerifier` reports zero errors on the canned end-to-end run.
+- [x] A script citing a claim outside the ledger is still rejected (the Phase 1 check stays intact).
+- [x] Changing the model, base URL, temperature or `PROMPT_VERSION` invalidates the claim and script stages in the cache; changing only the API key does not.
+- [x] `README.md` and `docs/architecture.md` describe the provider and its privacy implications, and cited paths resolve.
 
 ## Sequencing
 1 → 2 → 3 → 4. Each step leaves `main` green, and `FakeLlm` remains the default for every offline test.
@@ -147,4 +147,5 @@ Streaming, async/tokio, embeddings and NLI providers, TTS, PDF ingestion, MCP co
 - **1:** `crates/podling-types/tests/schema_snapshot.rs` pins `SCHEMA_VERSION`, so it changed with the bump (now 2). `LlmConfig` and `EpisodeSpec` lost `Eq` because `temperature` is an `f32`.
 - **2:** licences added by `ureq` with rustls: ISC (`ring`, `rustls-webpki`, `untrusted`), BSD-3-Clause (`subtle`) and CDLA-Permissive-2.0 (`webpki-roots`). All are permissive. There is no OpenSSL and no copyleft. Redirects are disabled so the `Authorization` header cannot follow one to another host. The constructor takes an injectable environment lookup (`from_config_with_env`), because `std::env::set_var` is `unsafe` in Rust 2024 and the workspace forbids `unsafe`.
 - **3:** JSON mode only guarantees a JSON *object*, so the claim-extraction reply changed from a bare array to `{ "claims": [...] }` (`ClaimsDraft`). `pipeline::run_with_llm` was added as a test seam so the end-to-end test can supply a canned provider. `PROMPT_VERSION` lives in `plugin/llm.rs`, and `plugin/openai.rs` has its own constant for the request layout.
+- **4:** the CLI tests caught the provider logging a `WARN` for a failure it also returned, so stderr showed two lines. The provider now logs that failure at `info`, and the caller shows the error. The CLI adds a fix hint for 401/403 (the key variable), 404 (the model name) and an unreachable server (the URL); it matches the provider's message wording, and the CLI tests pin both ends. Checked on the dev machine: the Ollama server there has no models installed, so `episode-ollama.toml` was run against it and failed with the 404 message above. A full live run against a real model is **not** verified.
 - **Known limit:** claim clustering is exact-text after normalisation, so a real model that paraphrases the same fact from two sources will not corroborate it. Semantic clustering belongs with the NLI provider, which is out of scope here.
