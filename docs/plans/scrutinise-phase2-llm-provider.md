@@ -132,6 +132,15 @@ Depends on: live-test-guard (README edit ordering)
 - [x] 4.2 Test the threshold by extracting the size check into a small pure fn (`fn is_large(input: &Value) -> bool`) and unit-testing both sides. → accept: `cargo test -p podling-core script` passes; the run still succeeds for oversized input, since this is a warning, not a limit.
 - [x] 4.3 Document in `README.md` (after the "What the model can and can't do" paragraph, `:136-141`) and `docs/architecture.md` (deferred list, `:126-131`): the script call sends the whole ledger plus every chunk's sentences, a small context window truncates it silently, so raise it (e.g. `OLLAMA_CONTEXT_LENGTH=16384`) and expect a warning; token budgeting is still deferred. → accept: both docs mention the warning and the setting; the "Deferred" list still names token budgeting.
 
+### Step 5 — typed-provider-error (., rust, normal) — promoted from follow-up on user request
+Tooling: implementer implementer · gates none · skills rust · guards fmt, clippy, test
+Depends on: script-input-size
+Scope: error.rs, lib.rs, plugin/openai.rs, plugin/llm.rs, tests/openai_provider.rs, podling-cli/src/commands.rs, docs/architecture.md
+- [x] 5.1 Add `pub enum ProviderFailure { Http(u16), Unreachable, TimedOut, Other }` to `error.rs`, a `kind: ProviderFailure` field on `CoreError::Provider`, and `CoreError::provider_failure(&self) -> Option<ProviderFailure>`, which looks through `Stage` wrappers. Re-export it from `lib.rs`. → accept: the display text is unchanged.
+- [x] 5.2 `openai.rs`: `Failure` carries the kind (HTTP status, `Timeout` → `TimedOut`, other transport errors → `Unreachable`, body-too-large and bad reply shape → `Other`); `FakeLlm`'s input error is `Other`. → accept: `tests/openai_provider.rs` asserts the kind for 401, 503, timeout and unreachable.
+- [x] 5.3 `commands.rs` `provider_hint` matches on `err.provider_failure()`, not message substrings. → accept: the four CLI hint tests in `tests/cli.rs` pass unchanged.
+- [x] 5.4 `docs/architecture.md` provider table: errors carry a `ProviderFailure` kind. → accept: the doc names the kind.
+
 ## Sequencing
 1 → 2 → 3 → 4. Units 1 and 2 are the security-relevant fixes and go first; 1 and 2 share `docs/architecture.md` and `tests/pipeline.rs`, and 3 and 4 share `README.md`, so they run in series, not parallel. No CHANGELOG task: the repo has no `CHANGELOG.md` (the executor confirms before skipping).
 
@@ -160,7 +169,7 @@ CONSUMERS:
 - VERSION bumps only invalidate cached stage outputs.
 
 ## Out of scope
-- F5 (PENDING follow-up, unit 5): replace the substring matching in `crates/podling-cli/src/commands.rs:67-95` (`provider_hint`) with a typed provider error (status/kind) on `CoreError`. Deferred because two tests pin both ends of the wording today; promote it when a third message is added.
+- (F5 was originally parked here; now Step 5.)
 - Semantic claim clustering and NLI grounding (a later phase; 2.x is a stopgap).
 - Token budgeting or chunked script generation (4.x only warns).
 - Running the live test against a real model (needs a model pulled into the Ollama container; a user action).

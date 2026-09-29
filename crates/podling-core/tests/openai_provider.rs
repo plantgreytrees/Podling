@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use podling_core::CoreError;
 use podling_core::plugin::{CompletionRequest, LlmProvider, LlmTask, OpenAiCompat};
+use podling_core::{CoreError, ProviderFailure};
 use podling_types::LlmConfig;
 use serde_json::{Value, json};
 
@@ -165,11 +165,15 @@ fn request() -> CompletionRequest {
     }
 }
 
-fn provider_message(err: CoreError) -> String {
+fn provider_error(err: CoreError) -> (ProviderFailure, String) {
     match err {
-        CoreError::Provider { plugin, message } => {
+        CoreError::Provider {
+            plugin,
+            kind,
+            message,
+        } => {
             assert_eq!(plugin, "open_ai_compat");
-            message
+            (kind, message)
         }
         other => panic!("expected a Provider error, got {other:?}"),
     }
@@ -209,7 +213,7 @@ fn a_401_is_readable_and_never_echoes_the_key() {
     // OpenAI's own 401 body quotes (part of) the key it was given.
     let body = format!(r#"{{"error":{{"message":"Incorrect API key provided: {KEY}."}}}}"#);
     let server = MockServer::start(vec![Reply::status(401, body)]);
-    let message = provider_message(
+    let (kind, message) = provider_error(
         provider(&server, Some(KEY), None)
             .complete(&request())
             .unwrap_err(),
@@ -217,6 +221,7 @@ fn a_401_is_readable_and_never_echoes_the_key() {
     assert!(message.contains("401"), "{message}");
     assert!(message.contains("Incorrect API key"), "{message}");
     assert!(!message.contains(KEY), "{message}");
+    assert_eq!(kind, ProviderFailure::Http(401));
     assert_eq!(server.request_count(), 1, "a 4xx must not be retried");
 }
 
@@ -240,12 +245,13 @@ fn a_429_is_retried_but_only_twice() {
         Reply::status(429, "slow down"),
         Reply::ok("{}"), // never reached
     ]);
-    let message = provider_message(
+    let (kind, message) = provider_error(
         provider(&server, None, None)
             .complete(&request())
             .unwrap_err(),
     );
     assert!(message.contains("429"), "{message}");
+    assert_eq!(kind, ProviderFailure::Http(429));
     assert_eq!(server.request_count(), 3);
 }
 
@@ -255,12 +261,13 @@ fn a_slow_server_times_out() {
         Reply::ok("{}").delayed(Duration::from_secs(4)),
         Reply::ok("{}"),
     ]);
-    let message = provider_message(
+    let (kind, message) = provider_error(
         provider(&server, None, Some(1))
             .complete(&request())
             .unwrap_err(),
     );
     assert!(message.contains("timed out"), "{message}");
+    assert_eq!(kind, ProviderFailure::TimedOut);
     assert_eq!(server.request_count(), 1, "a timeout must not be retried");
 }
 
@@ -268,23 +275,25 @@ fn a_slow_server_times_out() {
 fn an_oversized_body_is_rejected() {
     let filler = "x".repeat(5 * 1024 * 1024);
     let server = MockServer::start(vec![Reply::status(200, filler)]);
-    let message = provider_message(
+    let (kind, message) = provider_error(
         provider(&server, None, None)
             .complete(&request())
             .unwrap_err(),
     );
     assert!(message.contains("larger than 4 MiB"), "{message}");
+    assert_eq!(kind, ProviderFailure::Other);
 }
 
 #[test]
 fn a_body_that_is_not_a_chat_completion_is_a_shape_error() {
     let server = MockServer::start(vec![Reply::status(200, r#"{"unexpected":true}"#)]);
-    let message = provider_message(
+    let (kind, message) = provider_error(
         provider(&server, None, None)
             .complete(&request())
             .unwrap_err(),
     );
     assert!(message.contains("choices[0].message.content"), "{message}");
+    assert_eq!(kind, ProviderFailure::Other);
 }
 
 #[test]
@@ -293,10 +302,11 @@ fn an_unreachable_server_names_the_url() {
     let url = server.base_url.clone();
     // Nothing accepts on this port once the listener thread has returned.
     thread::sleep(Duration::from_millis(50));
-    let message = provider_message(
+    let (kind, message) = provider_error(
         provider(&server, None, Some(2))
             .complete(&request())
             .unwrap_err(),
     );
     assert!(message.contains(&url), "{message}");
+    assert_eq!(kind, ProviderFailure::Unreachable);
 }

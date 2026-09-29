@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
-use podling_core::{CoreError, DiskCache, pipeline};
+use podling_core::{CoreError, DiskCache, ProviderFailure, pipeline};
 use podling_types::{EpisodeSpec, LlmConfig, schema};
 
 pub fn export_schemas(out: &Path) -> Result<()> {
@@ -58,15 +58,17 @@ fn explain(spec: &EpisodeSpec, err: &CoreError) -> anyhow::Error {
         message.push_str(&cause.to_string());
         source = cause.source();
     }
-    match provider_hint(&spec.llm, &message) {
+    match err
+        .provider_failure()
+        .and_then(|kind| provider_hint(&spec.llm, kind))
+    {
         Some(hint) => anyhow!("{message} ({hint})"),
         None => anyhow!(message),
     }
 }
 
-/// Matches the wording of `OpenAiCompat`'s error messages ("answered HTTP
-/// 401", "request to <url> failed" / "timed out"); the CLI tests pin both ends.
-fn provider_hint(llm: &LlmConfig, message: &str) -> Option<String> {
+/// What to fix for a provider failure the user can act on.
+fn provider_hint(llm: &LlmConfig, kind: ProviderFailure) -> Option<String> {
     let LlmConfig::OpenAiCompat {
         base_url,
         model,
@@ -76,22 +78,21 @@ fn provider_hint(llm: &LlmConfig, message: &str) -> Option<String> {
     else {
         return None;
     };
-    if message.contains("answered HTTP 404") {
-        return Some(format!(
+    match kind {
+        ProviderFailure::Http(404) => Some(format!(
             "check that the server has a model called {model:?} (for Ollama: `ollama pull {model}`) and that base_url ends in /v1"
-        ));
-    }
-    if message.contains("answered HTTP 401") || message.contains("answered HTTP 403") {
-        return Some(match api_key_env {
+        )),
+        ProviderFailure::Http(401 | 403) => Some(match api_key_env {
             Some(var) => format!("check that ${var} holds a valid key for {base_url}"),
             None => format!(
                 "{base_url} wants a key: set llm.api_key_env to the name of the variable that holds it"
             ),
-        });
+        }),
+        ProviderFailure::Unreachable | ProviderFailure::TimedOut => Some(format!(
+            "is the server at {base_url} running and reachable?"
+        )),
+        ProviderFailure::Http(_) | ProviderFailure::Other => None,
     }
-    let unreachable = message.contains("request to") && message.contains("failed");
-    (unreachable || message.contains("timed out"))
-        .then(|| format!("is the server at {base_url} running and reachable?"))
 }
 
 pub fn cache_stats(cache_dir: &Path) -> Result<()> {

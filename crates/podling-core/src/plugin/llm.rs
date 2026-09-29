@@ -247,6 +247,7 @@ impl FakeLlm {
 fn invalid_input(message: impl Into<String>) -> CoreError {
     CoreError::Provider {
         plugin: "fake".into(),
+        kind: crate::error::ProviderFailure::Other,
         message: message.into(),
     }
 }

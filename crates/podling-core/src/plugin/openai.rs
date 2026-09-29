@@ -19,7 +19,7 @@ use podling_types::LlmConfig;
 use serde_json::{Value, json};
 
 use super::llm::{Completion, CompletionRequest, LlmProvider};
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ProviderFailure, Result};
 
 /// Bump when the way a request is built changes (message layout,
 /// `response_format`, …). Part of the fingerprint, so it invalidates the cache.
@@ -195,19 +195,29 @@ impl OpenAiCompat {
         );
         Err(Failure {
             retryable: status == 429 || status >= 500,
+            kind: ProviderFailure::Http(status),
             message,
         })
     }
 
-    fn describe_transport_error(&self, err: &ureq::Error) -> String {
+    fn describe_transport_error(&self, err: &ureq::Error) -> (ProviderFailure, String) {
         match err {
-            ureq::Error::Timeout(_) => format!("request to {} timed out", self.base_url),
-            ureq::Error::BodyExceedsLimit(_) => format!(
-                "response from {} is larger than {} MiB",
-                self.base_url,
-                MAX_RESPONSE_BYTES / (1024 * 1024)
+            ureq::Error::Timeout(_) => (
+                ProviderFailure::TimedOut,
+                format!("request to {} timed out", self.base_url),
             ),
-            other => self.redact(format!("request to {} failed: {other}", self.base_url)),
+            ureq::Error::BodyExceedsLimit(_) => (
+                ProviderFailure::Other,
+                format!(
+                    "response from {} is larger than {} MiB",
+                    self.base_url,
+                    MAX_RESPONSE_BYTES / (1024 * 1024)
+                ),
+            ),
+            other => (
+                ProviderFailure::Unreachable,
+                self.redact(format!("request to {} failed: {other}", self.base_url)),
+            ),
         }
     }
 
@@ -234,9 +244,10 @@ impl OpenAiCompat {
         }
     }
 
-    fn error(&self, message: impl Into<String>) -> CoreError {
+    fn error(&self, kind: ProviderFailure, message: impl Into<String>) -> CoreError {
         CoreError::Provider {
             plugin: PLUGIN.into(),
+            kind,
             message: message.into(),
         }
     }
@@ -287,12 +298,13 @@ impl LlmProvider for OpenAiCompat {
                         attempts = attempt + 1,
                         "llm request failed"
                     );
-                    return Err(self.error(failure.message));
+                    return Err(self.error(failure.kind, failure.message));
                 }
             }
         };
 
-        let reply = parse_reply(&raw).map_err(|message| self.error(message))?;
+        let reply =
+            parse_reply(&raw).map_err(|message| self.error(ProviderFailure::Other, message))?;
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis() as u64,
             attempts = attempt + 1,
@@ -309,13 +321,15 @@ impl LlmProvider for OpenAiCompat {
 /// A failed attempt; `retryable` is true for a 429 or 5xx.
 struct Failure {
     retryable: bool,
+    kind: ProviderFailure,
     message: String,
 }
 
 impl Failure {
-    fn fatal(message: String) -> Self {
+    fn fatal((kind, message): (ProviderFailure, String)) -> Self {
         Self {
             retryable: false,
+            kind,
             message,
         }
     }

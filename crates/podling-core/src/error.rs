@@ -21,7 +21,11 @@ pub enum CoreError {
     Config { message: String },
 
     #[error("provider {plugin} failed: {message}")]
-    Provider { plugin: String, message: String },
+    Provider {
+        plugin: String,
+        kind: ProviderFailure,
+        message: String,
+    },
 
     #[error("stage {stage} got invalid output from its provider: {message}")]
     InvalidProviderOutput {
@@ -37,7 +41,29 @@ pub enum CoreError {
     },
 }
 
+/// What kind of provider failure it was, so callers can react (say, suggest
+/// a fix) without parsing the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderFailure {
+    /// The server answered with this non-2xx status.
+    Http(u16),
+    /// No answer: connection refused, DNS failure, TLS error and the like.
+    Unreachable,
+    TimedOut,
+    /// Anything else, such as a reply too large or not shaped like the API.
+    Other,
+}
+
 impl CoreError {
+    /// The provider failure behind this error, looking through stage wrappers.
+    pub fn provider_failure(&self) -> Option<ProviderFailure> {
+        match self {
+            Self::Provider { kind, .. } => Some(*kind),
+            Self::Stage { source, .. } => source.provider_failure(),
+            _ => None,
+        }
+    }
+
     pub(crate) fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         Self::Io {
             path: path.into(),
