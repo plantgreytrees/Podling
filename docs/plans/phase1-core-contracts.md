@@ -235,7 +235,7 @@ Scaffold → types (the contract everything depends on) → cache (depends on id
 Real LLM providers (Ollama/OpenAI-compatible HTTP), TTS/embeddings/NLI/ASR traits and models, Python sidecar protocol, MCP connectors, PDF ingestion (pdfium/Docling), NLI-based stance scoring (phase 1 uses Supports-only evidence), audio rendering and mixing, async/tokio, CHANGELOG (pre-release; no users yet).
 
 ## Execution log (2026-09-29)
-All 7 units are built on branch `worktree-phase1-core-contracts`: 2649fca (ws-scaffold), 676ed57 (artifact-types), eb40391 (content-cache), a4a2c0f (plugin-contracts), a4d1229 (stage-pipeline), 5117688 (cli), plus the docs commit. The gate is green: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, and `cargo test --workspace` (65 passed, 0 failed); gitleaks is clean. The rows are **PARKED** only because the background job may not merge into `main`, so the user performs that merge.
+All 7 units are built on branch `worktree-phase1-core-contracts`: 2649fca (ws-scaffold), 676ed57 (artifact-types), eb40391 (content-cache), a4a2c0f (plugin-contracts), a4d1229 (stage-pipeline), 5117688 (cli), plus the docs commit. The gate is green: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, and `cargo test --workspace` (65 passed, 0 failed); gitleaks is clean. Merged to `main` on 2026-09-30 at the user's request, together with the `scrutinise-phase1-core-contracts` fixes.
 
 Deviations:
 - The example and fixture sources live in one directory per independence group (`sources/eyewitness/`, `sources/expedition/`). `LocalFilesConnector` assigns one group per root, so two flat files would share a group.
