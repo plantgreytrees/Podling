@@ -1,0 +1,13 @@
+[package]
+name = "podling-core"
+description = "Podling pipeline, content cache, and plugin contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+podling-types.workspace = true
+
+[lints]
+workspace = true

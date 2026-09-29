@@ -28,7 +28,7 @@ units:
     scope:
       read: [.claude/CLAUDE.md, .gitignore]
       docs: [docs/plans/phase1-core-contracts.md]
-      write: [Cargo.toml, rust-toolchain.toml, clippy.toml, rustfmt.toml, .gitignore,
+      write: [Cargo.toml, Cargo.lock, rust-toolchain.toml, clippy.toml, rustfmt.toml, .gitignore,
               crates/podling-types/Cargo.toml, crates/podling-types/src/lib.rs,
               crates/podling-core/Cargo.toml, crates/podling-core/src/lib.rs,
               crates/podling-cli/Cargo.toml, crates/podling-cli/src/main.rs]

@@ -1,0 +1,6 @@
+# Artifacts are hashed for the content cache, so iteration order must be
+# deterministic. Use BTreeMap / BTreeSet instead.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "non-deterministic order breaks content hashing; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "non-deterministic order breaks content hashing; use BTreeSet" },
+]

@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+podling-types = { path = "crates/podling-types" }
+podling-core = { path = "crates/podling-core" }
+
+serde = { version = "1.0", features = ["derive"] }
+# Never enable serde_json's `preserve_order`: cache keys rely on its default
+# sorted-key maps for canonical JSON.
+serde_json = "1.0"
+schemars = "1.2"
+blake3 = "1.8"
+thiserror = "2.0"
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+toml = "1.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+tempfile = "3.27"
+assert_cmd = "2.2"
+predicates = "3"
+insta = { version = "1.48", features = ["json"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+disallowed_types = "deny"

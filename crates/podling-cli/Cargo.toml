@@ -1,0 +1,18 @@
+[package]
+name = "podling-cli"
+description = "The podling command-line interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "podling"
+path = "src/main.rs"
+
+[dependencies]
+podling-types.workspace = true
+podling-core.workspace = true
+
+[lints]
+workspace = true
