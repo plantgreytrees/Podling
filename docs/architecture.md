@@ -50,7 +50,8 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
 - malformed JSON;
 - a quote that names an unknown chunk or a sentence the chunk doesn't have
   (or that doesn't resolve in its document);
-- a citation of a claim id that isn't in the ledger.
+- a citation of a claim id that isn't in the ledger;
+- a claim the chunk doesn't state (see the grounding check below).
 
 Both LLM stages call the model through
 [`complete_validated`](../crates/podling-core/src/plugin/llm.rs). If a reply fails
@@ -163,6 +164,16 @@ quoted span (straight or curly marks, three or more words) in a turn that none o
 turn's quote refs covers, so invented words can't pass as a quotation by skipping
 the ref. A successful injection can therefore change wording, but it can't invent a
 quote or a citation without the run reporting it.
+
+**Grounding check (a stopgap).** A claim becomes evidence that its chunk supports it,
+so an invented claim would otherwise look SingleSource or even Corroborated. Claim
+extraction therefore rejects a reply containing a claim whose content words (three or
+more characters, or any number, minus stop words) are less than 60% present in the
+chunk, or whose numbers aren't all present. The model gets one retry with the reason,
+then the run fails naming the chunk. The check is lexical. It catches invention and
+knowledge pulled from the model's memory, and tolerates paraphrase. It does not catch
+a subtle distortion made with the passage's own words; that needs the NLI provider,
+a later phase.
 
 **Known limit.** Claims merge by exact normalised text. A model that paraphrases one
 fact from two sources will not corroborate it. Semantic clustering belongs with the
