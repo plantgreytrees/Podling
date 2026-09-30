@@ -255,7 +255,7 @@ pub enum EvidenceBasis {
     /// This chunk stated the claim in other words; merged by `cluster_claims`.
     Merged { wording: String, entailment_pm: PerMille },   // min of both directions
     /// NLI scored this premise window of the chunk against the claim.
-    Nli { premise: TextSpan, entailment_pm: PerMille, contradiction_pm: PerMille },
+    Nli { premise: TextSpan, similarity_pm: PerMille, entailment_pm: PerMille, contradiction_pm: PerMille },
 }
 
 /// A probability in thousandths, 0..=1000. Deserialisation rejects > 1000.
@@ -285,7 +285,7 @@ per chunk, so they stay well under DeBERTa's 512 tokens. For each claim, candida
 whose independence group has no evidence on the claim yet. Retrieve the top `RETRIEVE_K = 4` by cosine,
 keeping only those at or above `MIN_RETRIEVAL_COS = 0.30`, then score (premise = window, hypothesis = claim):
 - `entailment_pm ≥ SUPPORT_ENTAIL_PM = 800` → `Supports`;
-- else `contradiction_pm ≥ CONTRADICT_PM = 900` → `Contradicts`;
+- else `contradiction_pm ≥ CONTRADICT_PM = 950` **and** the window's retrieval similarity `≥ MIN_CONTRADICT_COS = 0.60` → `Contradicts`. A contradiction only counts between passages about the same thing: the spike found DeBERTa gives 0.903 contradiction to the unrelated pair "Kulik reached the site in 1927" / "No impact crater was found". The similarity is stored as `similarity_pm` so the decision can be audited;
 - else nothing.
 
 **Cost bound:** at most `RETRIEVE_K × claims` NLI pairs, plus `claims + windows` embeddings, per run
@@ -311,11 +311,11 @@ model_dir = "models/nli-deberta-v3-base"   # relative to the episode file
 ### Step 1 — nli-spike (., rust, normal)
 Tooling: implementer · gates code-reviewer, dependency-auditor, idiom-reviewer · skills language-aware-planning · guards fmt/clippy/test
 Depends on: none
-- [ ] 1.1 Add `candle-core`, `candle-nn`, `candle-transformers` (0.11, default features, i.e. CPU) and `tokenizers` (0.22, `default-features = false`; add back only what `tokenizer.json` needs to load, and record which) to `[workspace.dependencies]` and podling-core → accept: `cargo build -p podling-core` succeeds with no build-time network download or C++ toolchain requirement beyond what cargo already needs
-- [ ] 1.2 Write `plugin/cross_encoder.rs`: `CrossEncoder::load(model_dir)` reads `config.json`, `tokenizer.json` and `model.safetensors` (never `pytorch_model.bin`: it is a pickle); `scores(&[(premise, hypothesis)]) -> Vec<[f32; 3]>` in (entailment, neutral, contradiction) order via `id2label`, truncating the pair to 512 tokens; missing files → `CoreError::Config` naming the `hf download` command. Explain the candle idioms (`VarBuilder` over mmapped safetensors, `Tensor` on `Device::Cpu`, softmax over logits) in comments → accept: unit test that a config with an unknown label set is a Config error
-- [ ] 1.3 Write `scripts/nli_reference.py` (torch + transformers, dev-only) that dumps softmax scores for 6 fixed pairs (entail/neutral/contradict, including 1907-vs-1908 and the "80 million trees" paraphrase) to `tests/fixtures/nli/reference_logits.json`; add an `#[ignore]` test `cross_encoder_parity` reading `PODLING_NLI_MODEL_DIR` that asserts every probability within 0.02 of the reference and the argmax equal → accept: `PODLING_NLI_MODEL_DIR=… cargo test -p podling-core -- --ignored parity` passes; record ms/pair on this CPU in "Verification background"
-- [ ] 1.4 Audit licences of every crate added to `Cargo.lock` (dependency-auditor) → accept: no AGPL/GPL/non-commercial; list recorded below
-- [ ] 1.5 Fallback, **only if 1.3 cannot pass**: replace candle with `ort` (`default-features = false`, no `download-binaries`, ONNX Runtime from the system) behind the same `CrossEncoder` API, and record why → accept: same parity test passes
+- [x] 1.1 Add `candle-core`, `candle-nn`, `candle-transformers` (0.11, default features, i.e. CPU) and `tokenizers` (0.22, `default-features = false`; add back only what `tokenizer.json` needs to load, and record which) to `[workspace.dependencies]` and podling-core → accept: `cargo build -p podling-core` succeeds with no build-time network download or C++ toolchain requirement beyond what cargo already needs
+- [x] 1.2 Write `plugin/cross_encoder.rs`: `CrossEncoder::load(model_dir)` reads `config.json`, `tokenizer.json` and `model.safetensors` (never `pytorch_model.bin`: it is a pickle); `scores(&[(premise, hypothesis)]) -> Vec<[f32; 3]>` in (entailment, neutral, contradiction) order via `id2label`, truncating the pair to 512 tokens; missing files → `CoreError::Config` naming the `hf download` command. Explain the candle idioms (`VarBuilder` over mmapped safetensors, `Tensor` on `Device::Cpu`, softmax over logits) in comments → accept: unit test that a config with an unknown label set is a Config error
+- [x] 1.3 Write `scripts/nli_reference.py` (torch + transformers, dev-only) that dumps softmax scores for 6 fixed pairs (entail/neutral/contradict, including 1907-vs-1908 and the "80 million trees" paraphrase) to `tests/fixtures/nli/reference_logits.json`; add an `#[ignore]` test `cross_encoder_parity` reading `PODLING_NLI_MODEL_DIR` that asserts every probability within 0.02 of the reference and the argmax equal → accept: `PODLING_NLI_MODEL_DIR=… cargo test -p podling-core -- --ignored parity` passes; record ms/pair on this CPU in "Verification background"
+- [x] 1.4 Audit licences of every crate added to `Cargo.lock` (dependency-auditor) → accept: no AGPL/GPL/non-commercial; list recorded below
+- [x] 1.5 (not needed: 1.3 passed) Fallback, **only if 1.3 cannot pass**: replace candle with `ort` (`default-features = false`, no `download-binaries`, ONNX Runtime from the system) behind the same `CrossEncoder` API, and record why → accept: same parity test passes
 
 ### Step 2 — ledger-contracts (., rust, normal)
 Tooling: implementer · gates code-reviewer, api-reviewer, idiom-reviewer · skills language-aware-planning · guards fmt/clippy/test
@@ -419,6 +419,13 @@ CONSUMERS:
 - The Contested-claim LLM adjudicator (next phase; `docs/handoff.md` will say so).
 - Replacing the lexical grounding check in `extract_claims.rs` with NLI. It is cheap once `NliProvider` exists (one pair per claim: chunk window ⊨ claim), so it goes in the handoff as a follow-up.
 - GPU NLI (candle `cuda` feature), TTS, MCP connectors, PDF ingestion, token budgeting.
+
+## Spike results (unit 1, merged d70c35b)
+- candle 0.11 `DebertaV2SeqClassificationModel` matches transformers 5.17 on all 6 reference pairs, batched with padding and alone: **largest difference 0.000004** (tolerance tightened to 0.001), **~55–60 ms per pair** on CPU (dependencies at opt-level 3 in dev).
+- `tokenizers` needs **no** default features: this `tokenizer.json` is Precompiled normaliser + Metaspace + Unigram, no regex, so no `onig`/C code.
+- Weights are loaded with `VarBuilder::from_buffered_safetensors` (safe); `from_mmaped_safetensors` is an `unsafe fn` and the workspace forbids `unsafe`.
+- Reference scores (entailment / neutral / contradiction): the paraphrase 0.998/0.002/0.000; **its reverse 0.000/1.000/0.000** (the premise lacks "over the Tunguska forest"), so bidirectional merging only joins claims with equal information and the stance stage corroborates the rest; 1908→1907 0.002/0.003/0.995; unrelated Kulik/crater **0.000/0.097/0.903** (a false contradiction; hence `CONTRADICT_PM = 950` plus `MIN_CONTRADICT_COS`); away→towards 0.000/0.000/1.000; two-sentence window 0.994/0.006/0.000.
+- Licences of the 108 crates added to `Cargo.lock`: all permissive (MIT / Apache-2.0 / BSD-2 / Zlib / Unicode-3.0 / BSL-1.0 / Unlicense alternatives); `r-efi` is `MIT OR Apache-2.0 OR LGPL-2.1+`, used under MIT. No GPL-only, AGPL or non-commercial terms.
 
 ## Live results
 (filled by unit 6)
