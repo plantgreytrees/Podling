@@ -57,9 +57,14 @@ pub enum ProviderFailure {
 impl CoreError {
     /// The provider failure behind this error, looking through stage wrappers.
     pub fn provider_failure(&self) -> Option<ProviderFailure> {
+        self.provider().map(|(_, kind)| kind)
+    }
+
+    /// Which plugin failed and how, looking through stage wrappers.
+    pub fn provider(&self) -> Option<(&str, ProviderFailure)> {
         match self {
-            Self::Provider { kind, .. } => Some(*kind),
-            Self::Stage { source, .. } => source.provider_failure(),
+            Self::Provider { plugin, kind, .. } => Some((plugin, *kind)),
+            Self::Stage { source, .. } => source.provider(),
             _ => None,
         }
     }

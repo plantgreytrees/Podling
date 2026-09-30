@@ -7,9 +7,11 @@
 pub mod analyser;
 pub mod cross_encoder;
 pub mod embedding;
+mod http;
 pub mod llm;
 pub mod nli;
 pub mod openai;
+pub mod openai_embeddings;
 pub mod source;
 
 use std::path::Path;
@@ -21,6 +23,7 @@ use podling_types::{
 use crate::error::{CoreError, Result};
 
 pub use analyser::{Analyser, QuoteVerifier};
+pub use cross_encoder::CrossEncoderNli;
 pub use embedding::{EmbeddingProvider, FakeEmbedding, cosine, embed_checked};
 pub use llm::{
     ClaimDraft, ClaimsDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LlmProvider,
@@ -29,6 +32,7 @@ pub use llm::{
 };
 pub use nli::{FakeNli, NliPair, NliProvider, NliScores, score_checked};
 pub use openai::OpenAiCompat;
+pub use openai_embeddings::OpenAiEmbeddings;
 pub use source::{LocalFilesConnector, SourceConnector};
 
 /// Builds the LLM provider. Fallible because a real provider reads its
@@ -70,20 +74,22 @@ pub fn build_grounding(spec: &EpisodeSpec, base_dir: &Path) -> Result<Option<Gro
 pub fn build_embedder(config: &EmbeddingConfig) -> Result<Box<dyn EmbeddingProvider>> {
     match config {
         EmbeddingConfig::Fake {} => Ok(Box::new(FakeEmbedding)),
-        EmbeddingConfig::OpenAiCompat { .. } => Err(CoreError::Config {
-            message: "the open_ai_compat embedding provider is not available yet".into(),
-        }),
+        EmbeddingConfig::OpenAiCompat { .. } => {
+            Ok(Box::new(OpenAiEmbeddings::from_config(config)?))
+        }
     }
 }
 
 /// Builds the NLI provider. A relative `model_dir` resolves against
 /// `base_dir`, normally the directory containing the episode file.
-pub fn build_nli(config: &NliConfig, _base_dir: &Path) -> Result<Box<dyn NliProvider>> {
+/// The real model is not loaded here, only checked and fingerprinted.
+pub fn build_nli(config: &NliConfig, base_dir: &Path) -> Result<Box<dyn NliProvider>> {
     match config {
         NliConfig::Fake {} => Ok(Box::new(FakeNli)),
-        NliConfig::CrossEncoder { .. } => Err(CoreError::Config {
-            message: "the cross_encoder NLI provider is not available yet".into(),
-        }),
+        // `join` keeps an absolute `model_dir` as it is.
+        NliConfig::CrossEncoder { model_dir } => {
+            Ok(Box::new(CrossEncoderNli::new(&base_dir.join(model_dir))?))
+        }
     }
 }
 
