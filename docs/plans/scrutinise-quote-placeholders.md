@@ -79,9 +79,9 @@ Every command runs with `PATH="$HOME/.cargo/bin:$PATH"`.
 Tooling: implementer implementer · gates code-reviewer, security-auditor · guards cargo fmt/clippy/test
 Depends on: none
 
-- [ ] 1.1 In `fill_quote_placeholders` (`crates/podling-core/src/text.rs`), after the typed-quotation check, scan the model's own text (the parts, with each placeholder as one token) with the same state machine as `quotations`. Reject when a `"` or `“` is still open at the end, or when a `”` appears while nothing is open. The rejection is a new `PlaceholderError::Unclosed(String)` holding the mark and up to 40 following characters. Its message says to remove the mark, that quotes come only from `{{quote:N}}`, and to write inches as a word. Leave `quotations` unchanged (QuoteVerifier uses it). Bump `WriteScript::VERSION` 5 → 6 with a `// 6:` line in `stages/script.rs` → accept: `grep -n "VERSION: u32 = 6" crates/podling-core/src/stages/script.rs` matches.
-- [ ] 1.2 (F3) Make the placeholder token in that scan the placeholder's own text (`{{quote:N}}`) instead of `_`, so a `Typed` span shows the model what it wrote. Cap the span echoed by `Typed`, `Malformed` and `Unclosed` at 80 characters, with `…` when cut → accept: a unit test that `"{{quote:0}} and {{quote:1}}"` gives a `Typed` span containing `{{quote:0}}`, and a 200-character typed span is echoed as at most 81 characters.
-- [ ] 1.3 Tests. Unit tests in `text.rs`:
+- [x] 1.1 In `fill_quote_placeholders` (`crates/podling-core/src/text.rs`), after the typed-quotation check, scan the model's own text (the parts, with each placeholder as one token) with the same state machine as `quotations`. Reject when a `"` or `“` is still open at the end, or when a `”` appears while nothing is open. The rejection is a new `PlaceholderError::Unclosed(String)` holding the mark and up to 40 following characters. Its message says to remove the mark, that quotes come only from `{{quote:N}}`, and to write inches as a word. Leave `quotations` unchanged (QuoteVerifier uses it). Bump `WriteScript::VERSION` 5 → 6 with a `// 6:` line in `stages/script.rs` → accept: `grep -n "VERSION: u32 = 6" crates/podling-core/src/stages/script.rs` matches.
+- [x] 1.2 (F3) Make the placeholder token in that scan the placeholder's own text (`{{quote:N}}`) instead of `_`, so a `Typed` span shows the model what it wrote. Cap the span echoed by `Typed`, `Malformed` and `Unclosed` at 80 characters, with `…` when cut → accept: a unit test that `"{{quote:0}} and {{quote:1}}"` gives a `Typed` span containing `{{quote:0}}`, and a 200-character typed span is echoed as at most 81 characters.
+- [x] 1.3 Tests. Unit tests in `text.rs`:
   - `He said "oops. {{quote:0}} Then “every tree caught fire at once” ended.` → `Unclosed`
   - a straight-quote version, `He said “oops. {{quote:0}} Then "every tree caught fire at once" ended.` → `Unclosed`
   - `a 5" shell {{quote:0}}` → `Unclosed`
@@ -91,7 +91,7 @@ Depends on: none
   - a quote whose text is `He said “hello` inserted by `{{quote:0}}` → Ok
 
   A stage test in `script.rs`: the first case through `WriteScript::run` is `InvalidProviderOutput` with `turn 0` in the message, after 2 calls → accept: `cargo test -p podling-core` passes.
-- [ ] 1.4 In `docs/architecture.md`, "Sentence-addressed quotes", add that the model's text must not contain a stray or unclosed quotation mark. One would hide the quotation check, because `quotations` stops at an unmatched opener. Note that `'…'`, `«…»` and `„…“` are not scanned → accept: the section mentions "unclosed".
+- [x] 1.4 In `docs/architecture.md`, "Sentence-addressed quotes", add that the model's text must not contain a stray or unclosed quotation mark. One would hide the quotation check, because `quotations` stops at an unmatched opener. Note that `'…'`, `«…»` and `„…“` are not scanned → accept: the section mentions "unclosed".
 
 ### Step 2 — grounding-share (., rust, high)
 Tooling: implementer implementer · gates code-reviewer, security-auditor · guards cargo fmt/clippy/test

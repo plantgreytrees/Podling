@@ -184,6 +184,13 @@ was the flaw. Details:
 - Curly marks are used because `“` closes only on `”`: a straight `"` inside a source
   sentence can't pair with a mark elsewhere in the turn.
 - A placeholder may appear more than once, and gives the same words each time.
+- The model's own text must have no stray or unclosed quotation mark: an opening `"` or `“`
+  that never closes, or a `”` with nothing open. `quotations` finds nothing after an
+  unmatched opener, so one stray mark would hide a typed quotation from this check and from
+  `QuoteVerifier`. A mark inside a source sentence is allowed, since only the model's words
+  are checked. Single quotes and `«…»`/`„…“` are not scanned.
+- Model text the rejection repeats back is capped at 80 characters, since it goes into the
+  retry's instructions.
 
 **Prompt injection.** Source text can't be sanitised, so it is contained instead.
 The instructions call ledger and source text untrusted data, and that text reaches the

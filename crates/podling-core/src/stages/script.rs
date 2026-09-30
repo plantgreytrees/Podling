@@ -46,7 +46,9 @@ impl Stage for WriteScript<'_> {
     // 4: a turn must speak its quotes verbatim and quote nothing else.
     // 5: the model writes `{{quote:N}}` and the stage fills in the sentence, so
     //    it never types quoted words.
-    const VERSION: u32 = 5;
+    // 6: a stray or unclosed quotation mark in the model's text is rejected,
+    //    since it would hide a typed quotation from every later check.
+    const VERSION: u32 = 6;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -563,6 +565,17 @@ mod tests {
             "{message}"
         );
         assert!(message.contains("{{quote:N}}"), "{message}");
+    }
+
+    #[test]
+    fn a_stray_mark_hiding_a_typed_quotation_is_rejected() {
+        let (err, calls) = rejected(
+            "He said \"oops. {{quote:0}} Then \u{201C}every tree caught fire at once\u{201D} ended.",
+        );
+        assert_eq!(calls, 2);
+        let message = reason(&err);
+        assert!(message.contains("turn 0"), "{message}");
+        assert!(message.contains("quotation mark"), "{message}");
     }
 
     #[test]

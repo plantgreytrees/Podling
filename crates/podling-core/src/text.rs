@@ -73,6 +73,23 @@ pub(crate) enum PlaceholderError {
     Unused(usize),
     /// Quoted words the model typed itself.
     Typed(String),
+    /// A quotation mark the model typed that is never closed, or a closing
+    /// mark with nothing open: the mark and a little of what follows it.
+    Unclosed(String),
+}
+
+/// Longest piece of model text an error repeats back. The reason goes into
+/// the retry's instructions, so a long echo would crowd them.
+const MAX_ECHO_CHARS: usize = 80;
+
+/// `text`, cut to [`MAX_ECHO_CHARS`] with `…` when longer.
+fn echo(text: &str) -> String {
+    let mut chars = text.chars();
+    let mut out: String = chars.by_ref().take(MAX_ECHO_CHARS).collect();
+    if chars.next().is_some() {
+        out.push('…');
+    }
+    out
 }
 
 impl fmt::Display for PlaceholderError {
@@ -102,8 +119,33 @@ impl fmt::Display for PlaceholderError {
                 "the text puts \"{span}\" in quotation marks, but you must not type quoted \
                  words; write {PLACEHOLDER_SYNTAX} where a quote goes and leave the words out"
             ),
+            Self::Unclosed(at) => write!(
+                f,
+                "the text has a quotation mark that is not part of a quote, at \"{at}\"; remove \
+                 it, since quotes come only from {PLACEHOLDER_SYNTAX} (write inches as a word)"
+            ),
         }
     }
+}
+
+/// Byte offset of the first quotation mark in `text` that doesn't pair up the
+/// way [`quotations`] pairs them: an opening `"` or `“` that is never closed,
+/// or a `”` with nothing open.
+fn stray_mark(text: &str) -> Option<usize> {
+    let mut open: Option<(usize, char)> = None;
+    for (i, c) in text.char_indices() {
+        match open {
+            None => match c {
+                '"' => open = Some((i, '"')),
+                '\u{201C}' => open = Some((i, '\u{201D}')),
+                '\u{201D}' => return Some(i),
+                _ => {}
+            },
+            Some((_, close)) if c == close => open = None,
+            Some(_) => {}
+        }
+    }
+    open.map(|(start, _)| start)
 }
 
 /// A turn's text cut at its placeholders.
@@ -136,7 +178,7 @@ fn split_placeholders(text: &str) -> Result<Vec<Part<'_>>, PlaceholderError> {
                 .take_while(|c| !c.is_whitespace())
                 .take(40)
                 .collect();
-            return Err(PlaceholderError::Malformed(token));
+            return Err(PlaceholderError::Malformed(echo(&token)));
         };
         let mut before = start;
         let mut after = close + "}}".len();
@@ -176,17 +218,24 @@ pub(crate) fn fill_quote_placeholders(
 ) -> Result<String, PlaceholderError> {
     let parts = split_placeholders(text)?;
 
-    // Each placeholder counts as one word, so `"as {{quote:0}} says"` is still
-    // seen as three typed words.
-    let bare: String = parts
-        .iter()
-        .map(|part| match part {
-            Part::Text(text) => text,
-            Part::Quote(_) => "_",
-        })
-        .collect();
-    if let Some(span) = quotations(&bare).into_iter().next() {
-        return Err(PlaceholderError::Typed(span.to_owned()));
+    // The model's own words, each placeholder kept as one word, so
+    // `"as {{quote:0}} says"` is still seen as three typed words.
+    let mut typed = String::with_capacity(text.len());
+    for part in &parts {
+        match part {
+            Part::Text(text) => typed.push_str(text),
+            Part::Quote(index) => typed.push_str(&placeholder(*index)),
+        }
+    }
+    if let Some(span) = quotations(&typed).into_iter().next() {
+        return Err(PlaceholderError::Typed(echo(span)));
+    }
+    // `quotations` finds nothing after an opening mark that never closes, so
+    // one stray `"` would hide a typed quotation from it, and from the checks
+    // that run on the filled-in text. Model text must be balanced.
+    if let Some(at) = stray_mark(&typed) {
+        let excerpt: String = typed[at..].chars().take(41).collect();
+        return Err(PlaceholderError::Unclosed(echo(&excerpt)));
     }
 
     let mut used = vec![false; quotes.len()];
@@ -353,6 +402,55 @@ mod tests {
     }
 
     #[test]
+    fn a_stray_mark_that_would_hide_a_typed_quotation_is_rejected() {
+        for text in [
+            // A stray straight mark swallows the curly quotation after it.
+            "He said \"oops. {{quote:0}} Then \u{201C}every tree caught fire at once\u{201D} ended.",
+            // A stray curly mark swallows the straight quotation after it.
+            "He said \u{201C}oops. {{quote:0}} Then \"every tree caught fire at once\" ended.",
+            "a 5\" shell {{quote:0}}",
+            "fell\u{201D} {{quote:0}}",
+            "{{quote:0}}\u{201D}",
+        ] {
+            assert!(
+                matches!(
+                    fill_quote_placeholders(text, &[SKY]),
+                    Err(PlaceholderError::Unclosed(_))
+                ),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_source_quote_with_its_own_stray_mark_is_still_filled_in() {
+        let filled = fill_quote_placeholders("{{quote:0}}", &["He said \u{201C}hello"]).unwrap();
+        assert_eq!(filled, "\u{201C}He said \u{201C}hello\u{201D}");
+        // The balance rule is for the model's words, not the source's.
+        assert!(fill_quote_placeholders("\u{201C}{{quote:0}}\u{201D}", &[SKY]).is_ok());
+    }
+
+    #[test]
+    fn a_typed_span_shows_the_placeholders_the_model_wrote() {
+        let Err(PlaceholderError::Typed(span)) =
+            fill_quote_placeholders("\"{{quote:0}} and {{quote:1}}\"", &[SKY, "Trees fell."])
+        else {
+            panic!("expected Typed");
+        };
+        assert_eq!(span, "{{quote:0}} and {{quote:1}}");
+    }
+
+    #[test]
+    fn model_text_repeated_in_an_error_is_capped() {
+        let long = format!("\"{}\" {{{{quote:0}}}}", "word ".repeat(40));
+        let Err(PlaceholderError::Typed(span)) = fill_quote_placeholders(&long, &[SKY]) else {
+            panic!("expected Typed");
+        };
+        assert_eq!(span.chars().count(), MAX_ECHO_CHARS + 1);
+        assert!(span.ends_with('…'));
+    }
+
+    #[test]
     fn a_quote_is_inserted_as_it_is_and_never_filled_in_again() {
         let tricky = "The tag {{quote:0}} is literal.";
         let filled = fill_quote_placeholders("He read {{quote:0}} aloud.", &[tricky]).unwrap();
@@ -392,5 +490,8 @@ mod tests {
         );
         assert!(shown(PlaceholderError::Unused(2)).contains("{{quote:2}}"));
         assert!(shown(PlaceholderError::Typed("a b c".into())).contains("{{quote:N}}"));
+        let unclosed = shown(PlaceholderError::Unclosed("\" shell".into()));
+        assert!(unclosed.contains("remove"), "{unclosed}");
+        assert!(unclosed.contains("inches"), "{unclosed}");
     }
 }
