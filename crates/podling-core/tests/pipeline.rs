@@ -277,7 +277,13 @@ impl LlmProvider for Replay {
                         id.as_str().unwrap(),
                     );
                 }
-                assert!(!script.contains("{{"), "unfilled placeholder in {script}");
+                // `{{quote:N}}` is meant to stay: the script stage fills it in.
+                for unfilled in ["{{claim:", "{{chunk:"] {
+                    assert!(
+                        !script.contains(unfilled),
+                        "unfilled {unfilled} in {script}"
+                    );
+                }
                 script
             }
         };

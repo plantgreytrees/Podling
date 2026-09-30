@@ -25,3 +25,6 @@ base_url = "http://localhost:11434/v1"
 # A placeholder: use any instruct model your server has.
 model = "llama3.1:8b"
 temperature = 0.2
+# Writing the script takes a local 8B model 80 to 120 seconds on an 8 GB card,
+# so the 120 second default can time out. A hosted model needs far less.
+timeout_secs = 300

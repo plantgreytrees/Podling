@@ -20,3 +20,9 @@
 | [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 4 | script-input-size | crates/podling-core/src/stages/script.rs | rust | normal | COMPLETE | 2026-09-30 |
 | [scrutinise-phase2-llm-provider](./scrutinise-phase2-llm-provider.md) | 5 | typed-provider-error | crates/podling-cli/src/commands.rs | rust | normal | COMPLETE | 2026-09-30 |
 | [script-verbatim-retry](./script-verbatim-retry.md) | 1 | script-verbatim-retry | crates/podling-core/src/stages/script.rs | rust | high | COMPLETE | 2026-09-30 |
+| [quote-placeholders](./quote-placeholders.md) | 1 | quote-placeholders | crates/podling-core/src/stages/script.rs | rust | high | COMPLETE | 2026-09-30 |
+| [quote-placeholders](./quote-placeholders.md) | 2 | heading-grounding | crates/podling-core/src/stages/extract_claims.rs | rust | high | COMPLETE | 2026-09-30 |
+| [quote-placeholders](./quote-placeholders.md) | 3 | live-acceptance | examples/tunguska | rust | normal | COMPLETE | 2026-09-30 |
+| [scrutinise-quote-placeholders](./scrutinise-quote-placeholders.md) | 1 | quote-mark-balance | crates/podling-core/src/text.rs | rust | high | COMPLETE | 2026-09-30 |
+| [scrutinise-quote-placeholders](./scrutinise-quote-placeholders.md) | 2 | grounding-share | crates/podling-core/src/stages/extract_claims.rs | rust | high | COMPLETE | 2026-09-30 |
+| [scrutinise-quote-placeholders](./scrutinise-quote-placeholders.md) | 3 | live-recheck | examples/tunguska | rust | normal | COMPLETE | 2026-09-30 |

@@ -10,7 +10,10 @@ use crate::text::sentences;
 /// Version of the stage prompts and the input shapes they describe. Part of
 /// both LLM stages' cache keys: bump it when a prompt or an input layout
 /// changes in a way the instruction text alone would not show.
-pub const PROMPT_VERSION: u32 = 1;
+///
+/// 2: a turn's text carries `{{quote:N}}` placeholders where its quotes go,
+///    instead of the quoted words.
+pub const PROMPT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +89,9 @@ pub struct ScriptDraft {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DraftTurn {
     pub speaker: SpeakerId,
+    /// What the speaker says. Where the N-th entry of `quotes` is spoken the
+    /// text holds `{{quote:N}}`, not the quoted words: the script stage fills
+    /// the placeholder in from the source.
     pub text: String,
     #[serde(default)]
     pub emotion: Emotion,
@@ -217,18 +223,15 @@ impl FakeLlm {
     fn opening(host: &SpeakerId, topic: &str, first_source: Option<&SourceText>) -> DraftTurn {
         let quote = first_source.and_then(|source| {
             let first = source.sentences.first()?;
-            Some((
-                QuoteRef {
-                    chunk: source.chunk.clone(),
-                    sentence: first.sentence,
-                },
-                first.text.as_str(),
-            ))
+            Some(QuoteRef {
+                chunk: source.chunk.clone(),
+                sentence: first.sentence,
+            })
         });
         match quote {
-            Some((quote_ref, words)) => DraftTurn {
+            Some(quote_ref) => DraftTurn {
                 speaker: host.clone(),
-                text: format!("Today: {topic}. It begins with this: \"{words}\""),
+                text: format!("Today: {topic}. It begins with this: {{{{quote:0}}}}"),
                 emotion: Emotion::Curious,
                 citations: vec![],
                 quotes: vec![quote_ref],
@@ -259,7 +262,8 @@ impl LlmProvider for FakeLlm {
 
     fn fingerprint(&self) -> Value {
         // Bump when the fake's behaviour changes.
-        json!({ "provider": "fake", "version": 2 })
+        // 3: the opening turn says `{{quote:0}}` instead of typing the sentence.
+        json!({ "provider": "fake", "version": 3 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
@@ -340,7 +344,10 @@ mod tests {
                 sentence: 0
             }]
         );
-        assert!(draft.turns[0].text.contains("\"A flash was seen.\""));
+        // The fake points at the sentence and never types it.
+        assert!(draft.turns[0].text.contains("{{quote:0}}"));
+        assert!(!draft.turns[0].text.contains('"'));
+        assert!(!draft.turns[0].text.contains("A flash was seen."));
     }
 
     /// Replies with each canned text in turn and records every request.

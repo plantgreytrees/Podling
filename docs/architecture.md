@@ -3,7 +3,9 @@
 > **Status:** current as of 2026-09-30. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes and Phase 2 (the OpenAI-compatible LLM provider), plus the
 > Phase 2 scrutinise fixes (unreferenced-quotation check, claim grounding, script
-> input size warning). Synced through commit `92d9d2c`.
+> input size warning), `{{quote:N}}` placeholders in script turns, and claim
+> grounding that can name things from the title and headings. Synced through
+> commit `1410a23`.
 
 This document describes the state after Phase 2. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -33,9 +35,10 @@ needs concurrency, such as parallel TTS or streaming.
  chunk ──────────► Vec<Chunk>      split at Markdown headings (not inside code fences), then paragraphs (~800 words)
  extract_claims ─► Vec<Claim>      one LLM call per chunk; merged by ClaimId + Evidence
  ledger ─────────► Ledger          classify(): status from distinct independence groups
- script ─────────► Script          LLM sees numbered sentences, returns QuoteRef { chunk, sentence };
-                                   Quote::from_document copies the words; every citation
-                                   must name a claim in the ledger
+ script ─────────► Script          LLM sees numbered sentences, returns QuoteRef { chunk, sentence }
+                                   and writes {{quote:N}} in the turn text where the quote goes;
+                                   Quote::from_document copies the words and the stage fills the
+                                   placeholder in; every citation must name a claim in the ledger
  analyse ────────► AnalysisReport  opt-in analysers, e.g. quote_verifier
 ```
 
@@ -51,9 +54,15 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
 - a quote that names an unknown chunk or a sentence the chunk doesn't have
   (or that doesn't resolve in its document);
 - a citation of a claim id that isn't in the ledger;
-- a turn that doesn't speak a quote it references word for word, or that puts
-  three or more words in quotation marks without a reference covering them
-  (`QuoteVerifier` still re-checks both afterwards, independently);
+- a turn whose text has a `{{quote:N}}` with no quote reference N, a quote
+  reference with no `{{quote:N}}`, or a malformed placeholder;
+- a turn whose text puts three or more words in quotation marks itself: the
+  model never types quoted words, so every quotation must come from a
+  placeholder;
+- a turn that, after the placeholders are filled in, doesn't speak a quote it
+  references word for word, or quotes words no reference covers. This check
+  can't fail after a successful fill-in, and it stays as an independent
+  guard (`QuoteVerifier` re-checks both afterwards);
 - a claim the chunk doesn't state (see the grounding check below).
 
 Both LLM stages call the model through
@@ -162,6 +171,29 @@ numbered sentences (`text::sentences`, counting from 0), and the model answers w
 The stage looks the chunk up, takes the sentence's span, and calls
 `Quote::from_document`. The invariant is unchanged: the model points and the code copies.
 
+The same holds for the spoken text. In a turn's `text` the model writes `{{quote:N}}`
+where the N-th entry of that turn's `quotes` (counting from 0) is spoken, and
+`fill_quote_placeholders` ([`text.rs`](../crates/podling-core/src/text.rs)) replaces it with
+the copied sentence in curly quotation marks. An 8B model paraphrased a sentence it had
+just been shown, even when the retry quoted it back, so asking the model to retype a quote
+was the flaw. Details:
+- The typed-quotation check runs on the model's raw text, before filling in, so a quotation
+  in the result can only have come from a placeholder.
+- Straight or curly marks the model puts around a placeholder are dropped, so they are not
+  doubled.
+- The filled-in text is built in one pass. A source sentence that itself contains
+  `{{quote:0}}` is inserted as it is and never filled in again.
+- Curly marks are used because `“` closes only on `”`: a straight `"` inside a source
+  sentence can't pair with a mark elsewhere in the turn.
+- A placeholder may appear more than once, and gives the same words each time.
+- The model's own text must have no stray or unclosed quotation mark: an opening `"` or `“`
+  that never closes, or a `”` with nothing open. `quotations` finds nothing after an
+  unmatched opener, so one stray mark would hide a typed quotation from this check and from
+  `QuoteVerifier`. A mark inside a source sentence is allowed, since only the model's words
+  are checked. Single quotes and `«…»`/`„…“` are not scanned.
+- Model text the rejection repeats back is capped at 80 characters, since it goes into the
+  retry's instructions.
+
 **Prompt injection.** Source text can't be sanitised, so it is contained instead.
 The instructions call ledger and source text untrusted data, and that text reaches the
 model only inside the JSON input, never in the instructions. Whatever the model
@@ -176,7 +208,14 @@ quote or a citation without the run reporting it.
 so an invented claim would otherwise look SingleSource or even Corroborated. Claim
 extraction therefore rejects a reply containing a claim whose content words (three or
 more characters, or any number, minus stop words) are less than 60% present in the
-chunk, or whose numbers aren't all present. The model gets one retry with the reason,
+chunk, or whose numbers aren't all present. A claim may also use words from its document's
+title and the chunk's heading path (`Document::title`, `Chunk::heading_path`), because
+extraction rule 2 has the model replace references such as "the site" with names, and a
+name can appear only in a heading. Those title and heading words don't count toward the
+share, though: the 60% is taken over the claim's other content words, and a claim made only
+of title or heading words is rejected. Otherwise an invented claim that names the topic
+would get those matches for free. A number may come from the chunk, the title or a heading. The model
+itself is still shown only the chunk text. The model gets one retry with the reason,
 then the run fails naming the chunk. The check is lexical. It catches invention and
 knowledge pulled from the model's memory, and tolerates paraphrase. It does not catch
 a subtle distortion made with the passage's own words; that needs the NLI provider,
@@ -198,7 +237,9 @@ sampling, and you can't audit them afterwards. The ledger makes trust
 - An LLM is needed only where judgement really is required: extracting
   claims, writing the script, and (later) adjudicating Contested claims.
 
-The same reasoning applies to quotes. The model can only *point* at a sentence (`QuoteRef`), and
+The same reasoning applies to quotes. The model can only *point* at a sentence (`QuoteRef`) and
+mark where it goes in the spoken text (`{{quote:N}}`).
 [`Quote::from_document`](../crates/podling-types/src/quote.rs) copies the words
-from the source. A model therefore cannot put words in a source's mouth, and
-`QuoteVerifier` flags it if it tries to do so in quotation marks anyway.
+from the source, and the script stage puts them in the text. A model therefore cannot put words
+in a source's mouth: the script stage rejects quoted words it typed itself, and
+`QuoteVerifier` flags them if they get through anyway.

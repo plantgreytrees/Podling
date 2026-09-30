@@ -133,9 +133,11 @@ that is the recommended default. The key is sent only as an `Authorization:
 Bearer` header. It is never written to the cache, the artifacts, a log line or an error
 message. Cached outputs derived from your sources are stored under `--cache-dir`.
 
-**What the model can and can't do.** It picks which sentences to quote by number, and
-Podling copies the words from the source. A citation of a claim that is not in the
-ledger, or a quote of a sentence that doesn't exist, is rejected. The model gets one
+**What the model can and can't do.** It picks which sentences to quote by number and
+writes `{{quote:N}}` in a turn's text where each one goes. Podling copies the words
+from the source and puts them there, so the model never types a quotation. A citation
+of a claim that is not in the ledger, a quote of a sentence that doesn't exist, a
+placeholder with no quote behind it, or quoted words the model typed itself, is rejected. The model gets one
 retry with the reason, and then the run fails with an error naming the stage. A
 small local model may produce invalid JSON often, so pick an instruct model that
 handles JSON well. A rate-limited (429) or failing (5xx) server is retried twice.
