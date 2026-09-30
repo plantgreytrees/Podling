@@ -249,7 +249,7 @@ fn tiny_model(request: &Value) -> (u16, String) {
         "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
         "turns": [{
             "speaker": "host",
-            "text": format!("The first source says: {}", first["text"].as_str().unwrap()),
+            "text": "The first source says: {{quote:0}}",
             "emotion": "neutral",
             "citations": [claim],
             "quotes": [{ "chunk": source["chunk"], "sentence": first["sentence"] }],

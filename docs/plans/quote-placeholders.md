@@ -70,7 +70,7 @@ units:
   - id: 3
     scope_id: live-acceptance
     project: .
-    depends_on: [quote-placeholders, heading-grounding]
+    depends_on: [1, 2]
     module: examples/tunguska
     language: rust
     security: normal
@@ -103,19 +103,19 @@ Design decisions (fixed here, so the executor doesn't have to choose):
 - **Check order.** (a) parse the draft and `resolve` the refs. (b) Run `quotations()` on the raw text, with the absorbed marks removed. Any span is model-typed, so reject it with a message telling the model to use `{{quote:N}}`. (c) Parse the placeholders. Reject an index with no ref, a ref with no placeholder, and a malformed or unclosed `{{quote` token, each with its own message. (d) Substitute in a single pass over the raw text; never rescan inserted text. (e) Run `check_quotes_are_spoken` on the result, unchanged, as the independent check.
 - **Duplicates.** A placeholder may be used more than once. It's harmless, since the text inserted is the same verbatim sentence each time.
 
-- [ ] 1.1 Add a `pub(crate)` substitution helper in `crates/podling-core/src/text.rs`, plus a small error enum whose variants carry the index or token. Inputs: raw text and the resolved quote texts. It absorbs typed marks, validates the placeholders as in (b)–(c), and substitutes as in (d). Unit tests: happy path; duplicate use; absorbed straight and curly marks; unknown index; unused quote; malformed `{{quote:x}}` and unclosed `{{quote:0`; a source sentence that itself contains `{{quote:0}}` is inserted literally and not re-expanded; a source sentence containing a straight `"` → accept: `cargo test -p podling-core text::` passes.
-- [ ] 1.2 In `crates/podling-core/src/plugin/llm.rs`, bump `PROMPT_VERSION` 1 → 2 and extend its doc comment with why ("turn text carries `{{quote:N}}` placeholders"). Update the `DraftTurn` doc to say `text` holds placeholders, not quoted words → accept: `grep -n "PROMPT_VERSION: u32 = 2" crates/podling-core/src/plugin/llm.rs` matches.
-- [ ] 1.3 In `crates/podling-core/src/stages/script.rs`, rewrite INSTRUCTIONS rule 3. The model writes `{{quote:N}}` in `text` where the N-th entry of `quotes` is spoken. It never types quoted words or quotation marks, and every entry in `quotes` needs exactly that placeholder. Update the reply-shape example to show a placeholder. Bump `WriteScript::VERSION` 4 → 5 with a `// 5:` comment line → accept: `grep -n "VERSION: u32 = 5" crates/podling-core/src/stages/script.rs` matches and INSTRUCTIONS contains `{{quote:`.
-- [ ] 1.4 In `build_script` (`script.rs:122-155`), after `resolve`, call the 1.1 helper and map its errors to `turn {i}: …` strings that tell the model the exact fix. Put the substituted text in `Turn::text`, then call `check_quotes_are_spoken` on it, unchanged → accept: `cargo build -p podling-core` passes. `check_quotes_are_spoken` and `QuoteVerifier` are still present and unchanged.
-- [ ] 1.5 Update the stage tests in `script.rs`:
+- [x] 1.1 Add a `pub(crate)` substitution helper in `crates/podling-core/src/text.rs`, plus a small error enum whose variants carry the index or token. Inputs: raw text and the resolved quote texts. It absorbs typed marks, validates the placeholders as in (b)–(c), and substitutes as in (d). Unit tests: happy path; duplicate use; absorbed straight and curly marks; unknown index; unused quote; malformed `{{quote:x}}` and unclosed `{{quote:0`; a source sentence that itself contains `{{quote:0}}` is inserted literally and not re-expanded; a source sentence containing a straight `"` → accept: `cargo test -p podling-core text::` passes.
+- [x] 1.2 In `crates/podling-core/src/plugin/llm.rs`, bump `PROMPT_VERSION` 1 → 2 and extend its doc comment with why ("turn text carries `{{quote:N}}` placeholders"). Update the `DraftTurn` doc to say `text` holds placeholders, not quoted words → accept: `grep -n "PROMPT_VERSION: u32 = 2" crates/podling-core/src/plugin/llm.rs` matches.
+- [x] 1.3 In `crates/podling-core/src/stages/script.rs`, rewrite INSTRUCTIONS rule 3. The model writes `{{quote:N}}` in `text` where the N-th entry of `quotes` is spoken. It never types quoted words or quotation marks, and every entry in `quotes` needs exactly that placeholder. Update the reply-shape example to show a placeholder. Bump `WriteScript::VERSION` 4 → 5 with a `// 5:` comment line → accept: `grep -n "VERSION: u32 = 5" crates/podling-core/src/stages/script.rs` matches and INSTRUCTIONS contains `{{quote:`.
+- [x] 1.4 In `build_script` (`script.rs:122-155`), after `resolve`, call the 1.1 helper and map its errors to `turn {i}: …` strings that tell the model the exact fix. Put the substituted text in `Turn::text`, then call `check_quotes_are_spoken` on it, unchanged → accept: `cargo build -p podling-core` passes. `check_quotes_are_spoken` and `QuoteVerifier` are still present and unchanged.
+- [x] 1.5 Update the stage tests in `script.rs`:
   - `Speaking` texts use placeholders (`VERBATIM` becomes `A witness said: {{quote:0}}`).
   - The retry test proves a first reply that is missing its placeholder is corrected on the second call.
   - Add one `WriteScript::run` test per rejection: an index with no ref, a ref with no placeholder, a model-typed quotation outside a placeholder, and a malformed placeholder. Each asserts `InvalidProviderOutput` with `turn 0` and the reason.
   - Add a test where the finished turn text contains `“The sky split in two.”` → accept: `cargo test -p podling-core stages::script` passes.
-- [ ] 1.6 Make `FakeLlm::opening` (`llm.rs:217-244`) emit `… It begins with this: {{quote:0}}` and drop the typed words. Bump the `FakeLlm` fingerprint version 2 → 3 (`llm.rs:262`). Update `write_script_quotes_the_first_sentence_by_reference` to assert that `text` contains `{{quote:0}}` and no `"` → accept: `cargo test -p podling-core plugin::llm` passes.
-- [ ] 1.7 Replace the typed quotations in `crates/podling-core/tests/fixtures/llm/write_script.json` (turns 0 and 2) with `{{quote:0}}`. In `tests/pipeline.rs:280`, narrow the Replay assert to `{{claim:` and `{{chunk:`, so the placeholder the model is meant to write isn't counted as an unfilled fixture token → accept: `cargo test -p podling-core --test pipeline` passes, including `replayed_model_output_gives_the_same_ledger_statuses_and_verbatim_quotes`.
-- [ ] 1.8 Make `tiny_model` in `crates/podling-cli/tests/cli.rs:248-256` write `"The first source says: {{quote:0}}"` → accept: `cargo test -p podling-cli` passes (non-ignored tests).
-- [ ] 1.9 Docs. In `docs/architecture.md`:
+- [x] 1.6 Make `FakeLlm::opening` (`llm.rs:217-244`) emit `… It begins with this: {{quote:0}}` and drop the typed words. Bump the `FakeLlm` fingerprint version 2 → 3 (`llm.rs:262`). Update `write_script_quotes_the_first_sentence_by_reference` to assert that `text` contains `{{quote:0}}` and no `"` → accept: `cargo test -p podling-core plugin::llm` passes.
+- [x] 1.7 Replace the typed quotations in `crates/podling-core/tests/fixtures/llm/write_script.json` (turns 0 and 2) with `{{quote:0}}`. In `tests/pipeline.rs:280`, narrow the Replay assert to `{{claim:` and `{{chunk:`, so the placeholder the model is meant to write isn't counted as an unfilled fixture token → accept: `cargo test -p podling-core --test pipeline` passes, including `replayed_model_output_gives_the_same_ledger_statuses_and_verbatim_quotes`.
+- [x] 1.8 Make `tiny_model` in `crates/podling-cli/tests/cli.rs:248-256` write `"The first source says: {{quote:0}}"` → accept: `cargo test -p podling-cli` passes (non-ignored tests).
+- [x] 1.9 Docs. In `docs/architecture.md`:
   - "Sentence-addressed quotes" (~line 159): add that the turn text marks each quote with `{{quote:N}}`, and the stage substitutes the sentence in curly quotes.
   - The `InvalidProviderOutput` list (~line 54): add the three placeholder rejections.
   - The artifact-flow diagram (~line 36): mention placeholders.
@@ -140,7 +140,7 @@ Depends on: none (it shares no file with Step 1, so it can run in either order)
 - [ ] 2.5 In `docs/architecture.md`, "Grounding check (a stopgap)" (~line 175): the word set includes the document title and the chunk's heading path. Also say that the model still sees only the chunk text → accept: the section mentions "heading".
 
 ### Step 3 — live-acceptance (., rust, normal)
-Depends on: quote-placeholders, heading-grounding
+Depends on: 1 (quote-placeholders), 2 (heading-grounding)
 
 - [ ] 3.1 `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` → accept: exits 0.
 - [ ] 3.2 Live run, twice, each time with a new empty `--cache-dir` (`mktemp -d`): `cargo run -p podling-cli -- run --episode examples/tunguska/episode-ollama.toml --cache-dir <empty> --out <dir>`. Ollama runs in the container `infra_docker_compose-ollama-1` on port 11434 → accept: both runs exit 0, and `jq '[.body.findings[] | select(.severity=="error")] | length' <out>/analysis.json` prints `0` both times.
