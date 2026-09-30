@@ -126,6 +126,7 @@ mod tests {
             source: SourceId::new(ContentHash::of_parts(&[doc.as_bytes()])),
             independence_group: group.into(),
             stance,
+            basis: None,
         }
     }
 

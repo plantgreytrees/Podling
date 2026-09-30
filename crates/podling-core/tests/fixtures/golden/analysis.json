@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "kind": "analysis",
+  "body": {
+    "findings": [
+      {
+        "analyser": "quote_verifier",
+        "severity": "info",
+        "turn": null,
+        "message": "1 quote(s) verified against their sources"
+      }
+    ]
+  }
+}

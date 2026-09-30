@@ -79,6 +79,17 @@ expression: schema
       "description": "One chunk's position on a claim.",
       "type": "object",
       "properties": {
+        "basis": {
+          "description": "How this evidence was established, when it wasn't simply extracted from\nthe chunk in the claim's own words. Absent for plain extraction, so\nartifacts written without the NLI stages are unchanged.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvidenceBasis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "chunk": {
           "$ref": "#/$defs/ChunkId"
         },
@@ -99,6 +110,70 @@ expression: schema
         "stance"
       ]
     },
+    "EvidenceBasis": {
+      "description": "The audit trail behind a piece of evidence that exact wording alone didn't\nestablish. The stored scores are the ones that decided it, so a status can\nbe checked by hand against the thresholds.",
+      "oneOf": [
+        {
+          "description": "The chunk stated the claim in other words, and the two wordings were\nmerged because each entails the other.",
+          "type": "object",
+          "properties": {
+            "entailment_pm": {
+              "description": "The weaker of the two entailment directions.",
+              "$ref": "#/$defs/PerMille"
+            },
+            "kind": {
+              "type": "string",
+              "const": "merged"
+            },
+            "wording": {
+              "description": "The chunk's own wording of the claim.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "wording",
+            "entailment_pm"
+          ]
+        },
+        {
+          "description": "An NLI model read `premise` (a span of the chunk's document) and judged\nthat it supports or contradicts the claim.",
+          "type": "object",
+          "properties": {
+            "contradiction_pm": {
+              "$ref": "#/$defs/PerMille"
+            },
+            "entailment_pm": {
+              "$ref": "#/$defs/PerMille"
+            },
+            "kind": {
+              "type": "string",
+              "const": "nli"
+            },
+            "premise": {
+              "$ref": "#/$defs/TextSpan"
+            },
+            "similarity_pm": {
+              "description": "How close the premise was to the claim when it was retrieved.",
+              "$ref": "#/$defs/PerMille"
+            }
+          },
+          "required": [
+            "kind",
+            "premise",
+            "similarity_pm",
+            "entailment_pm",
+            "contradiction_pm"
+          ]
+        }
+      ]
+    },
+    "PerMille": {
+      "description": "A score from 0 to 1 in thousandths.",
+      "type": "integer",
+      "maximum": 1000,
+      "minimum": 0
+    },
     "SourceId": {
       "description": "Identifies a source (connector + locator), independent of its content.",
       "$ref": "#/$defs/ContentHash"
@@ -108,6 +183,26 @@ expression: schema
       "enum": [
         "supports",
         "contradicts"
+      ]
+    },
+    "TextSpan": {
+      "description": "A half-open byte range `[start, end)` into a document's text.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
       ]
     }
   }
