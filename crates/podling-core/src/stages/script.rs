@@ -236,7 +236,7 @@ mod tests {
     use super::*;
     use crate::error::CoreError;
     use crate::plugin::{Completion, FakeLlm};
-    use podling_types::SourceRef;
+    use podling_types::{Claim, Evidence, SourceRef, Stance};
 
     #[test]
     fn the_instructions_say_quote_numbers_restart_in_every_turn() {
@@ -660,5 +660,39 @@ mod tests {
         let sources = request.input["sources"].to_string();
         assert!(sources.contains(INJECTION));
         assert!(!request.input["ledger"].to_string().contains(INJECTION));
+    }
+
+    /// Evidence carries chunk and source ids that look like claim ids, and a
+    /// small model once cited them as claims, so the request leaves it out.
+    #[test]
+    fn the_ledger_the_model_sees_has_no_evidence() {
+        let (doc, chunk) = doc_and_chunk();
+        let mut claim = Claim::new("The sky split in two.");
+        claim.add_evidence(Evidence {
+            chunk: chunk.id().clone(),
+            source: doc.source().id(),
+            independence_group: doc.source().independence_group.clone(),
+            stance: Stance::Supports,
+            basis: None,
+        });
+        let input = ScriptInput {
+            ledger: Ledger::from_claims([claim]),
+            ..empty_input(vec![doc], vec![chunk])
+        };
+        let llm = Recording::default();
+        WriteScript { llm: &llm }.run(&input).unwrap();
+
+        let request = llm.0.borrow().clone().unwrap();
+        let ledger = request.input["ledger"].as_array().unwrap();
+        assert_eq!(ledger.len(), 1);
+        for entry in ledger {
+            let keys: BTreeSet<&str> = entry
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(keys, BTreeSet::from(["id", "status", "text"]), "{entry}");
+        }
     }
 }

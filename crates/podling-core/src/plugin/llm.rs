@@ -13,7 +13,9 @@ use crate::text::sentences;
 ///
 /// 2: a turn's text carries `{{quote:N}}` placeholders where its quotes go,
 ///    instead of the quoted words.
-pub const PROMPT_VERSION: u32 = 2;
+/// 3: the script request's ledger lists each claim's id, text and status
+///    ([`LedgerClaim`]), without evidence.
+pub const PROMPT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
