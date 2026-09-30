@@ -23,6 +23,9 @@ anyhow = "1.0"
 clap = { version = "4.6", features = ["derive"] }
 toml = "1.1"
 tracing = "0.1"
+# Blocking HTTP for the OpenAI-compatible provider. Rustls only (no OpenSSL);
+# no gzip, so a response cannot expand past the size cap while being read.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 tempfile = "3.27"

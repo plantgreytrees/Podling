@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::cache::DiskCache;
 use crate::error::{CoreError, Result};
-use crate::plugin::{build_analysers, build_llm, build_sources};
+use crate::plugin::{LlmProvider, build_analysers, build_llm, build_sources};
 use crate::stage::{RunReport, cached};
 use crate::stages::{
     Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ExtractClaims, Ingest,
@@ -29,7 +29,19 @@ pub fn run(
     cache: Option<&DiskCache>,
     out_dir: &Path,
 ) -> Result<RunReport> {
-    let llm = build_llm(&spec.llm);
+    let llm = build_llm(&spec.llm)?;
+    run_with_llm(spec, llm.as_ref(), base_dir, cache, out_dir)
+}
+
+/// As [`run`], but with the LLM provider supplied instead of built from
+/// `spec.llm`. The seam for tests and for callers that build their own.
+pub fn run_with_llm(
+    spec: &EpisodeSpec,
+    llm: &dyn LlmProvider,
+    base_dir: &Path,
+    cache: Option<&DiskCache>,
+    out_dir: &Path,
+) -> Result<RunReport> {
     let analysers = build_analysers(&spec.analysers);
     let mut report = RunReport::default();
 
@@ -51,12 +63,7 @@ pub fn run(
         sources: source_map(&documents)?,
         chunks,
     };
-    let claims = cached(
-        &ExtractClaims { llm: llm.as_ref() },
-        &claim_input,
-        cache,
-        &mut report,
-    )?;
+    let claims = cached(&ExtractClaims { llm }, &claim_input, cache, &mut report)?;
     let ledger = cached(&BuildLedger, &claims, cache, &mut report)?;
 
     let script_input = ScriptInput {
@@ -66,12 +73,7 @@ pub fn run(
         chunks: claim_input.chunks,
         documents,
     };
-    let script = cached(
-        &WriteScript { llm: llm.as_ref() },
-        &script_input,
-        cache,
-        &mut report,
-    )?;
+    let script = cached(&WriteScript { llm }, &script_input, cache, &mut report)?;
 
     let analyse_input = AnalyseInput {
         script,

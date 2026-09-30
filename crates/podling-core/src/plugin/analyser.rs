@@ -2,14 +2,18 @@
 
 use podling_types::{Document, Finding, Script, Severity};
 
+use crate::text::quotations;
+
 pub trait Analyser {
     fn id(&self) -> &str;
 
     fn analyse(&self, script: &Script, documents: &[Document]) -> Vec<Finding>;
 }
 
-/// Checks that every quote is word-for-word what its source says, and that the
-/// turn actually speaks those words rather than a paraphrase.
+/// Checks that every quote is word-for-word what its source says, that the
+/// turn actually speaks those words rather than a paraphrase, and that the turn
+/// puts no other words in quotation marks: a quoted span the turn's quote refs
+/// don't cover is text a model invented, however it is dressed up.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QuoteVerifier;
 
@@ -54,6 +58,14 @@ impl Analyser for QuoteVerifier {
                     findings.push(self.error(
                         i,
                         format!("turn does not speak the quote verbatim: {:?}", quote.text()),
+                    ));
+                }
+            }
+            for span in quotations(&turn.text) {
+                if !turn.quotes.iter().any(|q| q.text().contains(span)) {
+                    findings.push(self.error(
+                        i,
+                        format!("turn quotes words no quote ref covers: {span:?}"),
                     ));
                 }
             }
@@ -142,5 +154,39 @@ mod tests {
         let quote = Quote::from_document(&doc(), TextSpan::new(0, 15).unwrap()).unwrap();
         let findings = QuoteVerifier.analyse(&script_with("\"The sky burned.\"", quote), &[]);
         assert_eq!(severities(&findings), vec![Severity::Error]);
+    }
+
+    fn quote() -> Quote {
+        Quote::from_document(&doc(), TextSpan::new(0, 15).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn flags_an_unreferenced_straight_quotation() {
+        let text = "\"The sky burned.\" Then he said \"the whole forest was on fire\".";
+        let findings = QuoteVerifier.analyse(&script_with(text, quote()), &[doc()]);
+        assert_eq!(severities(&findings), vec![Severity::Error]);
+        assert!(findings[0].message.contains("the whole forest was on fire"));
+    }
+
+    #[test]
+    fn flags_an_unreferenced_curly_quotation() {
+        let text = "\u{201C}The sky burned.\u{201D} And \u{201C}nothing survived at all\u{201D}.";
+        let findings = QuoteVerifier.analyse(&script_with(text, quote()), &[doc()]);
+        assert_eq!(severities(&findings), vec![Severity::Error]);
+    }
+
+    #[test]
+    fn ignores_scare_quotes_and_unbalanced_marks() {
+        let text = "\"The sky burned.\" A \"so-called\" event, said \"he";
+        let findings = QuoteVerifier.analyse(&script_with(text, quote()), &[doc()]);
+        assert_eq!(severities(&findings), vec![Severity::Info]);
+    }
+
+    #[test]
+    fn accepts_a_part_of_a_referenced_quote() {
+        // "The sky burned" is still the source's own words.
+        let text = "\"The sky burned.\" Again: \"The sky burned\"";
+        let findings = QuoteVerifier.analyse(&script_with(text, quote()), &[doc()]);
+        assert_eq!(severities(&findings), vec![Severity::Info]);
     }
 }

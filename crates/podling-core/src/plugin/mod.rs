@@ -6,22 +6,30 @@
 
 pub mod analyser;
 pub mod llm;
+pub mod openai;
 pub mod source;
 
 use std::path::Path;
 
 use podling_types::{AnalyserConfig, LlmConfig, SourceSpec};
 
+use crate::error::Result;
+
 pub use analyser::{Analyser, QuoteVerifier};
 pub use llm::{
-    ClaimDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LlmProvider, LlmTask, QuoteRef,
-    ScriptDraft,
+    ClaimDraft, ClaimsDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LlmProvider,
+    LlmTask, NumberedSentence, PROMPT_VERSION, QuoteRef, ScriptDraft, SourceText,
+    complete_validated,
 };
+pub use openai::OpenAiCompat;
 pub use source::{LocalFilesConnector, SourceConnector};
 
-pub fn build_llm(config: &LlmConfig) -> Box<dyn LlmProvider> {
+/// Builds the LLM provider. Fallible because a real provider reads its
+/// configuration (a key from the environment, a URL) at construction.
+pub fn build_llm(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
     match config {
-        LlmConfig::Fake {} => Box::new(FakeLlm),
+        LlmConfig::Fake {} => Ok(Box::new(FakeLlm)),
+        LlmConfig::OpenAiCompat { .. } => Ok(Box::new(OpenAiCompat::from_config(config)?)),
     }
 }
 
@@ -73,7 +81,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(build_llm(&spec.llm).id(), "fake");
+        assert_eq!(build_llm(&spec.llm).unwrap().id(), "fake");
         let sources = build_sources(&spec.sources, Path::new("/episodes"));
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].id(), "local_files");

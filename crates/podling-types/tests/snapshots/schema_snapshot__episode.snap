@@ -1,5 +1,6 @@
 ---
 source: crates/podling-types/tests/schema_snapshot.rs
+assertion_line: 12
 expression: schema
 ---
 {
@@ -81,6 +82,63 @@ expression: schema
           "additionalProperties": false,
           "required": [
             "kind"
+          ]
+        },
+        {
+          "description": "Any server that speaks the OpenAI chat-completions protocol: Ollama,\nllama.cpp `llama-server`, vLLM, LM Studio, OpenAI itself.\n\nThere is deliberately no field for the key itself, only the name of the\nenvironment variable that holds it, so an episode file stays free of\nsecrets and `deny_unknown_fields` rejects a pasted `api_key = \"...\"`.",
+          "type": "object",
+          "properties": {
+            "api_key_env": {
+              "description": "Name of the environment variable holding the API key. Leave unset\nfor local servers that need none.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "base_url": {
+              "description": "Base URL up to and including the version segment, e.g.\n`http://localhost:11434/v1`. Must be `http://` or `https://`.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "open_ai_compat"
+            },
+            "max_output_tokens": {
+              "description": "Cap on generated tokens per request; the server's default when unset.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "model": {
+              "description": "Model name as the server knows it, e.g. `llama3.1:8b`.",
+              "type": "string"
+            },
+            "temperature": {
+              "description": "Sampling temperature; the server's default when unset.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "timeout_secs": {
+              "description": "Per-request timeout in seconds; the provider's default when unset.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "base_url",
+            "model"
           ]
         }
       ]

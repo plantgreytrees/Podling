@@ -3,9 +3,9 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
-use podling_core::{DiskCache, pipeline};
-use podling_types::{EpisodeSpec, schema};
+use anyhow::{Context, Result, anyhow, bail};
+use podling_core::{CoreError, DiskCache, ProviderFailure, pipeline};
+use podling_types::{EpisodeSpec, LlmConfig, schema};
 
 pub fn export_schemas(out: &Path) -> Result<()> {
     fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
@@ -27,6 +27,7 @@ pub fn run(episode: &Path, out: &Path, cache_dir: Option<&Path>) -> Result<()> {
     let cache = cache_dir.map(DiskCache::new);
 
     let report = pipeline::run(&spec, base_dir, cache.as_ref(), out)
+        .map_err(|err| explain(&spec, &err))
         .with_context(|| format!("running episode {:?}", spec.title))?;
 
     println!("{:<16} {:<5} {:>8}", "stage", "cache", "ms");
@@ -44,6 +45,54 @@ pub fn run(episode: &Path, out: &Path, cache_dir: Option<&Path>) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// One line for a core error: its whole cause chain, plus what to fix when
+/// the LLM provider failed in a way the user can act on. The core's messages
+/// never contain the API key, so neither does this.
+fn explain(spec: &EpisodeSpec, err: &CoreError) -> anyhow::Error {
+    let mut message = err.to_string();
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    match err
+        .provider_failure()
+        .and_then(|kind| provider_hint(&spec.llm, kind))
+    {
+        Some(hint) => anyhow!("{message} ({hint})"),
+        None => anyhow!(message),
+    }
+}
+
+/// What to fix for a provider failure the user can act on.
+fn provider_hint(llm: &LlmConfig, kind: ProviderFailure) -> Option<String> {
+    let LlmConfig::OpenAiCompat {
+        base_url,
+        model,
+        api_key_env,
+        ..
+    } = llm
+    else {
+        return None;
+    };
+    match kind {
+        ProviderFailure::Http(404) => Some(format!(
+            "check that the server has a model called {model:?} (for Ollama: `ollama pull {model}`) and that base_url ends in /v1"
+        )),
+        ProviderFailure::Http(401 | 403) => Some(match api_key_env {
+            Some(var) => format!("check that ${var} holds a valid key for {base_url}"),
+            None => format!(
+                "{base_url} wants a key: set llm.api_key_env to the name of the variable that holds it"
+            ),
+        }),
+        ProviderFailure::Unreachable | ProviderFailure::TimedOut => Some(format!(
+            "is the server at {base_url} running and reachable?"
+        )),
+        ProviderFailure::Http(_) | ProviderFailure::Other => None,
+    }
 }
 
 pub fn cache_stats(cache_dir: &Path) -> Result<()> {

@@ -20,7 +20,7 @@ pub struct Analyse<'a> {
 
 impl Stage for Analyse<'_> {
     const ID: &'static str = "analyse";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     type Input = AnalyseInput;
     type Output = AnalysisReport;
 

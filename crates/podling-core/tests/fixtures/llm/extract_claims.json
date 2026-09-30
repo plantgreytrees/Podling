@@ -1,0 +1,21 @@
+[
+  {
+    "when_contains": "Leonid Kulik",
+    "reply": {
+      "claims": [
+        { "text": "Leonid Kulik reached the site in 1927." },
+        { "text": "In June 1908 an explosion flattened about 80 million trees over the Tunguska forest." },
+        { "text": "No impact crater was found." }
+      ]
+    }
+  },
+  {
+    "when_contains": "sky split in two",
+    "reply": {
+      "claims": [
+        { "text": "At breakfast the sky split in two." },
+        { "text": "In June 1908 an explosion flattened about 80 million trees over the Tunguska forest." }
+      ]
+    }
+  }
+]
