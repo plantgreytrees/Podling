@@ -20,6 +20,9 @@ const STAGES: [&str; 6] = [
     "analyse",
 ];
 
+/// The stages that run only with `[embedding]` and `[nli]` configured.
+const GROUNDING_STAGES: [&str; 2] = ["cluster_claims", "score_stances"];
+
 fn example() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tunguska/episode.toml")
 }
@@ -37,8 +40,7 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
         .filter_map(|line| {
             let mut cols = line.split_whitespace();
             let (id, cache) = (cols.next()?, cols.next()?);
-            STAGES
-                .contains(&id)
+            (STAGES.contains(&id) || GROUNDING_STAGES.contains(&id))
                 .then(|| (id.to_owned(), cache.to_owned()))
         })
         .collect()
@@ -452,4 +454,45 @@ fn unknown_episode_key_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("api_key"));
+}
+
+#[test]
+fn a_grounded_run_caches_the_new_stages_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    // `[embedding]` and `[nli]` follow the `[llm]` table the helper writes.
+    let episode = episode_with_llm(
+        tmp.path(),
+        "kind = \"fake\"\n\n[embedding]\nkind = \"fake\"\n\n[nli]\nkind = \"fake\"",
+    );
+    let cache = tmp.path().join("cache");
+    let run = || {
+        let assert = podling(&cache)
+            .args(["run", "--episode"])
+            .arg(&episode)
+            .arg("--out")
+            .arg(tmp.path().join("out"))
+            .assert()
+            .success();
+        stage_rows(&assert.get_output().stdout)
+    };
+
+    let first = run();
+    let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "ingest",
+            "chunk",
+            "extract_claims",
+            "cluster_claims",
+            "score_stances",
+            "ledger",
+            "script",
+            "analyse",
+        ]
+    );
+    assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
+    let second = run();
+    assert_eq!(second.len(), 8);
+    assert!(second.iter().all(|(_, c)| c == "hit"), "{second:?}");
 }

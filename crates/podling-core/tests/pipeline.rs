@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use podling_core::plugin::{Completion, CompletionRequest, LlmProvider, LlmTask, SourceText};
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
-use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, Ledger, Script};
+use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script};
 use serde_json::{Value, json};
 
 const STAGES: [&str; 6] = [
@@ -459,7 +459,7 @@ fn an_instruction_planted_in_a_source_is_only_data() {
     }
 }
 
-// --- Stances from the fake embedding and NLI providers ---------------------
+// --- Clusters and stances from the fake embedding and NLI providers --------
 
 /// Runs the fixture episode in `fixtures/<name>` and returns its ledger.
 fn run_fixture(name: &str, out: &Path) -> (RunReport, Ledger) {
@@ -472,7 +472,20 @@ fn run_fixture(name: &str, out: &Path) -> (RunReport, Ledger) {
 fn a_contradicting_source_contests_both_claims() {
     let tmp = tempfile::tempdir().unwrap();
     let (report, ledger) = run_fixture("contradiction", tmp.path());
-    assert!(hits(&report).iter().any(|(id, _)| *id == "score_stances"));
+    let ids: Vec<&str> = hits(&report).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(
+        ids,
+        [
+            "ingest",
+            "chunk",
+            "extract_claims",
+            "cluster_claims",
+            "score_stances",
+            "ledger",
+            "script",
+            "analyse",
+        ]
+    );
     assert_eq!(ledger.entries().len(), 2);
     for entry in ledger.entries() {
         assert!(
@@ -483,16 +496,40 @@ fn a_contradicting_source_contests_both_claims() {
 }
 
 #[test]
-fn a_paraphrase_in_another_group_corroborates_the_claims() {
+fn a_paraphrase_in_another_group_becomes_one_corroborated_claim() {
     let tmp = tempfile::tempdir().unwrap();
     let (_, ledger) = run_fixture("paraphrase", tmp.path());
+    assert_eq!(ledger.entries().len(), 1);
+    let entry = &ledger.entries()[0];
+    assert_eq!(
+        entry.status,
+        ClaimStatus::Corroborated {
+            groups: vec!["expedition".into(), "eyewitness".into()]
+        }
+    );
+    // One source said it in the kept wording, the other in its own.
+    let bases: Vec<_> = entry.claim.evidence().iter().map(|e| &e.basis).collect();
+    assert_eq!(bases.len(), 2);
+    assert_eq!(bases.iter().filter(|b| b.is_none()).count(), 1);
+    assert!(
+        bases
+            .iter()
+            .any(|b| matches!(b, Some(EvidenceBasis::Merged { .. }))),
+        "{bases:?}"
+    );
+}
+
+/// "1908" and "1907" in otherwise identical sentences: similar enough to be
+/// merge candidates, but a different fact, so never merged and both Contested.
+#[test]
+fn a_near_miss_on_the_year_is_not_merged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, ledger) = run_fixture("near-miss", tmp.path());
     assert_eq!(ledger.entries().len(), 2);
     for entry in ledger.entries() {
-        assert_eq!(
-            entry.status,
-            ClaimStatus::Corroborated {
-                groups: vec!["expedition".into(), "eyewitness".into()]
-            }
+        assert!(
+            matches!(entry.status, ClaimStatus::Contested { .. }),
+            "{entry:?}"
         );
     }
 }
