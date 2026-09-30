@@ -1,0 +1,107 @@
+{
+  "schema_version": 2,
+  "kind": "ledger",
+  "body": {
+    "entries": [
+      {
+        "claim": {
+          "id": "27d97049c4916338b5f69ae47776487b32efb5dfa28f21eacf48433229aa8644",
+          "text": "No impact crater was found.",
+          "evidence": [
+            {
+              "chunk": "d6673f5a83083bbf61fca3fef70bcc3dacff02b8d2da10cebdd410171e3942c8",
+              "source": "53ba5d37b13d20cc1ecf38479193d170455aeb1835281944e711f5c0fc23aa41",
+              "independence_group": "expedition",
+              "stance": "supports"
+            }
+          ]
+        },
+        "status": {
+          "status": "single_source",
+          "group": "expedition"
+        }
+      },
+      {
+        "claim": {
+          "id": "513a9498b0db48e4bcbd91a531d4e0af53e1a324ce25a4598a1dd3a3aa09286e",
+          "text": "In June 1908 an explosion flattened about 80 million trees over the Tunguska forest.",
+          "evidence": [
+            {
+              "chunk": "c183371cd2bb2e513252bbf58f1df1a87debfac9d62f3d4ddcb6342f923fa455",
+              "source": "ea2f6505089b854818f370940bb8aae811345ef436a702edb1705780fa6da0c4",
+              "independence_group": "eyewitness",
+              "stance": "supports"
+            },
+            {
+              "chunk": "d6673f5a83083bbf61fca3fef70bcc3dacff02b8d2da10cebdd410171e3942c8",
+              "source": "53ba5d37b13d20cc1ecf38479193d170455aeb1835281944e711f5c0fc23aa41",
+              "independence_group": "expedition",
+              "stance": "supports"
+            }
+          ]
+        },
+        "status": {
+          "status": "corroborated",
+          "groups": [
+            "expedition",
+            "eyewitness"
+          ]
+        }
+      },
+      {
+        "claim": {
+          "id": "84e6fbaf7637d7eb611f8924ddc507b3883eac8de1db32da99811b8b94c416af",
+          "text": "The heat was so strong that my shirt almost burned.",
+          "evidence": [
+            {
+              "chunk": "c183371cd2bb2e513252bbf58f1df1a87debfac9d62f3d4ddcb6342f923fa455",
+              "source": "ea2f6505089b854818f370940bb8aae811345ef436a702edb1705780fa6da0c4",
+              "independence_group": "eyewitness",
+              "stance": "supports"
+            }
+          ]
+        },
+        "status": {
+          "status": "single_source",
+          "group": "eyewitness"
+        }
+      },
+      {
+        "claim": {
+          "id": "8c2c22bf60ff779929b1ec2df4202ed60ad4de3c357349217198a4fd4a4fb9d3",
+          "text": "At breakfast the sky split in two.",
+          "evidence": [
+            {
+              "chunk": "c183371cd2bb2e513252bbf58f1df1a87debfac9d62f3d4ddcb6342f923fa455",
+              "source": "ea2f6505089b854818f370940bb8aae811345ef436a702edb1705780fa6da0c4",
+              "independence_group": "eyewitness",
+              "stance": "supports"
+            }
+          ]
+        },
+        "status": {
+          "status": "single_source",
+          "group": "eyewitness"
+        }
+      },
+      {
+        "claim": {
+          "id": "d8bef33313421eb85550da95b89cb7f6b9b5dd221f5356d9af4e0c00df5fa1e1",
+          "text": "Leonid Kulik reached the site in 1927.",
+          "evidence": [
+            {
+              "chunk": "d6673f5a83083bbf61fca3fef70bcc3dacff02b8d2da10cebdd410171e3942c8",
+              "source": "53ba5d37b13d20cc1ecf38479193d170455aeb1835281944e711f5c0fc23aa41",
+              "independence_group": "expedition",
+              "stance": "supports"
+            }
+          ]
+        },
+        "status": {
+          "status": "single_source",
+          "group": "expedition"
+        }
+      }
+    ]
+  }
+}

@@ -34,6 +34,30 @@ fn artifacts_roundtrip() {
         source: doc.source().id(),
         independence_group: "eyewitness".into(),
         stance: Stance::Supports,
+        basis: None,
+    });
+    // Evidence from the NLI stages carries its audit trail.
+    claim.add_evidence(Evidence {
+        chunk: chunk.id().clone(),
+        source: doc.source().id(),
+        independence_group: "archive".into(),
+        stance: Stance::Supports,
+        basis: Some(EvidenceBasis::Merged {
+            wording: "A fireball was seen crossing the sky.".into(),
+            entailment_pm: PerMille::new(950).unwrap(),
+        }),
+    });
+    claim.add_evidence(Evidence {
+        chunk: chunk.id().clone(),
+        source: doc.source().id(),
+        independence_group: "survey".into(),
+        stance: Stance::Contradicts,
+        basis: Some(EvidenceBasis::Nli {
+            premise: TextSpan::new(0, 27).unwrap(),
+            similarity_pm: PerMille::new(812).unwrap(),
+            entailment_pm: PerMille::new(1).unwrap(),
+            contradiction_pm: PerMille::from_probability(0.987),
+        }),
     });
     let ledger = Ledger::from_claims([claim.clone()]);
     let quote = Quote::from_document(&doc, TextSpan::new(0, 27).unwrap()).unwrap();
@@ -158,5 +182,64 @@ fn open_ai_compat_rejects_a_key_value_in_the_episode() {
         );
         let err = toml::from_str::<EpisodeSpec>(&src).unwrap_err().to_string();
         assert!(err.contains(field), "{err}");
+    }
+}
+
+const GROUNDING: &str = r#"
+[embedding]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+
+[nli]
+kind = "cross_encoder"
+model_dir = "models/nli-deberta-v3-base"
+"#;
+
+#[test]
+fn embedding_and_nli_sections_parse_and_roundtrip() {
+    let spec: EpisodeSpec = toml::from_str(&format!("{EPISODE}{GROUNDING}")).unwrap();
+    assert_eq!(
+        spec.embedding,
+        Some(EmbeddingConfig::OpenAiCompat {
+            base_url: "http://localhost:11434/v1".into(),
+            model: "nomic-embed-text".into(),
+            api_key_env: None,
+            timeout_secs: None,
+        })
+    );
+    assert_eq!(
+        spec.nli,
+        Some(NliConfig::CrossEncoder {
+            model_dir: "models/nli-deberta-v3-base".into()
+        })
+    );
+    roundtrip(&spec);
+
+    let fakes = "\n[embedding]\nkind = \"fake\"\n\n[nli]\nkind = \"fake\"\n";
+    let spec: EpisodeSpec = toml::from_str(&format!("{EPISODE}{fakes}")).unwrap();
+    assert_eq!(spec.embedding, Some(EmbeddingConfig::Fake {}));
+    assert_eq!(spec.nli, Some(NliConfig::Fake {}));
+
+    // Both are optional, and an episode without them serialises without them.
+    let plain: EpisodeSpec = toml::from_str(EPISODE).unwrap();
+    assert_eq!((plain.embedding.as_ref(), plain.nli.as_ref()), (None, None));
+    let json = serde_json::to_value(&plain).unwrap();
+    assert!(json.get("embedding").is_none() && json.get("nli").is_none());
+}
+
+#[test]
+fn embedding_and_nli_sections_reject_unknown_keys() {
+    for (from, to, key) in [
+        (
+            "model = \"nomic-embed-text\"",
+            "model = \"m\"\napi_key = \"sk-1\"",
+            "api_key",
+        ),
+        ("model_dir = ", "device = \"cuda\"\nmodel_dir = ", "device"),
+    ] {
+        let src = format!("{EPISODE}{}", GROUNDING.replace(from, to));
+        let err = toml::from_str::<EpisodeSpec>(&src).unwrap_err().to_string();
+        assert!(err.contains(key), "{err}");
     }
 }

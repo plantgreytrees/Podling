@@ -18,6 +18,15 @@ pub struct EpisodeSpec {
     pub target_minutes: u16,
     pub sources: Vec<SourceSpec>,
     pub llm: LlmConfig,
+    /// Embeds claims and source sentences so the NLI stages can pick which
+    /// pairs to compare. Needs `nli` too; without both, claims merge only by
+    /// exact wording and every piece of evidence is the claim's own extraction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<EmbeddingConfig>,
+    /// Judges whether one text entails or contradicts another. Needs
+    /// `embedding` too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nli: Option<NliConfig>,
     #[serde(default)]
     pub analysers: Vec<AnalyserConfig>,
 }
@@ -78,6 +87,45 @@ pub enum LlmConfig {
         /// Cap on generated tokens per request; the server's default when unset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_output_tokens: Option<u32>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EmbeddingConfig {
+    /// Deterministic offline stand-in: a hashed bag of words.
+    Fake {},
+    /// Any server that speaks the OpenAI embeddings protocol
+    /// (`POST {base_url}/embeddings`), e.g. Ollama with `nomic-embed-text`.
+    OpenAiCompat {
+        /// Base URL up to and including the version segment, e.g.
+        /// `http://localhost:11434/v1`. Must be `http://` or `https://`.
+        base_url: String,
+        /// Model name as the server knows it, e.g. `nomic-embed-text`.
+        model: String,
+        /// Name of the environment variable holding the API key, never the
+        /// key itself. Leave unset for local servers that need none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_key_env: Option<String>,
+        /// Per-request timeout in seconds; the provider's default when unset.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_secs: Option<u64>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NliConfig {
+    /// Deterministic offline stand-in: word containment, with a changed
+    /// number counted as a contradiction.
+    Fake {},
+    /// A local DeBERTa-v3 NLI cross-encoder, run on the CPU, e.g.
+    /// `cross-encoder/nli-deberta-v3-base`.
+    CrossEncoder {
+        /// Directory holding the model's `config.json`, `tokenizer.json` and
+        /// `model.safetensors`. A relative path is resolved against the
+        /// episode file's directory.
+        model_dir: PathBuf,
     },
 }
 

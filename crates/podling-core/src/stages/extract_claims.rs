@@ -163,6 +163,7 @@ impl Stage for ExtractClaims<'_> {
                     source: source.id(),
                     independence_group: source.independence_group.clone(),
                     stance: Stance::Supports,
+                    basis: None,
                 });
             }
         }

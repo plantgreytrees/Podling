@@ -79,6 +79,30 @@ fn writes_every_artifact_in_a_versioned_envelope() {
     }
 }
 
+/// With no `[embedding]`/`[nli]` sections, every artifact is byte for byte
+/// what the pipeline wrote before the NLI stages existed
+/// (`tests/fixtures/golden`, written at commit 0b0d1ff by
+/// `podling run --episode tests/fixtures/episode.toml --no-cache`). Only the
+/// envelope's `schema_version` may differ.
+#[test]
+fn no_nli_config_writes_todays_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    pipeline::run(&spec(&fixtures()), &fixtures(), None, &out).unwrap();
+
+    let current = format!("\"schema_version\": {},", podling_types::SCHEMA_VERSION);
+    for kind in podling_types::ArtifactKind::ALL {
+        let name = format!("{}.json", kind.as_str());
+        let golden = fs::read_to_string(fixtures().join("golden").join(&name)).unwrap();
+        let golden = golden.replacen("\"schema_version\": 2,", &current, 1);
+        let written = fs::read_to_string(out.join(&name)).unwrap();
+        assert!(
+            golden == written,
+            "{name} differs from tests/fixtures/golden"
+        );
+    }
+}
+
 fn read_body<T: serde::de::DeserializeOwned>(out: &Path, kind: &str) -> T {
     let json: Value =
         serde_json::from_str(&fs::read_to_string(out.join(format!("{kind}.json"))).unwrap())
