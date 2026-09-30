@@ -1,6 +1,6 @@
 //! Runs an episode end to end: sources → documents → chunks → claims →
-//! (stances, when `[embedding]` and `[nli]` are set) → ledger → script →
-//! analysis, writing each artifact to the output directory.
+//! (clusters and stances, when `[embedding]` and `[nli]` are set) → ledger →
+//! script → analysis, writing each artifact to the output directory.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -14,8 +14,8 @@ use crate::error::{CoreError, Result};
 use crate::plugin::{LlmProvider, build_analysers, build_grounding, build_llm, build_sources};
 use crate::stage::{RunReport, cached};
 use crate::stages::{
-    Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ExtractClaims, Ingest,
-    ScoreStances, ScriptInput, StanceInput, WriteScript,
+    Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
+    Ingest, ScoreStances, ScriptInput, StanceInput, WriteScript,
 };
 
 /// Runs `spec`. Relative source paths resolve against `base_dir` (normally
@@ -73,8 +73,17 @@ pub fn run_with_llm(
     };
     let mut claims = cached(&ExtractClaims { llm }, &claim_input, cache, &mut report)?;
     if let Some(grounding) = grounding {
+        let merged = cached(
+            &ClusterClaims {
+                embedder: grounding.embedder.as_ref(),
+                nli: grounding.nli.as_ref(),
+            },
+            &claims,
+            cache,
+            &mut report,
+        )?;
         let stance_input = StanceInput {
-            claims,
+            claims: merged,
             chunks: claim_input.chunks.clone(),
             sources: claim_input.sources.clone(),
         };
