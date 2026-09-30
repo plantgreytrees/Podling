@@ -115,8 +115,10 @@ Depends on: none
 ### Step 3 — live-recheck (., rust, normal)
 Depends on: 1, 2
 
-- [ ] 3.1 `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` → accept: exits 0.
-- [ ] 3.2 Two live runs of `target/debug/podling run --episode examples/tunguska/episode-ollama.toml`, each with a new empty `--cache-dir`, plus `PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b cargo test -p podling-cli -- --ignored live` → accept: all exit 0 and each `analysis.json` has 0 `error` findings. The model varies from run to run. If the tighter grounding rejects a real claim, record the claim and the scores here and hand the case to `/craftsman:investigate`. Don't loosen the rule.
+- [x] 3.1 `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` → accept: exits 0.
+- [x] 3.2 Two live runs of `target/debug/podling run --episode examples/tunguska/episode-ollama.toml`, each with a new empty `--cache-dir`, plus `PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b cargo test -p podling-cli -- --ignored live` → accept: all exit 0 and each `analysis.json` has 0 `error` findings. The model varies from run to run. If the tighter grounding rejects a real claim, record the claim and the scores here and hand the case to `/craftsman:investigate`. Don't loosen the rule.
+
+**Live results (2026-09-30, llama3.1:8b).** The workspace passes fmt, clippy and all 147 tests. Recheck run A had a cold cache, exited 0 with 0 errors, and verified 2 quotes; the ledger has 9 claims, so the tighter grounding rejected nothing the model extracted. Recheck run B also had a cold cache and exited 0 with 0 errors. Its first script reply left out a `{{quote:0}}`, and the retry dropped the reference, so it verified 0 quotes. The script stage took 213 s in run A and 278 s in run B. Run B made two requests at about 140 s each, under the 300 s per-request timeout. The ignored live test passes. Results vary from run to run.
 
 ## Sequencing
 Steps 1 and 2 share only `docs/architecture.md` (different sections) and can run in either order. Step 3 runs last.
