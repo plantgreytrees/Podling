@@ -5,6 +5,7 @@
 //! enum variant in `podling-types` and one arm here.
 
 pub mod analyser;
+pub mod cross_encoder;
 pub mod llm;
 pub mod openai;
 pub mod source;

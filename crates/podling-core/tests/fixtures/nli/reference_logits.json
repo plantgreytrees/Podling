@@ -1,0 +1,47 @@
+{
+  "model": "cross-encoder/nli-deberta-v3-base",
+  "pairs": [
+    {
+      "premise": "In June 1908 an explosion flattened about 80 million trees over the Tunguska forest.",
+      "hypothesis": "About 80 million trees were flattened by an explosion in June 1908.",
+      "entailment": 0.997998,
+      "neutral": 0.00196,
+      "contradiction": 4.3e-05
+    },
+    {
+      "premise": "About 80 million trees were flattened by an explosion in June 1908.",
+      "hypothesis": "In June 1908 an explosion flattened about 80 million trees over the Tunguska forest.",
+      "entailment": 0.000134,
+      "neutral": 0.999812,
+      "contradiction": 5.4e-05
+    },
+    {
+      "premise": "The explosion happened in June 1908.",
+      "hypothesis": "The explosion happened in June 1907.",
+      "entailment": 0.001663,
+      "neutral": 0.003315,
+      "contradiction": 0.995022
+    },
+    {
+      "premise": "Leonid Kulik reached the site in 1927.",
+      "hypothesis": "No impact crater was found.",
+      "entailment": 0.00013,
+      "neutral": 0.096907,
+      "contradiction": 0.902963
+    },
+    {
+      "premise": "The fallen trees pointed away from a central area.",
+      "hypothesis": "The fallen trees pointed towards a central area.",
+      "entailment": 5.7e-05,
+      "neutral": 0.000143,
+      "contradiction": 0.9998
+    },
+    {
+      "premise": "At breakfast the sky split in two. Fire covered the northern sky above the forest.",
+      "hypothesis": "Fire covered the sky above the forest.",
+      "entailment": 0.994059,
+      "neutral": 0.00573,
+      "contradiction": 0.000211
+    }
+  ]
+}
