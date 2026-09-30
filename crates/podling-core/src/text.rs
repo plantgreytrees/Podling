@@ -86,8 +86,9 @@ impl fmt::Display for PlaceholderError {
             ),
             Self::Unknown { index, quotes } => write!(
                 f,
-                "the text uses {} but the turn has {quotes} quote reference(s), numbered from 0; \
-                 add the reference or use a number that exists",
+                "the text uses {} but this turn has {quotes} quote reference(s), numbered from 0; \
+                 the numbering starts again at 0 in every turn, so use only the numbers of this \
+                 turn's own references, or add the missing reference",
                 placeholder(*index)
             ),
             Self::Unused(index) => write!(
@@ -380,6 +381,14 @@ mod tests {
                 quotes: 1
             })
             .contains("{{quote:3}}")
+        );
+        // A model that numbers quotes across the whole script is told to restart.
+        assert!(
+            shown(PlaceholderError::Unknown {
+                index: 1,
+                quotes: 1
+            })
+            .contains("in every turn")
         );
         assert!(shown(PlaceholderError::Unused(2)).contains("{{quote:2}}"));
         assert!(shown(PlaceholderError::Typed("a b c".into())).contains("{{quote:N}}"));
