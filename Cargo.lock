@@ -1125,6 +1125,7 @@ dependencies = [
 name = "podling-core"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "candle-core",
  "candle-nn",
  "candle-transformers",

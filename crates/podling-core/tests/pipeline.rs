@@ -458,3 +458,64 @@ fn an_instruction_planted_in_a_source_is_only_data() {
         assert!(turn.citations.iter().all(|c| known.contains(&c)));
     }
 }
+
+// --- Stances from the fake embedding and NLI providers ---------------------
+
+/// Runs the fixture episode in `fixtures/<name>` and returns its ledger.
+fn run_fixture(name: &str, out: &Path) -> (RunReport, Ledger) {
+    let base = fixtures().join(name);
+    let report = pipeline::run(&spec(&base), &base, None, out).unwrap();
+    (report, read_body(out, "ledger"))
+}
+
+#[test]
+fn a_contradicting_source_contests_both_claims() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (report, ledger) = run_fixture("contradiction", tmp.path());
+    assert!(hits(&report).iter().any(|(id, _)| *id == "score_stances"));
+    assert_eq!(ledger.entries().len(), 2);
+    for entry in ledger.entries() {
+        assert!(
+            matches!(entry.status, ClaimStatus::Contested { .. }),
+            "{entry:?}"
+        );
+    }
+}
+
+#[test]
+fn a_paraphrase_in_another_group_corroborates_the_claims() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, ledger) = run_fixture("paraphrase", tmp.path());
+    assert_eq!(ledger.entries().len(), 2);
+    for entry in ledger.entries() {
+        assert_eq!(
+            entry.status,
+            ClaimStatus::Corroborated {
+                groups: vec!["expedition".into(), "eyewitness".into()]
+            }
+        );
+    }
+}
+
+#[test]
+fn the_fake_providers_give_byte_identical_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+    run_fixture("paraphrase", &a);
+    run_fixture("paraphrase", &b);
+    for kind in ["claims", "ledger"] {
+        let file = format!("{kind}.json");
+        assert_eq!(
+            fs::read(a.join(&file)).unwrap(),
+            fs::read(b.join(&file)).unwrap()
+        );
+    }
+}
+
+#[test]
+fn without_embedding_and_nli_no_stance_stage_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let report = pipeline::run(&spec(&fixtures()), &fixtures(), None, tmp.path()).unwrap();
+    let ids: Vec<&str> = hits(&report).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ids, STAGES);
+}
