@@ -26,3 +26,9 @@
 | [scrutinise-quote-placeholders](./scrutinise-quote-placeholders.md) | 1 | quote-mark-balance | crates/podling-core/src/text.rs | rust | high | COMPLETE | 2026-09-30 |
 | [scrutinise-quote-placeholders](./scrutinise-quote-placeholders.md) | 2 | grounding-share | crates/podling-core/src/stages/extract_claims.rs | rust | high | COMPLETE | 2026-09-30 |
 | [scrutinise-quote-placeholders](./scrutinise-quote-placeholders.md) | 3 | live-recheck | examples/tunguska | rust | normal | COMPLETE | 2026-09-30 |
+| [phase3-nli-ledger](./phase3-nli-ledger.md) | 1 | nli-spike | crates/podling-core/src/plugin/cross_encoder.rs | rust | normal | PENDING | 2026-10-01 |
+| [phase3-nli-ledger](./phase3-nli-ledger.md) | 2 | ledger-contracts | crates/podling-types | rust | normal | PENDING | 2026-10-01 |
+| [phase3-nli-ledger](./phase3-nli-ledger.md) | 3 | stance-stage | crates/podling-core/src/stages/score_stances.rs | rust | normal | PENDING | 2026-10-01 |
+| [phase3-nli-ledger](./phase3-nli-ledger.md) | 4 | cluster-claims | crates/podling-core/src/stages/cluster_claims.rs | rust | normal | PENDING | 2026-10-01 |
+| [phase3-nli-ledger](./phase3-nli-ledger.md) | 5 | real-providers | crates/podling-core/src/plugin | rust | high | PENDING | 2026-10-01 |
+| [phase3-nli-ledger](./phase3-nli-ledger.md) | 6 | live-and-docs | examples/tunguska, docs | rust | normal | PENDING | 2026-10-01 |
