@@ -1,108 +1,96 @@
 # Hand-off: next goal
 
-> Written 2026-09-30 at the end of Phase 2 and its scrutinise round. The branch
-> `worktree-phase2-llm-provider` holds everything below; merge it into `main`
-> before starting (see "Before you start").
+> Written 2026-10-01 at the end of Phase 3 (embeddings and NLI in the claim
+> ledger). The branch `worktree-phase3-nli-ledger` holds everything below; merge
+> it into `main` before starting (see "Before you start").
 
 ## Goal
 
-**A real local model (llama3.1:8b on Ollama) turns the Tunguska example into a
-passing episode: `podling run --episode examples/tunguska/episode-ollama.toml`
-exits 0 with zero analyser errors, two runs in a row from a cold cache.**
+**Phase 4: a Contested-claim adjudicator. When two independent sources disagree,
+the episode says so and explains the disagreement from the sources, instead of
+repeating one side or both without comment.**
 
 Run it through the full craftsman loop:
 
 ```
-/craftsman:plan quote-placeholders          # from the "Fixes" section below
-/craftsman:orchestrate quote-placeholders
+/craftsman:plan phase4-adjudicator
+/craftsman:orchestrate phase4-adjudicator
 # live check (see "Acceptance")
-/craftsman:scrutinise quote-placeholders
-/craftsman:orchestrate scrutinise-quote-placeholders   # only if scrutinise finds anything
+/craftsman:scrutinise phase4-adjudicator
+/craftsman:orchestrate scrutinise-phase4-adjudicator   # only if scrutinise finds anything
 /craftsman:sync-docs
 # merge the branch into main
 ```
 
-## Why the goal isn't met yet
+## Where Phase 3 leaves it
 
-Two live runs with llama3.1:8b (2026-09-30) got through claim extraction but
-failed at the script stage:
+`score_stances` adds `Contradicts` evidence when a sentence from another
+independence group contradicts a claim (NLI contradiction ≥ 0.950 and embedding
+similarity ≥ 0.60), and `classify()` turns that into `Contested`. Each piece of
+evidence stores the premise span and the scores that decided it
+(`EvidenceBasis::Nli` in `crates/podling-types/src/claim.rs`). Nothing reads a
+Contested claim yet except the script model, which sees only its id, text and
+status (`LedgerClaim` in `crates/podling-core/src/plugin/llm.rs`).
 
-```
-stage script got invalid output from its provider: turn 1 must speak quote 0 word
-for word, exactly as "The heat was so strong that my shirt almost burned." ... (after 2 attempts)
-```
+## Design constraints
 
-The model picks the right sentence (`QuoteRef { chunk, sentence }`), then
-paraphrases it in the turn's text. It does so again even when the retry quotes
-the exact sentence back. An 8B model can't be relied on to retype text, so
-asking it to is the flaw, not the retry.
+- `.claude/CLAUDE.md`: "only Contested claims go to an LLM adjudicator". Status
+  stays deterministic: the adjudicator must not change a claim's status. It
+  writes a new artifact (for example, a verdict per Contested claim: which side
+  the sources favour, or "unresolved", plus a short explanation citing both
+  premise spans) that the script stage reads.
+- The adjudicator quotes nothing itself. It cites evidence by reference; quoted
+  words still come only from source spans.
+- A new stage bumps its own `Stage::VERSION`; a new artifact kind updates the
+  schema snapshot and `SCHEMA_VERSION`. With no Contested claims, the stage makes
+  no LLM call, and artifacts of runs without `[nli]` stay byte-identical.
+- The live Tunguska sources contain no contradiction, so the live check needs a
+  second example (for example, two sources that disagree on a date or a count).
+  The offline fixture `crates/podling-core/tests/fixtures/contradiction/` is a
+  starting point.
 
-## Fixes
+## Follow-up worth planning separately
 
-1. **Quote placeholders (the main fix).** The model writes `{{quote:N}}` in a
-   turn's `text` where the N-th quote of that turn goes. The code replaces it
-   with the resolved sentence in quotation marks. The model never types quoted
-   words, which is the invariant in `.claude/CLAUDE.md` ("an LLM may select a
-   quote but never write one") applied to the spoken text too.
-   - `crates/podling-core/src/stages/script.rs`: INSTRUCTIONS rule 3; in
-     `build_script`, substitute the placeholders after `resolve`. Reject a
-     placeholder with no matching quote, a quote with no placeholder, and (as
-     now) quoted words outside a placeholder. Bump `WriteScript::VERSION` to 5.
-   - `crates/podling-core/src/plugin/llm.rs`: bump `PROMPT_VERSION` to 2;
-     make `FakeLlm::write_script` emit placeholders.
-   - `crates/podling-core/tests/fixtures/llm/write_script.json`: use
-     placeholders in the turn text.
-   - Keep `check_quotes_are_spoken` and `QuoteVerifier`. After substitution
-     they should always pass, and they stay the independent check.
-   - Docs: `docs/architecture.md` "Sentence-addressed quotes", README "What the
-     model can and can't do".
-2. **Grounding sees headings and title.** `is_grounded` in
-   `crates/podling-core/src/stages/extract_claims.rs` compares a claim with the
-   chunk text only. Extraction rule 2 asks the model to replace references
-   such as "the site" with names, which may come from the document title or
-   the chunk's heading path (`Document::title`, `Chunk::heading_path`). Include
-   both in the word set the claim is checked against, and add a test with a
-   claim that names a term found only in a heading. Bump `ExtractClaims::VERSION` to 4.
+**NLI grounding in extraction.** `is_grounded` in
+`crates/podling-core/src/stages/extract_claims.rs` checks a claim against its
+chunk by content words. It misses a distortion built from the chunk's own words.
+With `[nli]` set, "does the chunk entail the claim?" is the better test. Keep the
+lexical check when `[nli]` is absent, so no-config output doesn't change.
 
-## Acceptance
+## Acceptance (suggested)
 
 - [ ] `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
       and `cargo test --workspace` pass.
-- [ ] A turn's text contains no model-typed quotation. Every quotation in a
-      finished script comes from a placeholder substitution. There is a unit test
-      for each rejection case in fix 1.
-- [ ] A claim naming a term from a heading only is accepted; an invented claim is
-      still rejected.
-- [ ] Live, twice from a cold cache (`--cache-dir` pointing at an empty directory):
-      `cargo run -p podling-cli -- run --episode examples/tunguska/episode-ollama.toml`
-      exits 0 and `analysis.json` has no `error` finding.
-- [ ] `PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b cargo test -p podling-cli -- --ignored live` passes.
+- [ ] Offline, with fake providers: the contradiction fixture produces one
+      verdict per Contested claim, and the script mentions the disagreement.
+- [ ] Without Contested claims, no adjudicator call is made, and runs without
+      `[nli]` give byte-identical artifact bodies.
+- [ ] Live, twice from a cold cache, on an example with a real contradiction:
+      the run exits 0 with no `error` in `analysis.json`.
 
 ## Before you start
 
-- Merge this branch: `git merge --no-ff worktree-phase2-llm-provider` from the
+- Merge this branch: `git merge --no-ff worktree-phase3-nli-ledger` from the
   main checkout. There is no git remote, so there is nothing to push.
 - Ollama runs in the docker container `infra_docker_compose-ollama-1` on port
-  11434, and `llama3.1:8b` is already pulled. `cargo` is at `~/.cargo/bin`, which
-  isn't on the default PATH.
-- A leftover worktree, `.claude/worktrees/phase1-core-contracts`, sits at
-  `main`'s old commit from an earlier session. Remove it with
-  `git worktree remove .claude/worktrees/phase1-core-contracts` once you've
-  confirmed it has nothing unmerged.
+  11434, with `llama3.1:8b` and `nomic-embed-text` pulled. `cargo` is at
+  `~/.cargo/bin`, which isn't on the default PATH.
+- The NLI model is in `~/.cache/podling-models/nli-deberta-v3-base`. The live
+  example expects it at `examples/tunguska/models/nli-deberta-v3-base`
+  (gitignored); a symlink is enough.
+- The worktrees `.claude/worktrees/phase1-core-contracts` and
+  `.claude/worktrees/phase2-llm-provider` are fully merged into `main`. Remove
+  them with `git worktree remove <path>`.
 
 ## Out of scope
 
-- Semantic claim clustering. A fact two sources word differently stays two
-  SingleSource claims (seen live with "80 million trees"). That needs the NLI
-  provider, a later phase.
 - Token budgeting. `WriteScript` only warns over 24 KiB.
+- TTS, MCP source connectors, PDF ingestion.
 
 ## Where things stand
 
 | Plan | State |
 |---|---|
 | [phase2-llm-provider](plans/phase2-llm-provider.md) | complete |
-| [scrutinise-phase2-llm-provider](plans/scrutinise-phase2-llm-provider.md) | complete (5 units, including typed `ProviderFailure`) |
-| [script-verbatim-retry](plans/script-verbatim-retry.md) | complete; works, but not enough on its own for an 8B model (see above) |
 | [quote-placeholders](plans/quote-placeholders.md) | complete; two cold-cache llama3.1:8b runs pass with 0 errors |
-| [scrutinise-quote-placeholders](plans/scrutinise-quote-placeholders.md) | complete (stray quotation marks rejected; title/heading words don't count toward grounding) |
+| [phase3-nli-ledger](plans/phase3-nli-ledger.md) | complete; live runs recorded in the plan ("Live results") |

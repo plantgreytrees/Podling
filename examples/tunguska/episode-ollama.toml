@@ -28,3 +28,24 @@ temperature = 0.2
 # Writing the script takes a local 8B model 80 to 120 seconds on an 8 GB card,
 # so the 120 second default can time out. A hosted model needs far less.
 timeout_secs = 300
+
+# [embedding] and [nli] turn on the grounding stages: claims worded
+# differently by two sources are merged, and every claim is checked against
+# the other sources' sentences, so a paraphrase corroborates it and a
+# contradiction contests it. Set both, or neither.
+#
+#   ollama pull nomic-embed-text
+#
+# The embedding server receives claim and source sentence text.
+[embedding]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+
+# The NLI model runs locally on the CPU. Download it once (Apache-2.0):
+#
+#   hf download cross-encoder/nli-deberta-v3-base \
+#     --local-dir examples/tunguska/models/nli-deberta-v3-base
+[nli]
+kind = "cross_encoder"
+model_dir = "models/nli-deberta-v3-base"

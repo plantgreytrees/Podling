@@ -26,8 +26,8 @@ pub use analyser::{Analyser, QuoteVerifier};
 pub use cross_encoder::CrossEncoderNli;
 pub use embedding::{EmbeddingProvider, FakeEmbedding, cosine, embed_checked};
 pub use llm::{
-    ClaimDraft, ClaimsDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LlmProvider,
-    LlmTask, NumberedSentence, PROMPT_VERSION, QuoteRef, ScriptDraft, SourceText,
+    ClaimDraft, ClaimsDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LedgerClaim,
+    LlmProvider, LlmTask, NumberedSentence, PROMPT_VERSION, QuoteRef, ScriptDraft, SourceText,
     complete_validated,
 };
 pub use nli::{FakeNli, NliPair, NliProvider, NliScores, score_checked};

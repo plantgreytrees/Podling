@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use crate::error::Result;
 use crate::plugin::{
-    CompletionRequest, LlmProvider, LlmTask, NumberedSentence, PROMPT_VERSION, QuoteRef,
-    ScriptDraft, SourceText, complete_validated,
+    CompletionRequest, LedgerClaim, LlmProvider, LlmTask, NumberedSentence, PROMPT_VERSION,
+    QuoteRef, ScriptDraft, SourceText, complete_validated,
 };
 use crate::stage::Stage;
 use crate::text::{fill_quote_placeholders, quotations, sentences};
@@ -48,7 +48,9 @@ impl Stage for WriteScript<'_> {
     //    it never types quoted words.
     // 6: a stray or unclosed quotation mark in the model's text is rejected,
     //    since it would hide a typed quotation from every later check.
-    const VERSION: u32 = 6;
+    // 7: the model sees each claim's id, text and status only, not its
+    //    evidence, whose chunk ids it mistook for claim ids.
+    const VERSION: u32 = 7;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -67,7 +69,7 @@ impl Stage for WriteScript<'_> {
             input: json!({
                 "topic": input.topic,
                 "target_minutes": input.target_minutes,
-                "ledger": input.ledger,
+                "ledger": LedgerClaim::from_ledger(&input.ledger),
                 "sources": source_texts(&input.chunks, &input.documents),
             }),
         };
