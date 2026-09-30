@@ -61,6 +61,10 @@ pub fn run_with_llm(
 
     let claim_input = ClaimInput {
         sources: source_map(&documents)?,
+        titles: documents
+            .iter()
+            .map(|d| (d.id().clone(), d.title().to_owned()))
+            .collect(),
         chunks,
     };
     let claims = cached(&ExtractClaims { llm }, &claim_input, cache, &mut report)?;

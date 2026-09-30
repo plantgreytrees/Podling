@@ -49,15 +49,23 @@ fn content_words(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Whether enough of `claim`'s content words appear in `chunk_text`, and every
+/// Whether enough of `claim`'s content words appear in `context`, and every
 /// number in it does (a changed figure is a different claim, however many
 /// other words match). A claim with no content words is never grounded.
-fn is_grounded(claim: &str, chunk_text: &str) -> bool {
+///
+/// `context` is everything the claim may draw on: the chunk's text, and the
+/// title and headings that name what the chunk is about. Rule 2 of the
+/// instructions has the model replace "the site" with a name, and a name
+/// often appears only there.
+fn is_grounded(claim: &str, context: &[&str]) -> bool {
     let wanted = content_words(claim);
     if wanted.is_empty() {
         return false;
     }
-    let have = content_words(chunk_text);
+    let have: BTreeSet<String> = context
+        .iter()
+        .flat_map(|text| content_words(text))
+        .collect();
     let is_number = |w: &String| w.chars().any(|c| c.is_ascii_digit());
     if wanted
         .iter()
@@ -75,6 +83,9 @@ pub struct ClaimInput {
     pub chunks: Vec<Chunk>,
     /// Where each chunk's document came from, for evidence attribution.
     pub sources: BTreeMap<DocumentId, SourceRef>,
+    /// The title of each chunk's document. Its words count as grounding,
+    /// like the words of the chunk's headings.
+    pub titles: BTreeMap<DocumentId, String>,
 }
 
 pub struct ExtractClaims<'a> {
@@ -86,7 +97,8 @@ impl Stage for ExtractClaims<'_> {
     // 2: the reply is a `{ "claims": [...] }` object, and a rejected reply is
     // retried once.
     // 3: a claim the chunk doesn't state (`is_grounded`) is a rejected reply.
-    const VERSION: u32 = 3;
+    // 4: grounding also sees the document title and the chunk's heading path.
+    const VERSION: u32 = 4;
     type Input = ClaimInput;
     type Output = Vec<Claim>;
 
@@ -112,13 +124,17 @@ impl Stage for ExtractClaims<'_> {
                 instructions: INSTRUCTIONS.to_owned(),
                 input: json!({ "chunk_text": chunk.text() }),
             };
+            let context: Vec<&str> = std::iter::once(chunk.text())
+                .chain(input.titles.get(chunk.document()).map(String::as_str))
+                .chain(chunk.heading_path().iter().map(String::as_str))
+                .collect();
             let drafts = complete_validated(self.llm, Self::ID, &request, |text| {
                 let drafts = serde_json::from_str::<ClaimsDraft>(text)
                     .map_err(|err| format!("chunk {}: {err}", chunk.id()))?;
                 match drafts
                     .claims
                     .iter()
-                    .find(|d| !d.text.trim().is_empty() && !is_grounded(&d.text, chunk.text()))
+                    .find(|d| !d.text.trim().is_empty() && !is_grounded(&d.text, &context))
                 {
                     Some(draft) => Err(format!(
                         "chunk {}: claim {:?} is not stated in the passage; return only what the passage states",
@@ -180,8 +196,32 @@ mod tests {
                 .iter()
                 .map(|(c, s)| (c.document().clone(), s.clone()))
                 .collect(),
+            titles: BTreeMap::new(),
             chunks: chunks.into_iter().map(|(c, _)| c).collect(),
         }
+    }
+
+    /// `input` with `title` as the title of every chunk's document.
+    fn titled(mut input: ClaimInput, title: &str) -> ClaimInput {
+        input.titles = input
+            .chunks
+            .iter()
+            .map(|c| (c.document().clone(), title.to_owned()))
+            .collect();
+        input
+    }
+
+    /// A chunk that sits under `headings`, as the chunk stage records them.
+    fn chunk_under(headings: &[&str], text: &str) -> (Chunk, SourceRef) {
+        let source = SourceRef {
+            connector: "t".into(),
+            locator: "a".into(),
+            independence_group: "g".into(),
+        };
+        let doc = Document::new(source.clone(), "a", text);
+        let span = TextSpan::new(0, text.len()).unwrap();
+        let headings = headings.iter().map(|h| (*h).to_owned()).collect();
+        (Chunk::from_document(&doc, span, headings).unwrap(), source)
     }
 
     #[test]
@@ -311,14 +351,96 @@ mod tests {
 
     #[test]
     fn grounding_needs_content_words_and_keeps_numbers_exact() {
-        assert!(is_grounded("No impact crater was found.", PASSAGE));
+        assert!(is_grounded("No impact crater was found.", &[PASSAGE]));
         // Same words, different year: the number is what makes it a new claim.
         assert!(!is_grounded(
             "Leonid Kulik reached the site in 1937.",
-            PASSAGE
+            &[PASSAGE]
         ));
-        assert!(!is_grounded("", PASSAGE));
-        assert!(!is_grounded("It was the one.", PASSAGE));
+        assert!(!is_grounded("", &[PASSAGE]));
+        assert!(!is_grounded("It was the one.", &[PASSAGE]));
+    }
+
+    #[test]
+    fn grounding_draws_on_every_piece_of_context() {
+        let claim = "The Tunguska event happened in 1908.";
+        // Two of the four content words are in the passage: not enough.
+        assert!(!is_grounded(claim, &["It happened in 1908."]));
+        assert!(is_grounded(
+            claim,
+            &["It happened in 1908.", "Tunguska event"]
+        ));
+        // Context can't stand in for a number the claim changes.
+        assert!(!is_grounded(
+            "The Tunguska event happened in 1909.",
+            &["It happened in 1908.", "Tunguska event"]
+        ));
+    }
+
+    const LAKE_CLAIM: &str =
+        r#"{"claims":[{"text":"Kulik recovered a meteorite fragment from a nearby lake."}]}"#;
+
+    /// Runs `reply` for a chunk with `text` under `headings` in a document
+    /// titled `title` (`None` for no title), and returns the result and the
+    /// number of model calls.
+    fn extract(
+        reply: &'static str,
+        headings: &[&str],
+        title: Option<&str>,
+        text: &str,
+    ) -> (Result<Vec<Claim>>, usize) {
+        let llm = Fixed(reply, Default::default());
+        let mut input = input(vec![chunk_under(headings, text)]);
+        if let Some(title) = title {
+            input = titled(input, title);
+        }
+        let result = ExtractClaims { llm: &llm }.run(&input);
+        (result, llm.1.get())
+    }
+
+    #[test]
+    fn a_claim_naming_a_term_found_only_in_a_heading_is_accepted() {
+        const REPLY: &str = r#"{"claims":[{"text":"The Tunguska event happened in 1908."}]}"#;
+        let (claims, calls) = extract(REPLY, &["Tunguska event"], None, "It happened in 1908.");
+        assert_eq!(claims.unwrap().len(), 1);
+        assert_eq!(calls, 1);
+
+        // The heading is what grounds it: without it the claim is rejected.
+        let (err, calls) = extract(REPLY, &[], None, "It happened in 1908.");
+        assert!(matches!(
+            err,
+            Err(CoreError::InvalidProviderOutput {
+                stage: "extract_claims",
+                ..
+            })
+        ));
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn a_claim_naming_a_term_found_only_in_the_title_is_accepted() {
+        const REPLY: &str = r#"{"claims":[{"text":"The Kulik expedition arrived in 1927."}]}"#;
+        let (claims, calls) = extract(REPLY, &[], Some("Kulik expedition"), "He arrived in 1927.");
+        assert_eq!(claims.unwrap().len(), 1);
+        assert_eq!(calls, 1);
+
+        let (err, _) = extract(REPLY, &[], None, "He arrived in 1927.");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn a_heading_and_title_do_not_ground_an_invented_claim() {
+        let (err, calls) = extract(
+            LAKE_CLAIM,
+            &["Tunguska event"],
+            Some("The 1908 Tunguska explosion"),
+            PASSAGE,
+        );
+        let Err(CoreError::InvalidProviderOutput { message, .. }) = err else {
+            panic!("expected InvalidProviderOutput");
+        };
+        assert!(message.contains("not stated in the passage"), "{message}");
+        assert_eq!(calls, 2);
     }
 
     #[test]

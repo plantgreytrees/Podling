@@ -127,17 +127,17 @@ Design decisions (fixed here, so the executor doesn't have to choose):
 Tooling: implementer implementer · gates code-reviewer, idiom-reviewer · skills language-aware-planning · guards cargo fmt/clippy/test
 Depends on: none (it shares no file with Step 1, so it can run in either order)
 
-- [ ] 2.1 Add `pub titles: BTreeMap<DocumentId, String>` to `ClaimInput` (`extract_claims.rs:74-78`), with a doc comment: "the title of each chunk's document; its words count as grounding". Change `is_grounded(claim, chunk_text)` to take the reference text as `&[&str]` (chunk text, document title, then each heading of `heading_path`) and build `have` from all of them. The number-must-appear rule and the 60% share don't change. In `run`, pass the chunk's title, or no title when the map has none, plus `chunk.heading_path()` → accept: `cargo build -p podling-core` passes.
-- [ ] 2.2 In `crates/podling-core/src/pipeline.rs:62`, fill `titles` from `documents` (`d.id().clone()` → `d.title().to_owned()`) → accept: `cargo build --workspace` passes.
-- [ ] 2.3 Tests in `extract_claims.rs`:
+- [x] 2.1 Add `pub titles: BTreeMap<DocumentId, String>` to `ClaimInput` (`extract_claims.rs:74-78`), with a doc comment: "the title of each chunk's document; its words count as grounding". Change `is_grounded(claim, chunk_text)` to take the reference text as `&[&str]` (chunk text, document title, then each heading of `heading_path`) and build `have` from all of them. The number-must-appear rule and the 60% share don't change. In `run`, pass the chunk's title, or no title when the map has none, plus `chunk.heading_path()` → accept: `cargo build -p podling-core` passes.
+- [x] 2.2 In `crates/podling-core/src/pipeline.rs:62`, fill `titles` from `documents` (`d.id().clone()` → `d.title().to_owned()`) → accept: `cargo build --workspace` passes.
+- [x] 2.3 Tests in `extract_claims.rs`:
   - A chunk with the heading path `["Tunguska event"]` and the text "It happened in 1908." The claim "The Tunguska event happened in 1908." (content words tunguska, event, happened, 1908: 2/4 without the heading, 4/4 with it) is accepted through `ExtractClaims::run` with one call.
   - The same claim against the same chunk with no heading is rejected by `is_grounded`. This proves the heading is what grounds it.
   - The document title "Kulik expedition" and the chunk "He arrived in 1927." make the claim "The Kulik expedition arrived in 1927." accepted (2/4 without the title, 4/4 with it). Without the title, it is rejected.
   - An invented claim is still rejected when a heading is present: the heading doesn't ground words it doesn't contain.
   - `an_invented_claim_is_rejected_after_one_retry` still passes unchanged.
   - Adjust the test `input()` helper to fill `titles` → accept: `cargo test -p podling-core stages::extract_claims` passes.
-- [ ] 2.4 Bump `ExtractClaims::VERSION` 3 → 4 with a `// 4:` comment ("grounding also sees the document title and heading path") → accept: `grep -n "VERSION: u32 = 4" crates/podling-core/src/stages/extract_claims.rs` matches.
-- [ ] 2.5 In `docs/architecture.md`, "Grounding check (a stopgap)" (~line 175): the word set includes the document title and the chunk's heading path. Also say that the model still sees only the chunk text → accept: the section mentions "heading".
+- [x] 2.4 Bump `ExtractClaims::VERSION` 3 → 4 with a `// 4:` comment ("grounding also sees the document title and heading path") → accept: `grep -n "VERSION: u32 = 4" crates/podling-core/src/stages/extract_claims.rs` matches.
+- [x] 2.5 In `docs/architecture.md`, "Grounding check (a stopgap)" (~line 175): the word set includes the document title and the chunk's heading path. Also say that the model still sees only the chunk text → accept: the section mentions "heading".
 
 ### Step 3 — live-acceptance (., rust, normal)
 Depends on: 1 (quote-placeholders), 2 (heading-grounding)
