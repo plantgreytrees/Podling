@@ -4,7 +4,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use podling_core::plugin::{Completion, CompletionRequest, LlmProvider, LlmTask, SourceText};
+use podling_core::plugin::{
+    Completion, CompletionRequest, LedgerClaim, LlmProvider, LlmTask, SourceText,
+};
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
 use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script};
 use serde_json::{Value, json};
@@ -283,12 +285,12 @@ impl LlmProvider for Replay {
             }
             LlmTask::WriteScript => {
                 let mut script = canned("write_script.json");
-                let ledger: Ledger =
+                let ledger: Vec<LedgerClaim> =
                     serde_json::from_value(request.input["ledger"].clone()).unwrap();
-                for entry in ledger.entries() {
-                    let id = serde_json::to_value(entry.claim.id()).unwrap();
+                for entry in &ledger {
+                    let id = serde_json::to_value(&entry.id).unwrap();
                     script = script.replace(
-                        &format!("{{{{claim:{}}}}}", entry.claim.text()),
+                        &format!("{{{{claim:{}}}}}", entry.text),
                         id.as_str().unwrap(),
                     );
                 }

@@ -2,3 +2,5 @@
 target/
 .podling/
 .claude/worktrees/
+# Downloaded model weights (see the example episodes for the command).
+examples/*/models/

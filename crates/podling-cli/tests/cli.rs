@@ -47,6 +47,23 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
 }
 
 #[test]
+fn every_example_episode_parses() {
+    let dir = example().parent().unwrap().to_owned();
+    for name in ["episode.toml", "episode-ollama.toml"] {
+        let text = fs::read_to_string(dir.join(name)).unwrap();
+        let spec: podling_types::EpisodeSpec =
+            toml::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}"));
+        // The Ollama episode shows the grounding stages; the offline one
+        // stays without them, so it needs no downloads.
+        assert_eq!(
+            spec.embedding.is_some() && spec.nli.is_some(),
+            name == "episode-ollama.toml",
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn help_lists_the_commands() {
     Command::cargo_bin("podling")
         .unwrap()
@@ -239,7 +256,7 @@ fn tiny_model(request: &Value) -> (u16, String) {
         let text = input["chunk_text"].as_str().unwrap().trim();
         return completion(&json!({ "claims": [{ "text": text }] }));
     }
-    let claim = &input["ledger"]["entries"][0]["claim"]["id"];
+    let claim = &input["ledger"][0]["id"];
     let source = input["sources"]
         .as_array()
         .unwrap()

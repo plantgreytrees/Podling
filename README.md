@@ -12,17 +12,22 @@ never text the model typed.
 
 ## Status
 
-This is **Phase 2: a real LLM provider**. The pipeline runs end to end, either
-offline with a deterministic fake LLM or with any OpenAI-compatible model
-(Ollama, llama.cpp, vLLM, LM Studio, OpenAI):
+This is **Phase 3: embeddings and NLI in the claim ledger**. The pipeline runs end
+to end, either offline with a deterministic fake LLM or with any OpenAI-compatible
+model (Ollama, llama.cpp, vLLM, LM Studio, OpenAI):
 
 ```
-sources → documents → chunks → claims → ledger → script → analysis
+sources → documents → chunks → claims → [cluster → stances] → ledger → script → analysis
 ```
+
+With the optional `[embedding]` and `[nli]` sections, the same fact worded differently
+by two independent sources becomes one Corroborated claim, and a source that
+contradicts a claim makes it Contested. A local NLI model decides both, not exact text
+matching (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)).
 
 Every stage is cached, and every artifact is a versioned JSON file with an exported JSON
-Schema. Text-to-speech, PDF ingestion, MCP source connectors and semantic
-claim clustering come in later phases. See [docs/architecture.md](docs/architecture.md).
+Schema. Text-to-speech, PDF ingestion, MCP source connectors and an LLM adjudicator for
+Contested claims come in later phases. See [docs/architecture.md](docs/architecture.md).
 
 ## Prerequisites
 
@@ -144,6 +149,56 @@ handles JSON well. A rate-limited (429) or failing (5xx) server is retried twice
 
 Failures print one line naming what to fix: an unset key variable, an
 unreachable server, a 401 (which variable to check) or a 404 (the model name).
+
+### Grounding with embeddings and NLI
+
+Without these sections, claims only merge when their text matches exactly, so two
+sources saying "some 80 million trees were flattened" and "about 80 million trees
+were knocked down" give two SingleSource claims. Add both sections to fix that
+(`examples/tunguska/episode-ollama.toml` has them):
+
+```toml
+[embedding]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+
+[nli]
+kind = "cross_encoder"
+model_dir = "models/nli-deberta-v3-base"   # relative to the episode file
+```
+
+Fetch the two models once:
+
+```sh
+ollama pull nomic-embed-text
+hf download cross-encoder/nli-deberta-v3-base \
+  --local-dir examples/tunguska/models/nli-deberta-v3-base
+```
+
+Two stages then run between extraction and the ledger. `cluster_claims` merges two
+claims when the NLI model finds that each entails the other and their numbers are
+equal ("in 1907" never merges with "in 1908"); embedding similarity only picks which
+pairs to check. `score_stances` reads each claim against the most similar sentences
+of the *other* independence groups: one that entails it adds support, one that
+clearly contradicts it adds a contradiction, and the ledger turns that into
+Contested. Each such piece of evidence records the source span and the scores that
+decided it. The claim's status still comes from fixed rules, never from an LLM.
+
+| Key | Meaning |
+|---|---|
+| `embedding.kind` | `open_ai_compat` (any server with `POST /v1/embeddings`) or `fake` (offline, for tests). |
+| `embedding.base_url`, `embedding.model`, `embedding.api_key_env`, `embedding.timeout_secs` | As for `[llm]`. |
+| `nli.kind` | `cross_encoder` or `fake`. |
+| `nli.model_dir` | Directory with `config.json`, `tokenizer.json` and `model.safetensors`. |
+
+Set both sections or neither; one alone is a config error. The NLI model
+(`cross-encoder/nli-deberta-v3-base`, Apache-2.0, about 0.7 GB) runs on the CPU, at
+roughly 60 ms per sentence pair, and is loaded only when a stage actually runs, so a
+cached rerun never loads it. It is dropped before the script is written.
+
+**Privacy.** The embedding server receives the text of every claim and every source
+sentence. A local server keeps it on your machine. The NLI model is always local.
 
 **Context window.** The script call sends the whole claim ledger plus every chunk's
 numbered sentences. A server with a small context window (Ollama defaults to a few

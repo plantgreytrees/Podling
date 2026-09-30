@@ -1,13 +1,13 @@
 # Architecture
 
-> **Status:** current as of 2026-09-30. It covers Phase 1 (core contracts), the
-> `/scrutinise` fixes and Phase 2 (the OpenAI-compatible LLM provider), plus the
-> Phase 2 scrutinise fixes (unreferenced-quotation check, claim grounding, script
-> input size warning), `{{quote:N}}` placeholders in script turns, and claim
-> grounding that can name things from the title and headings. Synced through
-> commit `1410a23`.
+> **Status:** current as of 2026-10-01. It covers Phase 1 (core contracts), the
+> `/scrutinise` fixes, Phase 2 (the OpenAI-compatible LLM provider) and its
+> scrutinise fixes (unreferenced-quotation check, claim grounding, script input
+> size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
+> can name things from the title and headings, and Phase 3 (embeddings and NLI
+> in the claim ledger).
 
-This document describes the state after Phase 2. Where the design
+This document describes the state after Phase 3. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
 
 ## Crates
@@ -34,16 +34,22 @@ needs concurrency, such as parallel TTS or streaming.
  ingest ─────────► Vec<Document>   BOM/CRLF normalised; duplicates within a group dropped
  chunk ──────────► Vec<Chunk>      split at Markdown headings (not inside code fences), then paragraphs (~800 words)
  extract_claims ─► Vec<Claim>      one LLM call per chunk; merged by ClaimId + Evidence
+ [cluster_claims] ► Vec<Claim>     paraphrases merged: mutual NLI entailment, equal numbers
+ [score_stances] ─► Vec<Claim>     other groups' sentences checked by NLI: Supports / Contradicts
  ledger ─────────► Ledger          classify(): status from distinct independence groups
- script ─────────► Script          LLM sees numbered sentences, returns QuoteRef { chunk, sentence }
+ script ─────────► Script          LLM sees each claim's id, text and status, and numbered
+                                   sentences; returns QuoteRef { chunk, sentence }
                                    and writes {{quote:N}} in the turn text where the quote goes;
                                    Quote::from_document copies the words and the stage fills the
                                    placeholder in; every citation must name a claim in the ledger
  analyse ────────► AnalysisReport  opt-in analysers, e.g. quote_verifier
 ```
 
-[`pipeline::run`](../crates/podling-core/src/pipeline.rs) calls the six
-stages in order. Each call goes through
+[`pipeline::run`](../crates/podling-core/src/pipeline.rs) calls the stages in
+order. The two bracketed ones run only when the episode has both `[embedding]`
+and `[nli]` (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli));
+without them the run has the same six stages, cache keys and artifact bodies as
+before Phase 3. Each call goes through
 [`stage::cached`](../crates/podling-core/src/stage.rs), which opens a
 `tracing` span `stage{id, version}`, logs `cache_hit` and `elapsed_ms`, and
 adds a `StageRecord` to the `RunReport`. Every artifact is written as
@@ -63,7 +69,11 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
   references word for word, or quotes words no reference covers. This check
   can't fail after a successful fill-in, and it stays as an independent
   guard (`QuoteVerifier` re-checks both afterwards);
-- a claim the chunk doesn't state (see the grounding check below).
+- a claim the chunk doesn't state (see the grounding check below);
+- from an embedding or NLI provider, a result count that differs from the
+  input count, vectors of zero or differing length, or a non-finite number
+  ([`embed_checked`](../crates/podling-core/src/plugin/embedding.rs),
+  [`score_checked`](../crates/podling-core/src/plugin/nli.rs)).
 
 Both LLM stages call the model through
 [`complete_validated`](../crates/podling-core/src/plugin/llm.rs). If a reply fails
@@ -104,7 +114,7 @@ The cache is keyed by content, which gives *early cutoff*. If a stage
 re-runs but produces identical output, the downstream stages see the same input
 and are still cache hits.
 
-## The four bump rules
+## The five bump rules
 
 1. **You changed an artifact's fields.** The `insta` schema snapshot test in
    [`crates/podling-types/tests/schema_snapshot.rs`](../crates/podling-types/tests/schema_snapshot.rs)
@@ -121,6 +131,13 @@ and are still cache hits.
 4. **You changed a prompt or the shape of an LLM input.** Bump
    [`PROMPT_VERSION`](../crates/podling-core/src/plugin/llm.rs). Both LLM stages
    put it in their config fingerprint next to the instruction text.
+5. **You changed an embedding or NLI provider's behaviour.** Rule 3 applies to
+   them too: `EmbeddingProvider::fingerprint()` and `NliProvider::fingerprint()`
+   are in both grounding stages' cache keys. The fakes carry a `version` field to
+   bump; `OpenAiEmbeddings` has the base URL, model and a request version;
+   `CrossEncoderNli` has a BLAKE3 hash of its three model files and a version.
+   The stages' thresholds are in their fingerprints as well, so changing one
+   invalidates the cache on its own.
 
 ## Plugins
 
@@ -133,6 +150,8 @@ add one arm to the factory.
 | Kind | Trait | Implementations |
 |---|---|---|
 | Provider (LLM) | `LlmProvider` | `FakeLlm`: deterministic, offline. `OpenAiCompat`: any OpenAI chat-completions server (see below). |
+| Provider (embeddings) | `EmbeddingProvider` | `FakeEmbedding`: BLAKE3-hashed bag of content words, 256 dimensions, so cosine measures shared words. `OpenAiEmbeddings`: `POST {base_url}/embeddings` (Ollama `nomic-embed-text`), 64 texts per request, on the same transport as `OpenAiCompat`. |
+| Provider (NLI) | `NliProvider` | `FakeNli`: one-way word containment, plus a changed number read as contradiction. `CrossEncoderNli`: `cross-encoder/nli-deberta-v3-base` (Apache-2.0) run natively with candle on the CPU, loaded from a local directory on first use. |
 | Source connector | `SourceConnector` | `LocalFilesConnector`: `.md`/`.txt` in one directory, symlinks confined to the root, 10 MiB cap. The locator is `<root as written in the episode>/<file name>`, so same-named files in different roots get distinct ids. |
 | Analyser | `Analyser` | `QuoteVerifier`: every quote matches its source span, the turn speaks it verbatim, and no other quoted span of three or more words appears in a turn |
 
@@ -141,12 +160,19 @@ Deferred to later phases:
   `WriteScript` logs a warning when its input is over 24 KiB, because a small server
   context window truncates it silently; raise the server's context (for Ollama,
   `OLLAMA_CONTEXT_LENGTH`).
-- TTS, embedding, NLI and ASR provider traits.
+- TTS and ASR provider traits.
 - MCP source connectors.
 - PDF ingestion (Docling / pdfium).
-- A Contested-claim adjudicator.
+- A Contested-claim adjudicator: the next phase.
+- Replacing the lexical grounding check in `extract_claims` with an NLI check
+  (see the grounding check below).
 
 ## The OpenAI-compatible provider
+
+The key, URL, limits and retry rules below live in one shared `Transport`
+([`plugin/http.rs`](../crates/podling-core/src/plugin/http.rs)), which the
+embeddings client uses too; its config errors name its own section
+(`embedding.base_url`, `embedding.api_key_env`).
 
 [`OpenAiCompat`](../crates/podling-core/src/plugin/openai.rs) sends
 `POST {base_url}/chat/completions`, which covers Ollama, llama.cpp
@@ -161,7 +187,7 @@ LLM task replies with an object (claim extraction returns `{ "claims": [...] }`)
 | URL | Must be `http://` or `https://`, with no credentials, query or fragment. A key over plain `http` to a non-local host logs a warning. Redirects are off, so the header can't follow one to another host. |
 | Limits | Per-request timeout (default 120 s); response bodies over 4 MiB are rejected while being read; an error body is quoted up to 512 bytes. |
 | Retries | A 429 or 5xx is retried twice (0.5 s, then 1 s). A timeout, a 4xx or a transport error is not. Separately, `complete_validated` re-asks once when a reply fails validation. |
-| Errors | `CoreError::Provider` carries a `ProviderFailure` kind (`Http(status)`, `Unreachable`, `TimedOut`, `Other`); `CoreError::provider_failure()` finds it through stage wrappers. The CLI picks its fix hint from the kind, never from the message wording. |
+| Errors | `CoreError::Provider` carries a `ProviderFailure` kind (`Http(status)`, `Unreachable`, `TimedOut`, `Other`); `CoreError::provider()` finds it and the failing plugin through stage wrappers. The CLI picks its fix hint from the kind, never from the message wording, and takes the URL, model and key variable from `[embedding]` when the plugin is `open_ai_compat_embeddings`, otherwise from `[llm]`. |
 | Observability | One `tracing` span per request with the model, elapsed ms, attempts and token usage. Never the key or the prompt text. |
 | TLS | rustls with the bundled web PKI roots, no OpenSSL. The added licences are permissive (Apache-2.0/MIT/ISC/BSD-3/CDLA-Permissive-2.0). |
 
@@ -218,12 +244,75 @@ would get those matches for free. A number may come from the chunk, the title or
 itself is still shown only the chunk text. The model gets one retry with the reason,
 then the run fails naming the chunk. The check is lexical. It catches invention and
 knowledge pulled from the model's memory, and tolerates paraphrase. It does not catch
-a subtle distortion made with the passage's own words; that needs the NLI provider,
-a later phase.
+a subtle distortion made with the passage's own words. The NLI provider could (does
+the chunk entail the claim?), and wiring it into this check is a follow-up.
 
-**Known limit.** Claims merge by exact normalised text. A model that paraphrases one
-fact from two sources will not corroborate it. Semantic clustering belongs with the
-NLI provider, which is a later phase.
+**The script sees a compact ledger.** The script request carries each claim's id,
+text and status only
+([`LedgerClaim`](../crates/podling-core/src/plugin/llm.rs)), never its evidence. An
+8B model cited a chunk id from a merged claim's evidence as a claim, twice.
+
+## Grounding with embeddings and NLI
+
+Extraction keys claims by their exact text, so two sources stating one fact in
+different words give two SingleSource claims, and nothing can contradict anything.
+Two optional stages fix that. Both are pure producers of *evidence*: status still
+comes only from `classify()`, and no LLM is involved.
+
+**Evidence audit.** `Evidence` has an optional `basis`
+([`claim.rs`](../crates/podling-types/src/claim.rs)). It is absent for plain
+extraction, so artifacts written without these stages are unchanged:
+- `Merged { wording, entailment_pm }`: this evidence came from a claim worded
+  `wording`, merged in because the two entail each other.
+- `Nli { premise, similarity_pm, entailment_pm, contradiction_pm }`: `premise` is
+  the span of the chunk's document that was judged against the claim.
+
+Scores are `PerMille` integers (0–1000), rounded once. That keeps `Evidence: Eq + Ord`
+and canonical JSON, and every threshold is compared against the rounded number, so
+the stored score is the one that decided.
+
+**[`cluster_claims`](../crates/podling-core/src/stages/cluster_claims.rs)** merges paraphrases:
+1. Each claim nominates up to 8 partners with embedding cosine ≥ 0.80. Similarity
+   only nominates; it never merges.
+2. The number veto: a pair whose number sets differ ("1907" vs "1908") is dropped
+   before the model sees it.
+3. NLI entailment must be ≥ 0.900 **in both directions**. A claim that adds detail
+   entails the shorter one, but not the reverse, so it stays separate (and the
+   stance stage can still corroborate it).
+4. Linkage is complete: a claim joins a cluster only if it is equivalent to every
+   member, so A≈B and B≈C never chain A to C.
+
+A cluster keeps the wording of its lowest-`ClaimId` member. Work runs in `ClaimId`
+order, so the result doesn't depend on input order.
+
+**[`score_stances`](../crates/podling-core/src/stages/score_stances.rs)** reads each claim
+against other groups' sources. Premises are windows of one or two consecutive sentences,
+well under DeBERTa's 512 tokens. For each claim, only windows from groups that have no
+evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are scored:
+- entailment ≥ 0.800: `Supports`;
+- else contradiction ≥ 0.950 **and** cosine ≥ 0.60: `Contradicts`. NLI models over-call
+  contradiction between sentences that merely share a topic (0.903 for "Kulik reached
+  the site in 1927" against "No impact crater was found"), hence the high bar and the
+  same-subject requirement;
+- else nothing.
+
+A chunk gives a claim at most one piece of evidence, from its most decisive window, and
+entailment wins over contradiction, so a chunk is never both for and against.
+
+**Cost bound.** At most 4 NLI pairs per claim for stances, plus 2 × 8 per claim for
+clustering, and one embedding per claim and per window. Both stages are cached by
+content, so a rerun costs nothing, and a fully cached run never loads the NLI model.
+
+**Resources.** The NLI model runs on the CPU (about 55–60 ms per pair), so the 8 GB GPU
+stays free for the LLM and the embedder. `CrossEncoderNli` checks and fingerprints its
+files when built, and loads the weights on the first `score` (a `OnceCell`). The pipeline
+drops both providers after `score_stances`, before the script stage. Weights load from
+`model.safetensors` only; `pytorch_model.bin`, a pickle, is never read.
+
+**Config.** `[embedding]` and `[nli]` are both set or both absent; one without the other
+is a `Config` error before any stage runs. A relative `model_dir` resolves against the
+episode file's directory, and a missing model file is one error line naming the
+`hf download` command.
 
 ## Why a claim ledger, not debating agents
 
@@ -235,7 +324,9 @@ sampling, and you can't audit them afterwards. The ledger makes trust
 - It counts distinct *independence groups*, not documents. Syndicated copies of one report
   therefore never look like corroboration.
 - An LLM is needed only where judgement really is required: extracting
-  claims, writing the script, and (later) adjudicating Contested claims.
+  claims, writing the script, and (later) adjudicating Contested claims. The NLI
+  model is not a judge of status either: it produces scored evidence, and fixed
+  thresholds turn scores into stances.
 
 The same reasoning applies to quotes. The model can only *point* at a sentence (`QuoteRef`) and
 mark where it goes in the spoken text (`{{quote:N}}`).
