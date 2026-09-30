@@ -104,3 +104,5 @@ asking it to is the flaw, not the retry.
 | [phase2-llm-provider](plans/phase2-llm-provider.md) | complete |
 | [scrutinise-phase2-llm-provider](plans/scrutinise-phase2-llm-provider.md) | complete (5 units, including typed `ProviderFailure`) |
 | [script-verbatim-retry](plans/script-verbatim-retry.md) | complete; works, but not enough on its own for an 8B model (see above) |
+| [quote-placeholders](plans/quote-placeholders.md) | complete; two cold-cache llama3.1:8b runs pass with 0 errors |
+| [scrutinise-quote-placeholders](plans/scrutinise-quote-placeholders.md) | complete (stray quotation marks rejected; title/heading words don't count toward grounding) |

@@ -3,7 +3,9 @@
 > **Status:** current as of 2026-09-30. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes and Phase 2 (the OpenAI-compatible LLM provider), plus the
 > Phase 2 scrutinise fixes (unreferenced-quotation check, claim grounding, script
-> input size warning). Synced through commit `92d9d2c`.
+> input size warning), `{{quote:N}}` placeholders in script turns, and claim
+> grounding that can name things from the title and headings. Synced through
+> commit `1410a23`.
 
 This document describes the state after Phase 2. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -212,7 +214,7 @@ extraction rule 2 has the model replace references such as "the site" with names
 name can appear only in a heading. Those title and heading words don't count toward the
 share, though: the 60% is taken over the claim's other content words, and a claim made only
 of title or heading words is rejected. Otherwise an invented claim that names the topic
-would get those matches for free. A number may come from the chunk or a heading. The model
+would get those matches for free. A number may come from the chunk, the title or a heading. The model
 itself is still shown only the chunk text. The model gets one retry with the reason,
 then the run fails naming the chunk. The check is lexical. It catches invention and
 knowledge pulled from the model's memory, and tolerates paraphrase. It does not catch
