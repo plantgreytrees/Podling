@@ -97,8 +97,8 @@ Depends on: none
 Tooling: implementer implementer · gates code-reviewer, security-auditor · guards cargo fmt/clippy/test
 Depends on: none
 
-- [ ] 2.1 Change `is_grounded` in `crates/podling-core/src/stages/extract_claims.rs` to `is_grounded(claim, chunk_text, names: &[&str])`, where `names` holds the document title and the chunk's headings. Let C be the chunk text's content words, T the content words of `names`, W the claim's content words, and N = W \ T. The claim is grounded only when N is non-empty, every number in W is in C ∪ T, and |N ∩ C| ≥ 0.6·|N|. Update the call in `run` and the doc comment. Bump `ExtractClaims::VERSION` 4 → 5 with a `// 5:` line → accept: `grep -n "VERSION: u32 = 5" crates/podling-core/src/stages/extract_claims.rs` matches.
-- [ ] 2.2 Tests:
+- [x] 2.1 Change `is_grounded` in `crates/podling-core/src/stages/extract_claims.rs` to `is_grounded(claim, chunk_text, names: &[&str])`, where `names` holds the document title and the chunk's headings. Let C be the chunk text's content words, T the content words of `names`, W the claim's content words, and N = W \ T. The claim is grounded only when N is non-empty, every number in W is in C ∪ T, and |N ∩ C| ≥ 0.6·|N|. Update the call in `run` and the doc comment. Bump `ExtractClaims::VERSION` 4 → 5 with a `// 5:` line → accept: `grep -n "VERSION: u32 = 5" crates/podling-core/src/stages/extract_claims.rs` matches.
+- [x] 2.2 Tests:
   - These stay accepted:
     - `a_claim_naming_a_term_found_only_in_a_heading_is_accepted`
     - `a_claim_naming_a_term_found_only_in_the_title_is_accepted`
@@ -110,7 +110,7 @@ Depends on: none
     - "Tunguska happened yesterday" against "It happened in 1908." with heading "Tunguska event"
     - "The Tunguska event happened in 1907." (the number)
   - Rewrite `grounding_draws_on_every_piece_of_context` for the new signature → accept: `cargo test -p podling-core stages::extract_claims` passes.
-- [ ] 2.3 In `docs/architecture.md`, "Grounding check": title and heading words can name the subject, but they don't count toward the 60% share. The rest of the claim must be in the chunk text, and a claim made only of title or heading words is rejected → accept: the section says title and heading words "don't count toward" the share.
+- [x] 2.3 In `docs/architecture.md`, "Grounding check": title and heading words can name the subject, but they don't count toward the 60% share. The rest of the claim must be in the chunk text, and a claim made only of title or heading words is rejected → accept: the section says title and heading words "don't count toward" the share.
 
 ### Step 3 — live-recheck (., rust, normal)
 Depends on: 1, 2

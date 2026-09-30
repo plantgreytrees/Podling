@@ -49,33 +49,35 @@ fn content_words(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Whether enough of `claim`'s content words appear in `context`, and every
-/// number in it does (a changed figure is a different claim, however many
-/// other words match). A claim with no content words is never grounded.
+/// Whether `claim` is stated by `chunk_text`: every number in it appears
+/// (a changed figure is a different claim, however many other words match),
+/// and enough of its other content words do.
 ///
-/// `context` is everything the claim may draw on: the chunk's text, and the
-/// title and headings that name what the chunk is about. Rule 2 of the
-/// instructions has the model replace "the site" with a name, and a name
-/// often appears only there.
-fn is_grounded(claim: &str, context: &[&str]) -> bool {
+/// `names` are the document title and the chunk's headings. Rule 2 of the
+/// instructions has the model replace "the site" with a name, and a name often
+/// appears only there, so a claim may use their words freely. They don't
+/// count toward the share, though: otherwise any invented claim that names
+/// the topic would get those matches for free. What the claim says beyond the
+/// names must come from the chunk, and a claim that is nothing but names, or
+/// has no content words at all, is never grounded.
+fn is_grounded(claim: &str, chunk_text: &str, names: &[&str]) -> bool {
     let wanted = content_words(claim);
-    if wanted.is_empty() {
-        return false;
-    }
-    let have: BTreeSet<String> = context
-        .iter()
-        .flat_map(|text| content_words(text))
-        .collect();
+    let stated = content_words(chunk_text);
+    let named: BTreeSet<String> = names.iter().flat_map(|n| content_words(n)).collect();
     let is_number = |w: &String| w.chars().any(|c| c.is_ascii_digit());
     if wanted
         .iter()
         .filter(|w| is_number(w))
-        .any(|w| !have.contains(w))
+        .any(|w| !stated.contains(w) && !named.contains(w))
     {
         return false;
     }
-    let found = wanted.iter().filter(|w| have.contains(*w)).count();
-    found as f64 >= MIN_GROUNDED_SHARE * wanted.len() as f64
+    let said: Vec<&String> = wanted.iter().filter(|w| !named.contains(*w)).collect();
+    if said.is_empty() {
+        return false;
+    }
+    let found = said.iter().filter(|w| stated.contains(**w)).count();
+    found as f64 >= MIN_GROUNDED_SHARE * said.len() as f64
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,7 +100,8 @@ impl Stage for ExtractClaims<'_> {
     // retried once.
     // 3: a claim the chunk doesn't state (`is_grounded`) is a rejected reply.
     // 4: grounding also sees the document title and the chunk's heading path.
-    const VERSION: u32 = 4;
+    // 5: title and heading words name things but don't count toward the share.
+    const VERSION: u32 = 5;
     type Input = ClaimInput;
     type Output = Vec<Claim>;
 
@@ -124,18 +127,19 @@ impl Stage for ExtractClaims<'_> {
                 instructions: INSTRUCTIONS.to_owned(),
                 input: json!({ "chunk_text": chunk.text() }),
             };
-            let context: Vec<&str> = std::iter::once(chunk.text())
-                .chain(input.titles.get(chunk.document()).map(String::as_str))
+            let names: Vec<&str> = input
+                .titles
+                .get(chunk.document())
+                .map(String::as_str)
+                .into_iter()
                 .chain(chunk.heading_path().iter().map(String::as_str))
                 .collect();
             let drafts = complete_validated(self.llm, Self::ID, &request, |text| {
                 let drafts = serde_json::from_str::<ClaimsDraft>(text)
                     .map_err(|err| format!("chunk {}: {err}", chunk.id()))?;
-                match drafts
-                    .claims
-                    .iter()
-                    .find(|d| !d.text.trim().is_empty() && !is_grounded(&d.text, &context))
-                {
+                match drafts.claims.iter().find(|d| {
+                    !d.text.trim().is_empty() && !is_grounded(&d.text, chunk.text(), &names)
+                }) {
                     Some(draft) => Err(format!(
                         "chunk {}: claim {:?} is not stated in the passage; return only what the passage states",
                         chunk.id(),
@@ -351,30 +355,57 @@ mod tests {
 
     #[test]
     fn grounding_needs_content_words_and_keeps_numbers_exact() {
-        assert!(is_grounded("No impact crater was found.", &[PASSAGE]));
+        assert!(is_grounded("No impact crater was found.", PASSAGE, &[]));
         // Same words, different year: the number is what makes it a new claim.
         assert!(!is_grounded(
             "Leonid Kulik reached the site in 1937.",
-            &[PASSAGE]
+            PASSAGE,
+            &[]
         ));
-        assert!(!is_grounded("", &[PASSAGE]));
-        assert!(!is_grounded("It was the one.", &[PASSAGE]));
+        assert!(!is_grounded("", PASSAGE, &[]));
+        assert!(!is_grounded("It was the one.", PASSAGE, &[]));
     }
 
     #[test]
-    fn grounding_draws_on_every_piece_of_context() {
+    fn names_can_be_used_but_do_not_count_toward_the_share() {
+        let names = ["Tunguska event"];
         let claim = "The Tunguska event happened in 1908.";
         // Two of the four content words are in the passage: not enough.
-        assert!(!is_grounded(claim, &["It happened in 1908."]));
-        assert!(is_grounded(
-            claim,
-            &["It happened in 1908.", "Tunguska event"]
-        ));
-        // Context can't stand in for a number the claim changes.
+        assert!(!is_grounded(claim, "It happened in 1908.", &[]));
+        // With the heading, what's left beyond the names is fully stated.
+        assert!(is_grounded(claim, "It happened in 1908.", &names));
+        // Names can't stand in for a number the claim changes.
         assert!(!is_grounded(
-            "The Tunguska event happened in 1909.",
-            &["It happened in 1908.", "Tunguska event"]
+            "The Tunguska event happened in 1907.",
+            "It happened in 1908.",
+            &names
         ));
+        // A claim that is nothing but names states nothing.
+        assert!(!is_grounded(
+            "The Tunguska event.",
+            "It happened in 1908.",
+            &names
+        ));
+        // One unstated word is all a claim has beyond the names.
+        assert!(!is_grounded(
+            "Tunguska happened yesterday",
+            "It happened in 1908.",
+            &names
+        ));
+    }
+
+    #[test]
+    fn naming_the_topic_does_not_ground_an_invented_claim() {
+        let claim = "The Tunguska event was caused by a comet impact.";
+        let chunk = "No impact crater was found near the site.";
+        // Only "impact" of caused/comet/impact is in the chunk.
+        assert!(!is_grounded(claim, chunk, &["The Tunguska event"]));
+    }
+
+    #[test]
+    fn a_name_the_chunk_also_uses_is_still_fine() {
+        let chunk = "The Tunguska blast flattened trees.";
+        assert!(is_grounded(chunk, chunk, &["The Tunguska event"]));
     }
 
     const LAKE_CLAIM: &str =

@@ -206,11 +206,14 @@ quote or a citation without the run reporting it.
 so an invented claim would otherwise look SingleSource or even Corroborated. Claim
 extraction therefore rejects a reply containing a claim whose content words (three or
 more characters, or any number, minus stop words) are less than 60% present in the
-chunk, or whose numbers aren't all present. "The chunk" here means the chunk's text plus
-its document's title and the chunk's heading path (`Document::title`,
-`Chunk::heading_path`), because extraction rule 2 has the model replace references such as
-"the site" with names, and a name can appear only in a heading. The model itself is still
-shown only the chunk text. The model gets one retry with the reason,
+chunk, or whose numbers aren't all present. A claim may also use words from its document's
+title and the chunk's heading path (`Document::title`, `Chunk::heading_path`), because
+extraction rule 2 has the model replace references such as "the site" with names, and a
+name can appear only in a heading. Those title and heading words don't count toward the
+share, though: the 60% is taken over the claim's other content words, and a claim made only
+of title or heading words is rejected. Otherwise an invented claim that names the topic
+would get those matches for free. A number may come from the chunk or a heading. The model
+itself is still shown only the chunk text. The model gets one retry with the reason,
 then the run fails naming the chunk. The check is lexical. It catches invention and
 knowledge pulled from the model's memory, and tolerates paraphrase. It does not catch
 a subtle distortion made with the passage's own words; that needs the NLI provider,
