@@ -13,14 +13,18 @@
 //! `pytorch_model.bin` is never touched: it is a Python pickle, and unpickling
 //! can run code.
 
+use std::cell::OnceCell;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::debertav2::{Config, DebertaV2SeqClassificationModel};
+use serde_json::{Value, json};
 use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
+use super::nli::{NliPair, NliProvider, NliScores};
 use crate::error::{CoreError, ProviderFailure, Result};
 
 const PLUGIN: &str = "cross_encoder";
@@ -224,9 +228,139 @@ fn inference_error(message: impl Into<String>) -> CoreError {
     }
 }
 
+/// Pairs per forward pass. A batch is padded to its longest pair, so small
+/// batches waste little work on padding and keep memory flat.
+pub const NLI_BATCH: usize = 16;
+
+/// Bump when scoring changes in a way the weights don't show (batching that
+/// alters results, a different truncation rule).
+const NLI_VERSION: u32 = 1;
+
+/// The [`NliProvider`] over a local [`CrossEncoder`].
+///
+/// Construction is cheap: it checks the files and fingerprints their bytes,
+/// but loads nothing. The model loads on the first [`score`] call and stays
+/// in the `OnceCell` until the provider is dropped, so a run whose NLI stages
+/// are all cache hits never loads it at all.
+///
+/// [`score`]: NliProvider::score
+pub struct CrossEncoderNli {
+    model_dir: PathBuf,
+    weights: String,
+    /// `OnceCell` is a slot that can be filled once through a shared `&self`
+    /// reference, after which it hands out `&CrossEncoder` borrows. That is
+    /// what lets `score(&self)` load the model lazily without `&mut self`
+    /// (which the trait doesn't offer) and without a lock (the pipeline is
+    /// single-threaded; `OnceCell` isn't `Sync`, and needn't be).
+    model: OnceCell<CrossEncoder>,
+}
+
+impl CrossEncoderNli {
+    /// Checks `model_dir` and fingerprints its files. A missing file is a
+    /// `Config` error naming the download command.
+    pub fn new(model_dir: &Path) -> Result<Self> {
+        check_model_dir(model_dir)?;
+        // Hash each file, then the three hashes together, so moving bytes
+        // from one file to another can't produce the same fingerprint.
+        let mut combined = blake3::Hasher::new();
+        for path in model_files(model_dir) {
+            let mut file = fs::File::open(&path).map_err(|err| CoreError::io(&path, err))?;
+            let mut hasher = blake3::Hasher::new();
+            // Streams the file: the weights are hundreds of MB.
+            hasher
+                .update_reader(&mut file)
+                .map_err(|err| CoreError::io(&path, err))?;
+            combined.update(hasher.finalize().as_bytes());
+        }
+        Ok(Self {
+            model_dir: model_dir.to_owned(),
+            weights: combined.finalize().to_hex().to_string(),
+            model: OnceCell::new(),
+        })
+    }
+
+    /// The loaded model, loading it on first use.
+    fn model(&self) -> Result<&CrossEncoder> {
+        // `OnceCell::get_or_try_init` (fallible init) isn't stable yet, so:
+        // return the model if loaded, else load it and store it.
+        if let Some(model) = self.model.get() {
+            return Ok(model);
+        }
+        let started = Instant::now();
+        let loaded = CrossEncoder::load(&self.model_dir)?;
+        tracing::info!(
+            model_dir = %self.model_dir.display(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "NLI model loaded"
+        );
+        Ok(self.model.get_or_init(|| loaded))
+    }
+}
+
+impl NliProvider for CrossEncoderNli {
+    fn id(&self) -> &str {
+        PLUGIN
+    }
+
+    /// The weights' hash, not the directory: the same model anywhere gives
+    /// the same cache keys, and a re-downloaded, changed model does not.
+    fn fingerprint(&self) -> Value {
+        json!({
+            "provider": PLUGIN,
+            "weights_blake3": self.weights,
+            "max_tokens": MAX_TOKENS,
+            "version": NLI_VERSION,
+        })
+    }
+
+    fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+        let model = self.model()?;
+        let mut scores = Vec::with_capacity(pairs.len());
+        for batch in pairs.chunks(NLI_BATCH) {
+            let span = tracing::debug_span!("nli_batch", pairs = batch.len());
+            let _entered = span.enter();
+            let started = Instant::now();
+            let texts: Vec<(&str, &str)> =
+                batch.iter().map(|p| (p.premise, p.hypothesis)).collect();
+            scores.extend(model.scores(&texts)?.into_iter().map(|s| NliScores {
+                entailment: s.entailment,
+                neutral: s.neutral,
+                contradiction: s.contradiction,
+            }));
+            tracing::debug!(
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "nli batch done"
+            );
+        }
+        Ok(scores)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn construction_fingerprints_the_files_but_loads_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in MODEL_FILES {
+            fs::write(dir.path().join(name), format!("not a real {name}")).unwrap();
+        }
+        let nli = CrossEncoderNli::new(dir.path()).expect("builds without loading");
+        let before = nli.fingerprint();
+        assert_eq!(before["weights_blake3"].as_str().unwrap().len(), 64);
+
+        // Loading happens on the first score, and fails there.
+        let pair = NliPair {
+            premise: "a",
+            hypothesis: "b",
+        };
+        assert!(nli.score(&[pair]).is_err());
+
+        fs::write(dir.path().join("model.safetensors"), "other bytes").unwrap();
+        let after = CrossEncoderNli::new(dir.path()).unwrap().fingerprint();
+        assert_ne!(before, after, "changed weights must change the fingerprint");
+    }
 
     /// A minimal DeBERTa-v3 config with the given `id2label`.
     fn config(id2label: serde_json::Value) -> Config {

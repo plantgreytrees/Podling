@@ -496,3 +496,53 @@ fn a_grounded_run_caches_the_new_stages_too() {
     assert_eq!(second.len(), 8);
     assert!(second.iter().all(|(_, c)| c == "hit"), "{second:?}");
 }
+
+#[test]
+fn an_embedding_401_names_the_embedding_key_variable() {
+    let key = "sk-embed-401-key";
+    let echo = format!(r#"{{"error":{{"message":"Incorrect API key provided: {key}"}}}}"#);
+    let (base_url, _) = mock_server(move |_| (401, echo.clone()));
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(
+        tmp.path(),
+        &format!(
+            "kind = \"fake\"\n\n[embedding]\nkind = \"open_ai_compat\"\nbase_url = \"{base_url}\"\n\
+             model = \"embed\"\napi_key_env = \"PODLING_EMBED_KEY\"\n\n[nli]\nkind = \"fake\""
+        ),
+    );
+    let assert = podling(&tmp.path().join("cache"))
+        .env("PODLING_EMBED_KEY", key)
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(stderr.contains("HTTP 401"), "{stderr}");
+    assert!(stderr.contains("$PODLING_EMBED_KEY"), "{stderr}");
+    assert!(!stderr.contains(key), "{stderr}");
+}
+
+#[test]
+fn a_missing_nli_model_is_one_line_naming_the_download_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(
+        tmp.path(),
+        "kind = \"fake\"\n\n[embedding]\nkind = \"fake\"\n\n\
+         [nli]\nkind = \"cross_encoder\"\nmodel_dir = \"models/missing\"",
+    );
+    let assert = podling(&tmp.path().join("cache"))
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(
+        stderr.contains("hf download cross-encoder/nli-deberta-v3-base"),
+        "{stderr}"
+    );
+    // Resolved against the episode's directory, not the working directory.
+    assert!(
+        stderr.contains(&tmp.path().join("models/missing").display().to_string()),
+        "{stderr}"
+    );
+}
