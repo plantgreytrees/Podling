@@ -11,6 +11,7 @@ use crate::plugin::{
     ClaimsDraft, CompletionRequest, LlmProvider, LlmTask, PROMPT_VERSION, complete_validated,
 };
 use crate::stage::Stage;
+use crate::text::{content_words, is_number};
 
 const INSTRUCTIONS: &str = "\
 You extract factual claims from one passage of a source document.
@@ -29,26 +30,6 @@ Reply with one JSON object: {\"claims\": [{\"text\": \"...\"}]}. Reply {\"claims
 /// distortion of one it does. Loose enough for paraphrase.
 const MIN_GROUNDED_SHARE: f64 = 0.6;
 
-/// Words that carry no claim content, so they can't ground one.
-const STOP_WORDS: &[&str] = &[
-    "the", "and", "that", "with", "from", "this", "for", "are", "was", "were", "has", "had",
-    "have", "its", "his", "her", "their", "they", "them", "over", "into", "about", "also", "but",
-    "not", "who", "which", "been", "than", "then", "there", "these", "those",
-];
-
-/// Lower-cased words of `text` that carry content: at least three characters
-/// (a number of any length counts, since a changed figure is a changed claim)
-/// and not a stop word.
-fn content_words(text: &str) -> BTreeSet<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .map(str::to_lowercase)
-        .filter(|w| {
-            (w.chars().count() >= 3 || w.chars().any(|c| c.is_ascii_digit()))
-                && !STOP_WORDS.contains(&w.as_str())
-        })
-        .collect()
-}
-
 /// Whether `claim` is stated by `chunk_text`: every number in it appears
 /// (a changed figure is a different claim, however many other words match),
 /// and enough of its other content words do.
@@ -64,7 +45,6 @@ fn is_grounded(claim: &str, chunk_text: &str, names: &[&str]) -> bool {
     let wanted = content_words(claim);
     let stated = content_words(chunk_text);
     let named: BTreeSet<String> = names.iter().flat_map(|n| content_words(n)).collect();
-    let is_number = |w: &String| w.chars().any(|c| c.is_ascii_digit());
     if wanted
         .iter()
         .filter(|w| is_number(w))
@@ -163,6 +143,7 @@ impl Stage for ExtractClaims<'_> {
                     source: source.id(),
                     independence_group: source.independence_group.clone(),
                     stance: Stance::Supports,
+                    basis: None,
                 });
             }
         }

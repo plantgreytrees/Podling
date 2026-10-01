@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use crate::error::Result;
 use crate::plugin::{
-    CompletionRequest, LlmProvider, LlmTask, NumberedSentence, PROMPT_VERSION, QuoteRef,
-    ScriptDraft, SourceText, complete_validated,
+    CompletionRequest, LedgerClaim, LlmProvider, LlmTask, NumberedSentence, PROMPT_VERSION,
+    QuoteRef, ScriptDraft, SourceText, complete_validated,
 };
 use crate::stage::Stage;
 use crate::text::{fill_quote_placeholders, quotations, sentences};
@@ -48,7 +48,9 @@ impl Stage for WriteScript<'_> {
     //    it never types quoted words.
     // 6: a stray or unclosed quotation mark in the model's text is rejected,
     //    since it would hide a typed quotation from every later check.
-    const VERSION: u32 = 6;
+    // 7: the model sees each claim's id, text and status only, not its
+    //    evidence, whose chunk ids it mistook for claim ids.
+    const VERSION: u32 = 7;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -67,7 +69,7 @@ impl Stage for WriteScript<'_> {
             input: json!({
                 "topic": input.topic,
                 "target_minutes": input.target_minutes,
-                "ledger": input.ledger,
+                "ledger": LedgerClaim::from_ledger(&input.ledger),
                 "sources": source_texts(&input.chunks, &input.documents),
             }),
         };
@@ -234,7 +236,7 @@ mod tests {
     use super::*;
     use crate::error::CoreError;
     use crate::plugin::{Completion, FakeLlm};
-    use podling_types::SourceRef;
+    use podling_types::{Claim, Evidence, SourceRef, Stance};
 
     #[test]
     fn the_instructions_say_quote_numbers_restart_in_every_turn() {
@@ -658,5 +660,39 @@ mod tests {
         let sources = request.input["sources"].to_string();
         assert!(sources.contains(INJECTION));
         assert!(!request.input["ledger"].to_string().contains(INJECTION));
+    }
+
+    /// Evidence carries chunk and source ids that look like claim ids, and a
+    /// small model once cited them as claims, so the request leaves it out.
+    #[test]
+    fn the_ledger_the_model_sees_has_no_evidence() {
+        let (doc, chunk) = doc_and_chunk();
+        let mut claim = Claim::new("The sky split in two.");
+        claim.add_evidence(Evidence {
+            chunk: chunk.id().clone(),
+            source: doc.source().id(),
+            independence_group: doc.source().independence_group.clone(),
+            stance: Stance::Supports,
+            basis: None,
+        });
+        let input = ScriptInput {
+            ledger: Ledger::from_claims([claim]),
+            ..empty_input(vec![doc], vec![chunk])
+        };
+        let llm = Recording::default();
+        WriteScript { llm: &llm }.run(&input).unwrap();
+
+        let request = llm.0.borrow().clone().unwrap();
+        let ledger = request.input["ledger"].as_array().unwrap();
+        assert_eq!(ledger.len(), 1);
+        for entry in ledger {
+            let keys: BTreeSet<&str> = entry
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(keys, BTreeSet::from(["id", "status", "text"]), "{entry}");
+        }
     }
 }

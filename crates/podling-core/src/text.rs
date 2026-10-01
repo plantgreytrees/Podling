@@ -1,5 +1,6 @@
 //! Small text utilities shared by stages and the fake provider.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Range;
 
@@ -22,6 +23,41 @@ pub fn sentences(text: &str) -> Vec<Range<usize>> {
     }
     push_trimmed(text, start..text.len(), &mut out);
     out
+}
+
+/// Words that carry no claim content, so they can't ground one.
+const STOP_WORDS: &[&str] = &[
+    "the", "and", "that", "with", "from", "this", "for", "are", "was", "were", "has", "had",
+    "have", "its", "his", "her", "their", "they", "them", "over", "into", "about", "also", "but",
+    "not", "who", "which", "been", "than", "then", "there", "these", "those",
+];
+
+/// Lower-cased words of `text` that carry content: at least three characters
+/// (a number of any length counts, since a changed figure is a changed claim)
+/// and not a stop word.
+pub fn content_words(text: &str) -> BTreeSet<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .filter(|w| {
+            (w.chars().count() >= 3 || w.chars().any(|c| c.is_ascii_digit()))
+                && !STOP_WORDS.contains(&w.as_str())
+        })
+        .collect()
+}
+
+/// Whether `word` (as [`content_words`] returns it) is a number: any word
+/// with a digit in it, such as `1908` or `2150km`.
+pub fn is_number(word: &str) -> bool {
+    word.chars().any(|c| c.is_ascii_digit())
+}
+
+/// The numbers among `text`'s content words. Two claims that differ in a
+/// number state different facts, however alike the rest is.
+pub fn numbers(text: &str) -> BTreeSet<String> {
+    content_words(text)
+        .into_iter()
+        .filter(|w| is_number(w))
+        .collect()
 }
 
 /// Shortest quoted span, in words, treated as a quotation. Shorter spans

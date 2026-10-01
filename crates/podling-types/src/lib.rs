@@ -16,10 +16,12 @@ pub mod schema;
 pub mod script;
 
 pub use analysis::{AnalysisReport, Finding, Severity};
-pub use claim::{Claim, Evidence, Stance};
+pub use claim::{Claim, Evidence, EvidenceBasis, InvalidPerMille, PerMille, Stance};
 pub use document::{Chunk, Document, SourceRef, TextSpan};
 pub use envelope::{ArtifactKind, Envelope, SCHEMA_VERSION};
-pub use episode::{AnalyserConfig, EpisodeSpec, LlmConfig, Mode, SourceSpec};
+pub use episode::{
+    AnalyserConfig, EmbeddingConfig, EpisodeSpec, LlmConfig, Mode, NliConfig, SourceSpec,
+};
 pub use ids::{ChunkId, ClaimId, ContentHash, DocumentId, SourceId, SpeakerId};
 pub use ledger::{ClaimStatus, Ledger, LedgerEntry, classify};
 pub use quote::{Quote, QuoteError};

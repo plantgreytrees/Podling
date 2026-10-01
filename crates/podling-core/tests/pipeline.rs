@@ -4,9 +4,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use podling_core::plugin::{Completion, CompletionRequest, LlmProvider, LlmTask, SourceText};
+use podling_core::plugin::{
+    Completion, CompletionRequest, LedgerClaim, LlmProvider, LlmTask, SourceText,
+};
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
-use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, Ledger, Script};
+use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script};
 use serde_json::{Value, json};
 
 const STAGES: [&str; 6] = [
@@ -76,6 +78,30 @@ fn writes_every_artifact_in_a_versioned_envelope() {
             "{path:?}"
         );
         assert_eq!(json["kind"], kind.as_str());
+    }
+}
+
+/// With no `[embedding]`/`[nli]` sections, every artifact is byte for byte
+/// what the pipeline wrote before the NLI stages existed
+/// (`tests/fixtures/golden`, written at commit 0b0d1ff by
+/// `podling run --episode tests/fixtures/episode.toml --no-cache`). Only the
+/// envelope's `schema_version` may differ.
+#[test]
+fn no_nli_config_writes_todays_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    pipeline::run(&spec(&fixtures()), &fixtures(), None, &out).unwrap();
+
+    let current = format!("\"schema_version\": {},", podling_types::SCHEMA_VERSION);
+    for kind in podling_types::ArtifactKind::ALL {
+        let name = format!("{}.json", kind.as_str());
+        let golden = fs::read_to_string(fixtures().join("golden").join(&name)).unwrap();
+        let golden = golden.replacen("\"schema_version\": 2,", &current, 1);
+        let written = fs::read_to_string(out.join(&name)).unwrap();
+        assert!(
+            golden == written,
+            "{name} differs from tests/fixtures/golden"
+        );
     }
 }
 
@@ -259,12 +285,12 @@ impl LlmProvider for Replay {
             }
             LlmTask::WriteScript => {
                 let mut script = canned("write_script.json");
-                let ledger: Ledger =
+                let ledger: Vec<LedgerClaim> =
                     serde_json::from_value(request.input["ledger"].clone()).unwrap();
-                for entry in ledger.entries() {
-                    let id = serde_json::to_value(entry.claim.id()).unwrap();
+                for entry in &ledger {
+                    let id = serde_json::to_value(&entry.id).unwrap();
                     script = script.replace(
-                        &format!("{{{{claim:{}}}}}", entry.claim.text()),
+                        &format!("{{{{claim:{}}}}}", entry.text),
                         id.as_str().unwrap(),
                     );
                 }
@@ -433,4 +459,102 @@ fn an_instruction_planted_in_a_source_is_only_data() {
     for turn in script.turns() {
         assert!(turn.citations.iter().all(|c| known.contains(&c)));
     }
+}
+
+// --- Clusters and stances from the fake embedding and NLI providers --------
+
+/// Runs the fixture episode in `fixtures/<name>` and returns its ledger.
+fn run_fixture(name: &str, out: &Path) -> (RunReport, Ledger) {
+    let base = fixtures().join(name);
+    let report = pipeline::run(&spec(&base), &base, None, out).unwrap();
+    (report, read_body(out, "ledger"))
+}
+
+#[test]
+fn a_contradicting_source_contests_both_claims() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (report, ledger) = run_fixture("contradiction", tmp.path());
+    let ids: Vec<&str> = hits(&report).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(
+        ids,
+        [
+            "ingest",
+            "chunk",
+            "extract_claims",
+            "cluster_claims",
+            "score_stances",
+            "ledger",
+            "script",
+            "analyse",
+        ]
+    );
+    assert_eq!(ledger.entries().len(), 2);
+    for entry in ledger.entries() {
+        assert!(
+            matches!(entry.status, ClaimStatus::Contested { .. }),
+            "{entry:?}"
+        );
+    }
+}
+
+#[test]
+fn a_paraphrase_in_another_group_becomes_one_corroborated_claim() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, ledger) = run_fixture("paraphrase", tmp.path());
+    assert_eq!(ledger.entries().len(), 1);
+    let entry = &ledger.entries()[0];
+    assert_eq!(
+        entry.status,
+        ClaimStatus::Corroborated {
+            groups: vec!["expedition".into(), "eyewitness".into()]
+        }
+    );
+    // One source said it in the kept wording, the other in its own.
+    let bases: Vec<_> = entry.claim.evidence().iter().map(|e| &e.basis).collect();
+    assert_eq!(bases.len(), 2);
+    assert_eq!(bases.iter().filter(|b| b.is_none()).count(), 1);
+    assert!(
+        bases
+            .iter()
+            .any(|b| matches!(b, Some(EvidenceBasis::Merged { .. }))),
+        "{bases:?}"
+    );
+}
+
+/// "1908" and "1907" in otherwise identical sentences: similar enough to be
+/// merge candidates, but a different fact, so never merged and both Contested.
+#[test]
+fn a_near_miss_on_the_year_is_not_merged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, ledger) = run_fixture("near-miss", tmp.path());
+    assert_eq!(ledger.entries().len(), 2);
+    for entry in ledger.entries() {
+        assert!(
+            matches!(entry.status, ClaimStatus::Contested { .. }),
+            "{entry:?}"
+        );
+    }
+}
+
+#[test]
+fn the_fake_providers_give_byte_identical_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+    run_fixture("paraphrase", &a);
+    run_fixture("paraphrase", &b);
+    for kind in ["claims", "ledger"] {
+        let file = format!("{kind}.json");
+        assert_eq!(
+            fs::read(a.join(&file)).unwrap(),
+            fs::read(b.join(&file)).unwrap()
+        );
+    }
+}
+
+#[test]
+fn without_embedding_and_nli_no_stance_stage_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let report = pipeline::run(&spec(&fixtures()), &fixtures(), None, tmp.path()).unwrap();
+    let ids: Vec<&str> = hits(&report).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ids, STAGES);
 }

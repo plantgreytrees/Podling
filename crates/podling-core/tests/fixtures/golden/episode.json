@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "kind": "episode",
+  "body": {
+    "title": "The Tunguska event",
+    "topic": "the 1908 Tunguska explosion",
+    "mode": "non_fiction",
+    "target_minutes": 5,
+    "sources": [
+      {
+        "kind": "local_files",
+        "root": "eyewitness",
+        "independence_group": "eyewitness"
+      },
+      {
+        "kind": "local_files",
+        "root": "expedition",
+        "independence_group": "expedition"
+      }
+    ],
+    "llm": {
+      "kind": "fake"
+    },
+    "analysers": [
+      {
+        "kind": "quote_verifier"
+      }
+    ]
+  }
+}

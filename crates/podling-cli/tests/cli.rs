@@ -20,6 +20,9 @@ const STAGES: [&str; 6] = [
     "analyse",
 ];
 
+/// The stages that run only with `[embedding]` and `[nli]` configured.
+const GROUNDING_STAGES: [&str; 2] = ["cluster_claims", "score_stances"];
+
 fn example() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tunguska/episode.toml")
 }
@@ -37,11 +40,27 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
         .filter_map(|line| {
             let mut cols = line.split_whitespace();
             let (id, cache) = (cols.next()?, cols.next()?);
-            STAGES
-                .contains(&id)
+            (STAGES.contains(&id) || GROUNDING_STAGES.contains(&id))
                 .then(|| (id.to_owned(), cache.to_owned()))
         })
         .collect()
+}
+
+#[test]
+fn every_example_episode_parses() {
+    let dir = example().parent().unwrap().to_owned();
+    for name in ["episode.toml", "episode-ollama.toml"] {
+        let text = fs::read_to_string(dir.join(name)).unwrap();
+        let spec: podling_types::EpisodeSpec =
+            toml::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}"));
+        // The Ollama episode shows the grounding stages; the offline one
+        // stays without them, so it needs no downloads.
+        assert_eq!(
+            spec.embedding.is_some() && spec.nli.is_some(),
+            name == "episode-ollama.toml",
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -237,7 +256,7 @@ fn tiny_model(request: &Value) -> (u16, String) {
         let text = input["chunk_text"].as_str().unwrap().trim();
         return completion(&json!({ "claims": [{ "text": text }] }));
     }
-    let claim = &input["ledger"]["entries"][0]["claim"]["id"];
+    let claim = &input["ledger"][0]["id"];
     let source = input["sources"]
         .as_array()
         .unwrap()
@@ -452,4 +471,95 @@ fn unknown_episode_key_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("api_key"));
+}
+
+#[test]
+fn a_grounded_run_caches_the_new_stages_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    // `[embedding]` and `[nli]` follow the `[llm]` table the helper writes.
+    let episode = episode_with_llm(
+        tmp.path(),
+        "kind = \"fake\"\n\n[embedding]\nkind = \"fake\"\n\n[nli]\nkind = \"fake\"",
+    );
+    let cache = tmp.path().join("cache");
+    let run = || {
+        let assert = podling(&cache)
+            .args(["run", "--episode"])
+            .arg(&episode)
+            .arg("--out")
+            .arg(tmp.path().join("out"))
+            .assert()
+            .success();
+        stage_rows(&assert.get_output().stdout)
+    };
+
+    let first = run();
+    let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "ingest",
+            "chunk",
+            "extract_claims",
+            "cluster_claims",
+            "score_stances",
+            "ledger",
+            "script",
+            "analyse",
+        ]
+    );
+    assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
+    let second = run();
+    assert_eq!(second.len(), 8);
+    assert!(second.iter().all(|(_, c)| c == "hit"), "{second:?}");
+}
+
+#[test]
+fn an_embedding_401_names_the_embedding_key_variable() {
+    let key = "sk-embed-401-key";
+    let echo = format!(r#"{{"error":{{"message":"Incorrect API key provided: {key}"}}}}"#);
+    let (base_url, _) = mock_server(move |_| (401, echo.clone()));
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(
+        tmp.path(),
+        &format!(
+            "kind = \"fake\"\n\n[embedding]\nkind = \"open_ai_compat\"\nbase_url = \"{base_url}\"\n\
+             model = \"embed\"\napi_key_env = \"PODLING_EMBED_KEY\"\n\n[nli]\nkind = \"fake\""
+        ),
+    );
+    let assert = podling(&tmp.path().join("cache"))
+        .env("PODLING_EMBED_KEY", key)
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(stderr.contains("HTTP 401"), "{stderr}");
+    assert!(stderr.contains("$PODLING_EMBED_KEY"), "{stderr}");
+    assert!(!stderr.contains(key), "{stderr}");
+}
+
+#[test]
+fn a_missing_nli_model_is_one_line_naming_the_download_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let episode = episode_with_llm(
+        tmp.path(),
+        "kind = \"fake\"\n\n[embedding]\nkind = \"fake\"\n\n\
+         [nli]\nkind = \"cross_encoder\"\nmodel_dir = \"models/missing\"",
+    );
+    let assert = podling(&tmp.path().join("cache"))
+        .args(["run", "--episode"])
+        .arg(&episode)
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assert);
+    assert!(
+        stderr.contains("hf download cross-encoder/nli-deberta-v3-base"),
+        "{stderr}"
+    );
+    // Resolved against the episode's directory, not the working directory.
+    assert!(
+        stderr.contains(&tmp.path().join("models/missing").display().to_string()),
+        "{stderr}"
+    );
 }

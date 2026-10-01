@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "kind": "script",
+  "body": {
+    "cast": [
+      {
+        "id": "host",
+        "name": "Ada",
+        "role": "host"
+      },
+      {
+        "id": "guest",
+        "name": "Ben",
+        "role": "co-host"
+      }
+    ],
+    "turns": [
+      {
+        "speaker": "host",
+        "text": "Today: the 1908 Tunguska explosion. It begins with this: “At breakfast the sky split in two.”",
+        "emotion": "curious",
+        "citations": [],
+        "quotes": [
+          {
+            "document": "46fe2f24fbf819eaa2a2db6740a235eac793b804ec8af6a0e613b4fd2d83e201",
+            "span": {
+              "start": 48,
+              "end": 82
+            },
+            "text": "At breakfast the sky split in two."
+          }
+        ]
+      },
+      {
+        "speaker": "guest",
+        "text": "One source reports: No impact crater was found.",
+        "emotion": "curious",
+        "citations": [
+          "27d97049c4916338b5f69ae47776487b32efb5dfa28f21eacf48433229aa8644"
+        ],
+        "quotes": []
+      },
+      {
+        "speaker": "host",
+        "text": "Independent sources agree: In June 1908 an explosion flattened about 80 million trees over the Tunguska forest.",
+        "emotion": "serious",
+        "citations": [
+          "513a9498b0db48e4bcbd91a531d4e0af53e1a324ce25a4598a1dd3a3aa09286e"
+        ],
+        "quotes": []
+      },
+      {
+        "speaker": "guest",
+        "text": "One source reports: The heat was so strong that my shirt almost burned.",
+        "emotion": "curious",
+        "citations": [
+          "84e6fbaf7637d7eb611f8924ddc507b3883eac8de1db32da99811b8b94c416af"
+        ],
+        "quotes": []
+      },
+      {
+        "speaker": "host",
+        "text": "One source reports: At breakfast the sky split in two.",
+        "emotion": "curious",
+        "citations": [
+          "8c2c22bf60ff779929b1ec2df4202ed60ad4de3c357349217198a4fd4a4fb9d3"
+        ],
+        "quotes": []
+      },
+      {
+        "speaker": "guest",
+        "text": "One source reports: Leonid Kulik reached the site in 1927.",
+        "emotion": "curious",
+        "citations": [
+          "d8bef33313421eb85550da95b89cb7f6b9b5dd221f5356d9af4e0c00df5fa1e1"
+        ],
+        "quotes": []
+      },
+      {
+        "speaker": "host",
+        "text": "That's all for today.",
+        "emotion": "neutral",
+        "citations": [],
+        "quotes": []
+      }
+    ]
+  }
+}

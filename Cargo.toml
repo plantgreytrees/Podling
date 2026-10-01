@@ -27,6 +27,13 @@ tracing = "0.1"
 # no gzip, so a response cannot expand past the size cap while being read.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The NLI cross-encoder runs natively on the CPU with candle (pure Rust, no
+# ONNX Runtime binaries downloaded at build time).
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+# Only what loading a `tokenizer.json` needs: no progress bars, no training.
+tokenizers = { version = "0.22", default-features = false }
 
 tempfile = "3.27"
 assert_cmd = "2.2"
@@ -39,3 +46,9 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 disallowed_types = "deny"
+
+# Dependencies are built optimised even in debug builds: candle's CPU kernels
+# are 10-50x slower unoptimised, which makes the NLI stages unusable in
+# `target/debug/podling`. Podling's own crates stay quick to compile.
+[profile.dev.package."*"]
+opt-level = 3

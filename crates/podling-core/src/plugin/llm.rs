@@ -13,7 +13,9 @@ use crate::text::sentences;
 ///
 /// 2: a turn's text carries `{{quote:N}}` placeholders where its quotes go,
 ///    instead of the quoted words.
-pub const PROMPT_VERSION: u32 = 2;
+/// 3: the script request's ledger lists each claim's id, text and status
+///    ([`LedgerClaim`]), without evidence.
+pub const PROMPT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +23,7 @@ pub enum LlmTask {
     /// Input: `{ "chunk_text": string }`. Output: a JSON [`ClaimsDraft`]. It is
     /// an object, not a bare array, because JSON mode only guarantees objects.
     ExtractClaims,
-    /// Input: `{ "topic", "target_minutes", "ledger": Ledger,
+    /// Input: `{ "topic", "target_minutes", "ledger": [LedgerClaim],
     /// "sources": [SourceText] }`. Output: JSON `ScriptDraft`.
     WriteScript,
 }
@@ -59,6 +61,32 @@ pub struct ClaimsDraft {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimDraft {
     pub text: String,
+}
+
+/// One ledger claim as shown to the model in [`LlmTask::WriteScript`]: what
+/// it may cite, and how firmly. The evidence is left out: its chunk and
+/// source ids look just like claim ids, and a small model cited them as
+/// claims once merged claims carried two chunks each.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerClaim {
+    pub id: ClaimId,
+    pub text: String,
+    pub status: ClaimStatus,
+}
+
+impl LedgerClaim {
+    /// The ledger's claims, in ledger order.
+    pub fn from_ledger(ledger: &Ledger) -> Vec<Self> {
+        ledger
+            .entries()
+            .iter()
+            .map(|entry| Self {
+                id: entry.claim.id().clone(),
+                text: entry.claim.text().to_owned(),
+                status: entry.status.clone(),
+            })
+            .collect()
+    }
 }
 
 /// One chunk of source text as shown to the model in [`LlmTask::WriteScript`],
@@ -170,7 +198,7 @@ impl FakeLlm {
 
     fn write_script(input: &Value) -> Result<ScriptDraft> {
         let topic = input["topic"].as_str().unwrap_or("today's story");
-        let ledger: Ledger = serde_json::from_value(input["ledger"].clone())
+        let ledger: Vec<LedgerClaim> = serde_json::from_value(input["ledger"].clone())
             .map_err(|err| invalid_input(format!("ledger: {err}")))?;
         let sources: Vec<SourceText> = serde_json::from_value(input["sources"].clone())
             .map_err(|err| invalid_input(format!("sources: {err}")))?;
@@ -191,7 +219,7 @@ impl FakeLlm {
         ];
 
         let mut turns = vec![Self::opening(&host, topic, sources.first())];
-        for (i, entry) in ledger.entries().iter().enumerate() {
+        for (i, entry) in ledger.iter().enumerate() {
             let (lead, emotion) = match &entry.status {
                 ClaimStatus::Corroborated { .. } => ("Independent sources agree", Emotion::Serious),
                 ClaimStatus::SingleSource { .. } => ("One source reports", Emotion::Curious),
@@ -204,9 +232,9 @@ impl FakeLlm {
                 } else {
                     host.clone()
                 },
-                text: format!("{lead}: {}", entry.claim.text()),
+                text: format!("{lead}: {}", entry.text),
                 emotion,
-                citations: vec![entry.claim.id().clone()],
+                citations: vec![entry.id.clone()],
                 quotes: vec![],
             });
         }
@@ -331,7 +359,11 @@ mod tests {
                 { "sentence": 1, "text": "Then a boom." },
             ],
         }]);
-        let input = json!({"topic": "Tunguska", "ledger": ledger, "sources": sources});
+        let input = json!({
+            "topic": "Tunguska",
+            "ledger": LedgerClaim::from_ledger(&ledger),
+            "sources": sources,
+        });
 
         let completion = FakeLlm
             .complete(&request(LlmTask::WriteScript, input))

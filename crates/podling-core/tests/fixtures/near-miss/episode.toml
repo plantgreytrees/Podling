@@ -1,0 +1,14 @@
+title = "near-miss"
+topic = "Tunguska"
+target_minutes = 1
+llm = { kind = "fake" }
+sources = [
+  { kind = "local_files", root = "a", independence_group = "eyewitness" },
+  { kind = "local_files", root = "b", independence_group = "expedition" },
+]
+
+[embedding]
+kind = "fake"
+
+[nli]
+kind = "fake"

@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "kind": "chunks",
+  "body": [
+    {
+      "id": "c183371cd2bb2e513252bbf58f1df1a87debfac9d62f3d4ddcb6342f923fa455",
+      "document": "46fe2f24fbf819eaa2a2db6740a235eac793b804ec8af6a0e613b4fd2d83e201",
+      "span": {
+        "start": 48,
+        "end": 219
+      },
+      "heading_path": [
+        "Eyewitness account",
+        "Vanavara trading post"
+      ],
+      "text": "At breakfast the sky split in two. In June 1908 an explosion flattened about 80 million trees over the Tunguska forest. The heat was so strong that my shirt almost burned."
+    },
+    {
+      "id": "d6673f5a83083bbf61fca3fef70bcc3dacff02b8d2da10cebdd410171e3942c8",
+      "document": "d72e7bcd99b257d2b403ac03c7006c23cba8f68dedaa5b9ba22394cee2d4f99b",
+      "span": {
+        "start": 23,
+        "end": 174
+      },
+      "heading_path": [
+        "The 1927 expedition"
+      ],
+      "text": "Leonid Kulik reached the site in 1927. In June 1908 an explosion flattened about 80 million trees over the Tunguska forest. No impact crater was found."
+    }
+  ]
+}

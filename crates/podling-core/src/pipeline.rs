@@ -1,5 +1,6 @@
 //! Runs an episode end to end: sources → documents → chunks → claims →
-//! ledger → script → analysis, writing each artifact to the output directory.
+//! (clusters and stances, when `[embedding]` and `[nli]` are set) → ledger →
+//! script → analysis, writing each artifact to the output directory.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -10,11 +11,11 @@ use serde::Serialize;
 
 use crate::cache::DiskCache;
 use crate::error::{CoreError, Result};
-use crate::plugin::{LlmProvider, build_analysers, build_llm, build_sources};
+use crate::plugin::{LlmProvider, build_analysers, build_grounding, build_llm, build_sources};
 use crate::stage::{RunReport, cached};
 use crate::stages::{
-    Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ExtractClaims, Ingest,
-    ScriptInput, WriteScript,
+    Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
+    Ingest, ScoreStances, ScriptInput, StanceInput, WriteScript,
 };
 
 /// Runs `spec`. Relative source paths resolve against `base_dir` (normally
@@ -43,6 +44,9 @@ pub fn run_with_llm(
     out_dir: &Path,
 ) -> Result<RunReport> {
     let analysers = build_analysers(&spec.analysers);
+    // Built before any stage runs, so a bad `[embedding]`/`[nli]` section
+    // fails the run before the LLM has spent any time on it.
+    let grounding = build_grounding(spec, base_dir)?;
     let mut report = RunReport::default();
 
     let mut fetched = Vec::new();
@@ -67,7 +71,30 @@ pub fn run_with_llm(
             .collect(),
         chunks,
     };
-    let claims = cached(&ExtractClaims { llm }, &claim_input, cache, &mut report)?;
+    let mut claims = cached(&ExtractClaims { llm }, &claim_input, cache, &mut report)?;
+    if let Some(grounding) = grounding {
+        let merged = cached(
+            &ClusterClaims {
+                embedder: grounding.embedder.as_ref(),
+                nli: grounding.nli.as_ref(),
+            },
+            &claims,
+            cache,
+            &mut report,
+        )?;
+        let stance_input = StanceInput {
+            claims: merged,
+            chunks: claim_input.chunks.clone(),
+            sources: claim_input.sources.clone(),
+        };
+        let stage = ScoreStances {
+            embedder: grounding.embedder.as_ref(),
+            nli: grounding.nli.as_ref(),
+        };
+        claims = cached(&stage, &stance_input, cache, &mut report)?;
+        // `grounding` was moved into this block, so it is dropped here: any
+        // model it loaded is freed before the script stage needs the memory.
+    }
     let ledger = cached(&BuildLedger, &claims, cache, &mut report)?;
 
     let script_input = ScriptInput {

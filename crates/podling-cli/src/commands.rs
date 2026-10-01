@@ -4,8 +4,9 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
+use podling_core::plugin::openai_embeddings::PLUGIN as EMBEDDINGS_PLUGIN;
 use podling_core::{CoreError, DiskCache, ProviderFailure, pipeline};
-use podling_types::{EpisodeSpec, LlmConfig, schema};
+use podling_types::{EmbeddingConfig, EpisodeSpec, LlmConfig, schema};
 
 pub fn export_schemas(out: &Path) -> Result<()> {
     fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
@@ -48,7 +49,7 @@ pub fn run(episode: &Path, out: &Path, cache_dir: Option<&Path>) -> Result<()> {
 }
 
 /// One line for a core error: its whole cause chain, plus what to fix when
-/// the LLM provider failed in a way the user can act on. The core's messages
+/// an HTTP provider failed in a way the user can act on. The core's messages
 /// never contain the API key, so neither does this.
 fn explain(spec: &EpisodeSpec, err: &CoreError) -> anyhow::Error {
     let mut message = err.to_string();
@@ -59,25 +60,46 @@ fn explain(spec: &EpisodeSpec, err: &CoreError) -> anyhow::Error {
         source = cause.source();
     }
     match err
-        .provider_failure()
-        .and_then(|kind| provider_hint(&spec.llm, kind))
+        .provider()
+        .and_then(|(plugin, kind)| provider_hint(spec, plugin, kind))
     {
         Some(hint) => anyhow!("{message} ({hint})"),
         None => anyhow!(message),
     }
 }
 
+/// The server settings of the provider that failed: `[embedding]` for the
+/// embeddings client, `[llm]` otherwise.
+fn server_of<'a>(
+    spec: &'a EpisodeSpec,
+    plugin: &str,
+) -> Option<(&'static str, &'a str, &'a str, Option<&'a str>)> {
+    if plugin == EMBEDDINGS_PLUGIN {
+        match spec.embedding.as_ref()? {
+            EmbeddingConfig::OpenAiCompat {
+                base_url,
+                model,
+                api_key_env,
+                ..
+            } => Some(("embedding", base_url, model, api_key_env.as_deref())),
+            EmbeddingConfig::Fake {} => None,
+        }
+    } else {
+        match &spec.llm {
+            LlmConfig::OpenAiCompat {
+                base_url,
+                model,
+                api_key_env,
+                ..
+            } => Some(("llm", base_url, model, api_key_env.as_deref())),
+            LlmConfig::Fake {} => None,
+        }
+    }
+}
+
 /// What to fix for a provider failure the user can act on.
-fn provider_hint(llm: &LlmConfig, kind: ProviderFailure) -> Option<String> {
-    let LlmConfig::OpenAiCompat {
-        base_url,
-        model,
-        api_key_env,
-        ..
-    } = llm
-    else {
-        return None;
-    };
+fn provider_hint(spec: &EpisodeSpec, plugin: &str, kind: ProviderFailure) -> Option<String> {
+    let (section, base_url, model, api_key_env) = server_of(spec, plugin)?;
     match kind {
         ProviderFailure::Http(404) => Some(format!(
             "check that the server has a model called {model:?} (for Ollama: `ollama pull {model}`) and that base_url ends in /v1"
@@ -85,7 +107,7 @@ fn provider_hint(llm: &LlmConfig, kind: ProviderFailure) -> Option<String> {
         ProviderFailure::Http(401 | 403) => Some(match api_key_env {
             Some(var) => format!("check that ${var} holds a valid key for {base_url}"),
             None => format!(
-                "{base_url} wants a key: set llm.api_key_env to the name of the variable that holds it"
+                "{base_url} wants a key: set {section}.api_key_env to the name of the variable that holds it"
             ),
         }),
         ProviderFailure::Unreachable | ProviderFailure::TimedOut => Some(format!(

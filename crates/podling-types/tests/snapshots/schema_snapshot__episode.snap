@@ -1,6 +1,5 @@
 ---
 source: crates/podling-types/tests/schema_snapshot.rs
-assertion_line: 12
 expression: schema
 ---
 {
@@ -15,12 +14,34 @@ expression: schema
         "$ref": "#/$defs/AnalyserConfig"
       }
     },
+    "embedding": {
+      "description": "Embeds claims and source sentences so the NLI stages can pick which\npairs to compare. Needs `nli` too; without both, claims merge only by\nexact wording and every piece of evidence is the claim's own extraction.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EmbeddingConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "llm": {
       "$ref": "#/$defs/LlmConfig"
     },
     "mode": {
       "$ref": "#/$defs/Mode",
       "default": "non_fiction"
+    },
+    "nli": {
+      "description": "Judges whether one text entails or contradicts another. Needs\n`embedding` too.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NliConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "sources": {
       "type": "array",
@@ -64,6 +85,64 @@ expression: schema
           "additionalProperties": false,
           "required": [
             "kind"
+          ]
+        }
+      ]
+    },
+    "EmbeddingConfig": {
+      "oneOf": [
+        {
+          "description": "Deterministic offline stand-in: a hashed bag of words.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fake"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Any server that speaks the OpenAI embeddings protocol\n(`POST {base_url}/embeddings`), e.g. Ollama with `nomic-embed-text`.",
+          "type": "object",
+          "properties": {
+            "api_key_env": {
+              "description": "Name of the environment variable holding the API key, never the\nkey itself. Leave unset for local servers that need none.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "base_url": {
+              "description": "Base URL up to and including the version segment, e.g.\n`http://localhost:11434/v1`. Must be `http://` or `https://`.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "open_ai_compat"
+            },
+            "model": {
+              "description": "Model name as the server knows it, e.g. `nomic-embed-text`.",
+              "type": "string"
+            },
+            "timeout_secs": {
+              "description": "Per-request timeout in seconds; the provider's default when unset.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "base_url",
+            "model"
           ]
         }
       ]
@@ -148,6 +227,43 @@ expression: schema
       "type": "string",
       "enum": [
         "non_fiction"
+      ]
+    },
+    "NliConfig": {
+      "oneOf": [
+        {
+          "description": "Deterministic offline stand-in: word containment, with a changed\nnumber counted as a contradiction.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fake"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A local DeBERTa-v3 NLI cross-encoder, run on the CPU, e.g.\n`cross-encoder/nli-deberta-v3-base`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cross_encoder"
+            },
+            "model_dir": {
+              "description": "Directory holding the model's `config.json`, `tokenizer.json` and\n`model.safetensors`. A relative path is resolved against the\nepisode file's directory.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "model_dir"
+          ]
+        }
       ]
     },
     "SourceSpec": {
