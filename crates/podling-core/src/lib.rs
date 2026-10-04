@@ -10,4 +10,4 @@ pub mod text;
 
 pub use cache::{CacheKey, CacheStats, DiskCache};
 pub use error::{CoreError, ProviderFailure, Result};
-pub use stage::{RunReport, Stage, StageRecord, cached};
+pub use stage::{GroundingCounts, RunReport, Stage, StageRecord, cached};

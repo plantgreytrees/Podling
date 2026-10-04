@@ -1,0 +1,13 @@
+title = "distortion"
+topic = "Kulik"
+target_minutes = 1
+llm = { kind = "fake" }
+sources = [
+  { kind = "local_files", root = "expedition", independence_group = "expedition" },
+]
+
+[embedding]
+kind = "fake"
+
+[nli]
+kind = "fake"
