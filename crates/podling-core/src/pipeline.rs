@@ -1,6 +1,7 @@
 //! Runs an episode end to end: sources → documents → chunks → claims →
 //! (clusters and stances, when `[embedding]` and `[nli]` are set) → ledger →
-//! script → analysis, writing each artifact to the output directory.
+//! verdicts on Contested claims → script → analysis, writing each artifact to
+//! the output directory.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -14,8 +15,8 @@ use crate::error::{CoreError, Result};
 use crate::plugin::{LlmProvider, build_analysers, build_grounding, build_llm, build_sources};
 use crate::stage::{RunReport, cached};
 use crate::stages::{
-    Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
-    Ingest, ScoreStances, ScriptInput, StanceInput, WriteScript,
+    Adjudicate, AdjudicateInput, Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput,
+    ClusterClaims, ExtractClaims, Ingest, ScoreStances, ScriptInput, StanceInput, WriteScript,
 };
 
 /// Runs `spec`. Relative source paths resolve against `base_dir` (normally
@@ -96,6 +97,9 @@ pub fn run_with_llm(
         // model it loaded is freed before the script stage needs the memory.
     }
     let ledger = cached(&BuildLedger, &claims, cache, &mut report)?;
+    // Only Contested claims reach the adjudicator; with none it makes no call.
+    let adjudicate_input = AdjudicateInput::new(&ledger, &claim_input.chunks, &documents)?;
+    let verdicts = cached(&Adjudicate { llm }, &adjudicate_input, cache, &mut report)?;
 
     let script_input = ScriptInput {
         topic: spec.topic.clone(),
@@ -126,6 +130,7 @@ pub fn run_with_llm(
     write(out_dir, ArtifactKind::Chunks, &script_input.chunks)?;
     write(out_dir, ArtifactKind::Claims, &claims)?;
     write(out_dir, ArtifactKind::Ledger, &script_input.ledger)?;
+    write(out_dir, ArtifactKind::Verdicts, &verdicts)?;
     write(out_dir, ArtifactKind::Script, &analyse_input.script)?;
     write(out_dir, ArtifactKind::Analysis, &analysis)?;
     Ok(report)

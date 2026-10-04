@@ -11,11 +11,12 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::{Value, json};
 
-const STAGES: [&str; 6] = [
+const STAGES: [&str; 7] = [
     "ingest",
     "chunk",
     "extract_claims",
     "ledger",
+    "adjudicate",
     "script",
     "analyse",
 ];
@@ -93,7 +94,7 @@ fn second_run_of_the_example_is_all_cache_hits() {
     };
 
     let first = stage_rows(&run().get_output().stdout);
-    assert_eq!(first.len(), 6);
+    assert_eq!(first.len(), STAGES.len());
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
 
     let second = stage_rows(&run().get_output().stdout);
@@ -108,7 +109,7 @@ fn second_run_of_the_example_is_all_cache_hits() {
         .args(["cache", "stats"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("6 entries"));
+        .stdout(predicate::str::contains("7 entries"));
     podling(&cache).args(["cache", "clear"]).assert().success();
     podling(&cache)
         .args(["cache", "stats"])
@@ -158,7 +159,8 @@ fn schema_export_writes_one_parseable_file_per_kind() {
             "documents",
             "episode",
             "ledger",
-            "script"
+            "script",
+            "verdicts"
         ]
         .map(|k| format!("{k}.schema.json"))
     );
@@ -504,13 +506,14 @@ fn a_grounded_run_caches_the_new_stages_too() {
             "cluster_claims",
             "score_stances",
             "ledger",
+            "adjudicate",
             "script",
             "analyse",
         ]
     );
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
     let second = run();
-    assert_eq!(second.len(), 8);
+    assert_eq!(second.len(), 9);
     assert!(second.iter().all(|(_, c)| c == "hit"), "{second:?}");
 }
 

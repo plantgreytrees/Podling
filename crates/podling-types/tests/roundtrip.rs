@@ -111,7 +111,7 @@ fn artifacts_roundtrip() {
     roundtrip(&Envelope::new(ArtifactKind::Chunks, vec![chunk]));
     roundtrip(&Envelope::new(ArtifactKind::Claims, vec![claim]));
     roundtrip(&Envelope::new(ArtifactKind::Ledger, ledger));
-    roundtrip(&verdicts);
+    roundtrip(&Envelope::new(ArtifactKind::Verdicts, verdicts));
     roundtrip(&Envelope::new(ArtifactKind::Script, script));
     roundtrip(&Envelope::new(ArtifactKind::Analysis, report));
 }

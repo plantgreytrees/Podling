@@ -5,17 +5,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use podling_core::plugin::{
-    Completion, CompletionRequest, LedgerClaim, LlmProvider, LlmTask, SourceText,
+    Completion, CompletionRequest, FakeLlm, LedgerClaim, LlmProvider, LlmTask, SourceText,
 };
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
-use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script};
+use podling_types::{
+    Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script, Stance, Verdicts,
+};
 use serde_json::{Value, json};
 
-const STAGES: [&str; 6] = [
+const STAGES: [&str; 7] = [
     "ingest",
     "chunk",
     "extract_claims",
     "ledger",
+    "adjudicate",
     "script",
     "analyse",
 ];
@@ -85,7 +88,9 @@ fn writes_every_artifact_in_a_versioned_envelope() {
 /// what the pipeline wrote before the NLI stages existed
 /// (`tests/fixtures/golden`, written at commit 0b0d1ff by
 /// `podling run --episode tests/fixtures/episode.toml --no-cache`). Only the
-/// envelope's `schema_version` may differ.
+/// envelope's `schema_version` may differ. Artifacts added since (the
+/// adjudicator's verdicts) have no golden; nothing is Contested without NLI,
+/// so the verdicts are empty.
 #[test]
 fn no_nli_config_writes_todays_artifacts() {
     let tmp = tempfile::tempdir().unwrap();
@@ -93,7 +98,10 @@ fn no_nli_config_writes_todays_artifacts() {
     pipeline::run(&spec(&fixtures()), &fixtures(), None, &out).unwrap();
 
     let current = format!("\"schema_version\": {},", podling_types::SCHEMA_VERSION);
-    for kind in podling_types::ArtifactKind::ALL {
+    let golden_kinds = podling_types::ArtifactKind::ALL
+        .into_iter()
+        .filter(|kind| *kind != podling_types::ArtifactKind::Verdicts);
+    for kind in golden_kinds {
         let name = format!("{}.json", kind.as_str());
         let golden = fs::read_to_string(fixtures().join("golden").join(&name)).unwrap();
         let golden = golden.replacen("\"schema_version\": 2,", &current, 1);
@@ -103,6 +111,8 @@ fn no_nli_config_writes_todays_artifacts() {
             "{name} differs from tests/fixtures/golden"
         );
     }
+    let verdicts: Verdicts = read_body(&out, "verdicts");
+    assert!(verdicts.as_slice().is_empty());
 }
 
 fn read_body<T: serde::de::DeserializeOwned>(out: &Path, kind: &str) -> T {
@@ -180,7 +190,10 @@ fn editing_a_source_invalidates_ingest_and_everything_downstream() {
     fs::write(&report_path, edited).unwrap();
 
     let after = pipeline::run(&spec, &base, Some(&cache), &out).unwrap();
-    assert_eq!(hits(&after), STAGES.map(|id| (id, false)).to_vec());
+    // Early cutoff: still nothing Contested, so the adjudicator's input is
+    // unchanged and its (empty) output is reused.
+    let expected = STAGES.map(|id| (id, id == "adjudicate"));
+    assert_eq!(hits(&after), expected.to_vec());
 }
 
 #[test]
@@ -311,6 +324,9 @@ impl LlmProvider for Replay {
                     );
                 }
                 script
+            }
+            LlmTask::AdjudicateClaim => {
+                panic!("the replayed fixture has no Contested claim to adjudicate")
             }
         };
         Ok(Completion { text })
@@ -484,6 +500,7 @@ fn a_contradicting_source_contests_both_claims() {
             "cluster_claims",
             "score_stances",
             "ledger",
+            "adjudicate",
             "script",
             "analyse",
         ]
@@ -557,4 +574,100 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
     let report = pipeline::run(&spec(&fixtures()), &fixtures(), None, tmp.path()).unwrap();
     let ids: Vec<&str> = hits(&report).into_iter().map(|(id, _)| id).collect();
     assert_eq!(ids, STAGES);
+}
+
+// --- The adjudicator ---------------------------------------------------------
+
+/// Answers like `FakeLlm` and counts the adjudication requests.
+#[derive(Default)]
+struct CountingAdjudications(std::cell::Cell<usize>);
+
+impl LlmProvider for CountingAdjudications {
+    fn id(&self) -> &str {
+        "counting"
+    }
+
+    fn fingerprint(&self) -> Value {
+        FakeLlm.fingerprint()
+    }
+
+    fn complete(&self, request: &CompletionRequest) -> Result<Completion, CoreError> {
+        if request.task == LlmTask::AdjudicateClaim {
+            self.0.set(self.0.get() + 1);
+        }
+        FakeLlm.complete(request)
+    }
+}
+
+/// Runs the fixture episode in `base` with a counting fake, and returns the
+/// number of adjudication requests with the run's ledger and verdicts.
+fn run_counting(base: &Path, out: &Path) -> (usize, Ledger, Verdicts) {
+    let llm = CountingAdjudications::default();
+    pipeline::run_with_llm(&spec(base), &llm, base, None, out).unwrap();
+    (
+        llm.0.get(),
+        read_body(out, "ledger"),
+        read_body(out, "verdicts"),
+    )
+}
+
+#[test]
+fn no_contested_claims_means_no_adjudicator_call() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Grounding on with a paraphrase corroborated, and no grounding at all.
+    let bases = [fixtures().join("paraphrase"), fixtures()];
+    for (i, base) in bases.iter().enumerate() {
+        let (calls, ledger, verdicts) = run_counting(base, &tmp.path().join(i.to_string()));
+        assert!(
+            !ledger
+                .entries()
+                .iter()
+                .any(|e| matches!(e.status, ClaimStatus::Contested { .. }))
+        );
+        assert_eq!(calls, 0, "{base:?}");
+        assert!(verdicts.as_slice().is_empty());
+    }
+}
+
+#[test]
+fn contradiction_fixture_has_one_verdict_per_contested_claim() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (calls, ledger, verdicts) = run_counting(&fixtures().join("contradiction"), tmp.path());
+    let contested: Vec<_> = ledger
+        .entries()
+        .iter()
+        .filter(|e| matches!(e.status, ClaimStatus::Contested { .. }))
+        .map(|e| e.claim.id())
+        .collect();
+    assert_eq!(contested.len(), 2);
+    assert_eq!(calls, contested.len(), "one request per Contested claim");
+    let judged: Vec<_> = verdicts.as_slice().iter().map(|v| v.claim()).collect();
+    assert_eq!(judged, contested);
+    for verdict in verdicts.as_slice() {
+        let stances: Vec<Stance> = verdict.cites().iter().map(|c| c.stance).collect();
+        assert!(stances.contains(&Stance::Supports), "{verdict:?}");
+        assert!(stances.contains(&Stance::Contradicts), "{verdict:?}");
+        assert_eq!(verdict.fallback(), None);
+    }
+}
+
+#[test]
+fn a_cached_run_makes_no_adjudicator_call() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = fixtures().join("contradiction");
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let out = tmp.path().join("out");
+    let first = CountingAdjudications::default();
+    pipeline::run_with_llm(&spec(&base), &first, &base, Some(&cache), &out).unwrap();
+    assert_eq!(first.0.get(), 2);
+
+    let second = CountingAdjudications::default();
+    let report = pipeline::run_with_llm(&spec(&base), &second, &base, Some(&cache), &out).unwrap();
+    assert_eq!(second.0.get(), 0);
+    assert!(
+        report
+            .stages
+            .iter()
+            .any(|s| s.id == "adjudicate" && s.cache_hit)
+    );
 }
