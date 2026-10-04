@@ -1,0 +1,37 @@
+# The Titanic episode with a local model and the grounding stages, so the two
+# inquiries' disagreements become Contested claims and the adjudicator
+# explains them. See examples/tunguska/episode-ollama.toml for other servers
+# and hosted providers.
+#
+#   ollama pull llama3.1:8b
+#   ollama pull nomic-embed-text
+#   hf download cross-encoder/nli-deberta-v3-base \
+#     --local-dir examples/titanic/models/nli-deberta-v3-base
+#   cargo run -p podling-cli -- run --episode examples/titanic/episode-ollama.toml
+
+title = "The Titanic inquiries"
+topic = "how the 1912 Titanic inquiries disagreed"
+target_minutes = 5
+sources = [
+  { kind = "local_files", root = "sources/us-senate", independence_group = "us-senate" },
+  { kind = "local_files", root = "sources/british-inquiry", independence_group = "british-inquiry" },
+]
+analysers = [{ kind = "quote_verifier" }]
+
+[llm]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "llama3.1:8b"
+temperature = 0.2
+# Writing the script takes a local 8B model 80 to 120 seconds on an 8 GB card.
+timeout_secs = 300
+
+[embedding]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+
+# Runs locally on the CPU (Apache-2.0).
+[nli]
+kind = "cross_encoder"
+model_dir = "models/nli-deberta-v3-base"

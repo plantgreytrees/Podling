@@ -244,14 +244,14 @@ Depends on: adjudicate-stage
 ### Step 4 — titanic-example (., rust, normal)
 Tooling: implementer · gates code-reviewer
 Depends on: script-integration
-- [ ] 4.1 `examples/titanic/sources/{us-senate,british-inquiry}/report.md`: short **verbatim** excerpts from the 1912 US Senate inquiry report and the 1912 British Wreck Commissioner's report.
+- [x] 4.1 `examples/titanic/sources/{us-senate,british-inquiry}/report.md`: short **verbatim** excerpts from the 1912 US Senate inquiry report and the 1912 British Wreck Commissioner's report.
   - Both are public domain: a US federal work, and a UK Crown publication whose 50-year term ended in 1962.
   - The two pairs that disagree: the collision time ("At 11.46 p.m. ship's time" against "a little before 11.40") and the survivors ("706 were saved" against "he took on board 712 persons").
   - Page and witness references in parentheses may be removed, and each removal is noted.
 
   `SOURCES.md` gives the URLs and the licence reasoning. → accept: every sentence in report.md appears in the fetched page text, after normalising whitespace.
-- [ ] 4.2 `episode.toml` (fake LLM) and `episode-ollama.toml` (llama3.1:8b, nomic-embed-text, cross_encoder `models/nli-deberta-v3-base`), modelled on Tunguska. → accept: `every_example_episode_parses` covers both.
-- [ ] 4.3 Run the fake episode offline (`podling run --episode examples/titanic/episode.toml`). → accept: exit 0; no error findings.
+- [x] 4.2 `episode.toml` (fake LLM) and `episode-ollama.toml` (llama3.1:8b, nomic-embed-text, cross_encoder `models/nli-deberta-v3-base`), modelled on Tunguska. → accept: `every_example_episode_parses` covers both.
+- [x] 4.3 Run the fake episode offline (`podling run --episode examples/titanic/episode.toml`). → accept: exit 0; no error findings.
 
 ### Step 5 — live-and-docs (., markdown, normal)
 Tooling: implementer · gates docs-curator
