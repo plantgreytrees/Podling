@@ -8,6 +8,7 @@ pub mod ingest;
 pub mod ledger;
 pub mod score_stances;
 pub mod script;
+pub mod windows;
 
 pub use analyse::{Analyse, AnalyseInput};
 pub use chunk::ChunkDocuments;
