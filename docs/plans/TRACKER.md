@@ -33,3 +33,8 @@
 | [phase3-nli-ledger](./phase3-nli-ledger.md) | 5 | real-providers | crates/podling-core/src/plugin | rust | high | MERGED | 2026-10-01 |
 | [phase3-nli-ledger](./phase3-nli-ledger.md) | 6 | live-and-docs | examples/tunguska, docs | rust | normal | MERGED | 2026-10-01 |
 | [scrutinise-phase3-nli-ledger](./scrutinise-phase3-nli-ledger.md) | 1 | script-prompt-version | crates/podling-core | rust | normal | MERGED | 2026-10-01 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 1 | windows-helper | crates/podling-core/src/stages/windows.rs | rust | normal | PENDING | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 2 | ground-claims-stage | crates/podling-core/src/stages/ground_claims.rs | rust | normal | PENDING | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 3 | pipeline-wiring | crates/podling-core/src/pipeline.rs, crates/podling-cli | rust | normal | PENDING | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 4 | live-check | examples/tunguska | rust | normal | PENDING | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 5 | docs | docs, README.md, examples/tunguska | markdown | normal | PENDING | 2026-10-04 |
