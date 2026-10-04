@@ -14,6 +14,7 @@ pub mod ledger;
 pub mod quote;
 pub mod schema;
 pub mod script;
+pub mod verdict;
 
 pub use analysis::{AnalysisReport, Finding, Severity};
 pub use claim::{Claim, Evidence, EvidenceBasis, InvalidPerMille, PerMille, Stance};
@@ -26,3 +27,4 @@ pub use ids::{ChunkId, ClaimId, ContentHash, DocumentId, SourceId, SpeakerId};
 pub use ledger::{ClaimStatus, Ledger, LedgerEntry, classify};
 pub use quote::{Quote, QuoteError};
 pub use script::{Emotion, Script, ScriptError, Speaker, Turn};
+pub use verdict::{EvidenceRef, Favours, InvalidVerdict, MAX_EXPLANATION_CHARS, Verdict, Verdicts};

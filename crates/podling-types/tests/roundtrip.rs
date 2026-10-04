@@ -60,6 +60,28 @@ fn artifacts_roundtrip() {
         }),
     });
     let ledger = Ledger::from_claims([claim.clone()]);
+    let verdicts = Verdicts::new(vec![
+        Verdict::new(
+            claim.id().clone(),
+            Favours::Contradicting,
+            "The survey measured the site; the eyewitness wrote from memory.",
+            vec![
+                EvidenceRef {
+                    chunk: chunk.id().clone(),
+                    stance: Stance::Supports,
+                    premise: None,
+                },
+                EvidenceRef {
+                    chunk: chunk.id().clone(),
+                    stance: Stance::Contradicts,
+                    premise: Some(TextSpan::new(0, 27).unwrap()),
+                },
+            ],
+            None,
+        )
+        .unwrap(),
+    ])
+    .unwrap();
     let quote = Quote::from_document(&doc, TextSpan::new(0, 27).unwrap()).unwrap();
     let script = Script::new(
         vec![Speaker {
@@ -89,6 +111,7 @@ fn artifacts_roundtrip() {
     roundtrip(&Envelope::new(ArtifactKind::Chunks, vec![chunk]));
     roundtrip(&Envelope::new(ArtifactKind::Claims, vec![claim]));
     roundtrip(&Envelope::new(ArtifactKind::Ledger, ledger));
+    roundtrip(&verdicts);
     roundtrip(&Envelope::new(ArtifactKind::Script, script));
     roundtrip(&Envelope::new(ArtifactKind::Analysis, report));
 }

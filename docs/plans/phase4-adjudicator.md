@@ -158,6 +158,10 @@ Depends on: none
   - `cites` is non-empty, sorted and de-duplicated.
   → accept: unit tests build each invalid shape and get `Err`; the valid ones round-trip through serde.
 - [ ] 1.2 Add `Verdicts(Vec<Verdict>)`. It serialises as a bare JSON array (`#[serde(try_from = "Vec<Verdict>", into = "Vec<Verdict>")]`); `Verdicts::new` sorts by claim id and rejects a duplicate claim. Export from `lib.rs`. → accept: `Verdicts::default()` serialises as `[]`; two verdicts for one claim → `Err`.
+> **Amended during execution:** 1.3 and 1.4 moved into step 2, where the pipeline
+> starts writing `verdicts.json`. Adding the kind on its own leaves the pipeline
+> and CLI tests that iterate `ArtifactKind::ALL` red until a file is written,
+> and no unit merges red. Step 1 merged the types and their tests (1.1, 1.2, 1.5).
 - [ ] 1.3 `ArtifactKind::Verdicts` (`as_str` = `verdicts`), placed after `Ledger` in `ALL`; `schema::of` → `enveloped::<Verdicts>()`. → accept: `schema::all()` has 8 kinds.
 - [ ] 1.4 `SCHEMA_VERSION` 3→4. Add `schema_snapshot__verdicts.snap` and accept it with insta. Pin version 4 in `schema_version_is_pinned`. → accept: `cargo test -p podling-types` is green, and the only new snapshot is verdicts.
 - [ ] 1.5 Round-trip test of `Envelope<Verdicts>` in `tests/roundtrip.rs`. → accept: passes.
