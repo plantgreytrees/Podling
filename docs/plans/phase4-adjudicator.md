@@ -228,18 +228,18 @@ Depends on: verdict-contracts
 ### Step 3 — script-integration (., rust, high)
 Tooling: implementer · gates code-reviewer, idiom-reviewer · skills language-aware-planning
 Depends on: adjudicate-stage
-- [ ] 3.1 `LedgerClaim` gains `verdict: Option<LedgerVerdict { favours: Favours, explanation: String }>`, skipped when `None`. `LedgerClaim::from_ledger(&Ledger, &Verdicts)` fills it for Contested claims. The refs stay out, for the same reason the evidence does. → accept: compiles.
-- [ ] 3.2 `PROMPT_VERSION` 3→4 with a doc line (4: a Contested claim's ledger entry carries the adjudicator's verdict). `WriteScript::VERSION` 7→8. → accept: the constants are bumped.
-- [ ] 3.3 `ScriptInput` gains `verdicts: Verdicts`, and `pipeline.rs` passes it. INSTRUCTIONS rule 2 says a `contested` claim with a `verdict`:
+- [x] 3.1 `LedgerClaim` gains `verdict: Option<LedgerVerdict { favours: Favours, explanation: String }>`, skipped when `None`. `LedgerClaim::from_ledger(&Ledger, &Verdicts)` fills it for Contested claims. The refs stay out, for the same reason the evidence does. → accept: compiles.
+- [x] 3.2 `PROMPT_VERSION` 3→4 with a doc line (4: a Contested claim's ledger entry carries the adjudicator's verdict). `WriteScript::VERSION` 7→8. → accept: the constants are bumped.
+- [x] 3.3 `ScriptInput` gains `verdicts: Verdicts`, and `pipeline.rs` passes it. INSTRUCTIONS rule 2 says a `contested` claim with a `verdict`:
   - Present both sources' accounts.
   - Say which side the sources favour, or that it is unresolved.
   - Explain why from the verdict's explanation.
   - Never state either side as settled fact.
 
   → accept: compiles.
-- [ ] 3.4 Pin the shape: extend `the_ledger_the_model_sees_has_no_evidence`. The keys are `{id,status,text}` without a verdict, and `{id,status,text,verdict}` with one; the verdict's keys are `{explanation,favours}`. → accept: passes.
-- [ ] 3.5 `FakeLlm::write_script`: when a Contested entry has a verdict, the turn reads "The sources disagree here: <claim>. <explanation>". → accept: the contradiction-fixture script contains "disagree" and each verdict's explanation; no-verdict scripts are unchanged (golden test still green).
-- [ ] 3.6 Pipeline test `the_contradiction_script_mentions_the_disagreement`. → accept: passes.
+- [x] 3.4 Pin the shape: extend `the_ledger_the_model_sees_has_no_evidence`. The keys are `{id,status,text}` without a verdict, and `{id,status,text,verdict}` with one; the verdict's keys are `{explanation,favours}`. → accept: passes.
+- [x] 3.5 `FakeLlm::write_script`: when a Contested entry has a verdict, the turn reads "The sources disagree here: <claim>. <explanation>". → accept: the contradiction-fixture script contains "disagree" and each verdict's explanation; no-verdict scripts are unchanged (golden test still green).
+- [x] 3.6 Pipeline test `the_contradiction_script_mentions_the_disagreement`. → accept: passes.
 
 ### Step 4 — titanic-example (., rust, normal)
 Tooling: implementer · gates code-reviewer

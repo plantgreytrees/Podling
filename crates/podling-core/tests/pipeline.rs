@@ -671,3 +671,20 @@ fn a_cached_run_makes_no_adjudicator_call() {
             .any(|s| s.id == "adjudicate" && s.cache_hit)
     );
 }
+
+#[test]
+fn the_contradiction_script_mentions_the_disagreement() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, _, verdicts) = run_counting(&fixtures().join("contradiction"), tmp.path());
+    let script: Script = read_body(tmp.path(), "script");
+    assert!(!verdicts.as_slice().is_empty());
+    for verdict in verdicts.as_slice() {
+        let turn = script
+            .turns()
+            .iter()
+            .find(|t| t.citations.contains(verdict.claim()))
+            .unwrap_or_else(|| panic!("no turn cites {}", verdict.claim()));
+        assert!(turn.text.contains("disagree"), "{}", turn.text);
+        assert!(turn.text.contains(verdict.explanation()), "{}", turn.text);
+    }
+}
