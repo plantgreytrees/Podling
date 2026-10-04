@@ -49,13 +49,19 @@ status (`LedgerClaim` in `crates/podling-core/src/plugin/llm.rs`).
   The offline fixture `crates/podling-core/tests/fixtures/contradiction/` is a
   starting point.
 
-## Follow-up worth planning separately
+## Known limits of NLI grounding in extraction
 
-**NLI grounding in extraction.** `is_grounded` in
-`crates/podling-core/src/stages/extract_claims.rs` checks a claim against its
-chunk by content words. It misses a distortion built from the chunk's own words.
-With `[nli]` set, "does the chunk entail the claim?" is the better test. Keep the
-lexical check when `[nli]` is absent, so no-config output doesn't change.
+The `ground_claims` stage (`crates/podling-core/src/stages/ground_claims.rs`) drops a
+claim its own chunk doesn't entail, which catches distortions made from the chunk's
+own words ("led" for "joined"). DeBERTa still lets two kinds through. Both were
+measured on the Tunguska sources (`docs/plans/nli-extraction-grounding.md`):
+- a dropped hedge: "the eyewitness's shirt burned" against "my shirt almost
+  burned" scored 0.994;
+- a figure moved within the chunk: "an explosion in 1927 flattened trees" scored
+  0.966, because 1927 appears elsewhere in the chunk's heading. The lexical
+  exact-number gate only checks that a number occurs in the chunk, not where.
+
+The adjudicator would not catch these either, since only Contested claims reach it.
 
 ## Acceptance (suggested)
 

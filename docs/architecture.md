@@ -34,6 +34,7 @@ needs concurrency, such as parallel TTS or streaming.
  ingest ─────────► Vec<Document>   BOM/CRLF normalised; duplicates within a group dropped
  chunk ──────────► Vec<Chunk>      split at Markdown headings (not inside code fences), then paragraphs (~800 words)
  extract_claims ─► Vec<Claim>      one LLM call per chunk; merged by ClaimId + Evidence
+ [ground_claims] ─► Grounded       evidence its own chunk doesn't entail (NLI) dropped and counted
  [cluster_claims] ► Vec<Claim>     paraphrases merged: mutual NLI entailment, equal numbers
  [score_stances] ─► Vec<Claim>     other groups' sentences checked by NLI: Supports / Contradicts
  ledger ─────────► Ledger          classify(): status from distinct independence groups
@@ -46,10 +47,11 @@ needs concurrency, such as parallel TTS or streaming.
 ```
 
 [`pipeline::run`](../crates/podling-core/src/pipeline.rs) calls the stages in
-order. The two bracketed ones run only when the episode has both `[embedding]`
+order. The three bracketed ones run only when the episode has both `[embedding]`
 and `[nli]` (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli));
 without them the run has the same six stages, cache keys and artifact bodies as
-before Phase 3. Each call goes through
+before Phase 3. The test `without_nli_the_cache_keys_are_unchanged`
+([`tests/pipeline.rs`](../crates/podling-core/tests/pipeline.rs)) pins those keys. Each call goes through
 [`stage::cached`](../crates/podling-core/src/stage.rs), which opens a
 `tracing` span `stage{id, version}`, logs `cache_hit` and `elapsed_ms`, and
 adds a `StageRecord` to the `RunReport`. Every artifact is written as
@@ -133,7 +135,8 @@ and are still cache hits.
    put it in their config fingerprint next to the instruction text.
 5. **You changed an embedding or NLI provider's behaviour.** Rule 3 applies to
    them too: `EmbeddingProvider::fingerprint()` and `NliProvider::fingerprint()`
-   are in both grounding stages' cache keys. The fakes carry a `version` field to
+   are in all three grounding stages' cache keys (`ground_claims`, `cluster_claims`,
+   `score_stances`). The fakes carry a `version` field to
    bump; `OpenAiEmbeddings` has the base URL, model and a request version;
    `CrossEncoderNli` has a BLAKE3 hash of its three model files and a version.
    The stages' thresholds are in their fingerprints as well, so changing one
@@ -164,8 +167,6 @@ Deferred to later phases:
 - MCP source connectors.
 - PDF ingestion (Docling / pdfium).
 - A Contested-claim adjudicator: the next phase.
-- Replacing the lexical grounding check in `extract_claims` with an NLI check
-  (see the grounding check below).
 
 ## The OpenAI-compatible provider
 
@@ -244,8 +245,11 @@ would get those matches for free. A number may come from the chunk, the title or
 itself is still shown only the chunk text. The model gets one retry with the reason,
 then the run fails naming the chunk. The check is lexical. It catches invention and
 knowledge pulled from the model's memory, and tolerates paraphrase. It does not catch
-a subtle distortion made with the passage's own words. The NLI provider could (does
-the chunk entail the claim?), and wiring it into this check is a follow-up.
+a subtle distortion made with the passage's own words. With `[embedding]` and `[nli]`
+set, the `ground_claims` stage catches those: it keeps a claim only where the NLI model
+finds that its own chunk entails it (see
+[Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)). The lexical
+check stays in front of it either way, unchanged, as the exact-number gate.
 
 **The script sees a compact ledger.** The script request carries each claim's id,
 text and status only
@@ -256,8 +260,34 @@ text and status only
 
 Extraction keys claims by their exact text, so two sources stating one fact in
 different words give two SingleSource claims, and nothing can contradict anything.
-Two optional stages fix that. Both are pure producers of *evidence*: status still
+Its lexical grounding check also misses a distortion made from the chunk's own words.
+Three optional stages fix that. They only add or remove *evidence*: status still
 comes only from `classify()`, and no LLM is involved.
+
+**[`ground_claims`](../crates/podling-core/src/stages/ground_claims.rs)** runs first, on
+extraction's output. For each piece of evidence it asks whether the claim's own chunk
+entails the claim, and drops the evidence if not. A claim left with no evidence is
+dropped. This catches "Kulik led the expedition" from a chunk saying he *joined* it,
+which passes the lexical check because it shares most of its words with the chunk.
+- The premise is the best window of one or two consecutive sentences of the chunk,
+  not the whole chunk. A chunk at the 800-word cap is about 1000–1600 DeBERTa tokens,
+  over its 512, and even a short chunk fails: a faithful paraphrase of one sentence of
+  a four-sentence chunk scored 0.000 entailment against the chunk and 0.998 against
+  the sentence. The 4 windows most similar to the claim by embedding are scored.
+- Each premise starts with the document title and the chunk's headings
+  (`"<title>. <heading>. <window>"`), because extraction rule 2 has the model name
+  what a heading names. Without that prefix such claims scored 0.000; with it, 0.997.
+- Entailment ≥ 0.800 (`GROUND_ENTAIL_PM`, separate from the stance stage's equal
+  `SUPPORT_ENTAIL_PM`) keeps the evidence. On the Tunguska sources faithful claims
+  scored 0.971 or more and distortions 0.003 or less.
+- A rejection is dropped and counted, never retried or fatal. Each one, with its
+  claim, chunk, best score and premise span, is part of the stage's cached output.
+  The pipeline logs them, also on a cache hit, and `RunReport::grounding` carries
+  the counts, which the CLI prints as `grounding: N claim(s) dropped, M evidence item(s) rejected`.
+- Known misses: a dropped hedge ("my shirt almost burned" → "the shirt burned", 0.994)
+  and a figure moved within the chunk (0.966). The lexical check stays in front as the
+  exact-number gate and rejects claims made only of title or heading words, which NLI
+  scores as entailed (0.996).
 
 **Evidence audit.** `Evidence` has an optional `basis`
 ([`claim.rs`](../crates/podling-types/src/claim.rs)). It is absent for plain
