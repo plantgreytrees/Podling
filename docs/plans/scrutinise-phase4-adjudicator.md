@@ -1,6 +1,6 @@
 ---
 goal: A rejected adjudicator reply leaves a bounded reason in verdicts.json, never the model's whole reply.
-status: PENDING
+status: COMPLETE
 coverage:
   correctness: 1.1, 1.2
   tests: 1.3
@@ -32,9 +32,9 @@ verified finding.
 ### Step 1 — fallback-reason-cap (., rust, normal)
 Tooling: implementer · gates code-reviewer · checks cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings, cargo test --workspace
 
-- [ ] 1.1 Name the 500-character cap in `plugin/llm.rs` (for example a `pub fn reason_excerpt(reason: &str) -> String` with its constant), and use it for `complete_validated`'s retry excerpt and for the reason `Adjudicate` stores in `fallback`. When it truncates, it ends with `…`. → accept: one definition of the cap; the retry prompt is unchanged for reasons under 500 chars.
-- [ ] 1.2 Correct the comment at `adjudicate.rs:202`: the reason may echo part of the model's reply, and it is bounded. Bump `Adjudicate::VERSION` 1→2 with a version note. → accept: the comment matches the code.
-- [ ] 1.3 Unit test: a provider whose reply has a 2000-character unknown `favours` value, on both attempts, gives a fallback verdict whose `fallback` is at most the cap plus the marker, and the stage makes two calls. → accept: passes; the workspace gates pass.
+- [x] 1.1 Name the 500-character cap in `plugin/llm.rs` (for example a `pub fn reason_excerpt(reason: &str) -> String` with its constant), and use it for `complete_validated`'s retry excerpt and for the reason `Adjudicate` stores in `fallback`. When it truncates, it ends with `…`. → accept: one definition of the cap; the retry prompt is unchanged for reasons under 500 chars.
+- [x] 1.2 Correct the comment at `adjudicate.rs:202`: the reason may echo part of the model's reply, and it is bounded. Bump `Adjudicate::VERSION` 1→2 with a version note. → accept: the comment matches the code.
+- [x] 1.3 Unit test: a provider whose reply has a 2000-character unknown `favours` value, on both attempts, gives a fallback verdict whose `fallback` is at most the cap plus the marker, and the stage makes two calls. → accept: passes; the workspace gates pass.
 
 ## Verification background
 - **F1 (Correctness, Minor).** `adjudicate.rs:200-204` turns `InvalidProviderOutput { message }` into `fallback(claim, message)` verbatim. `build_verdict` passes serde_json errors through, and an unknown enum variant's message quotes the model's string whole ("unknown variant `…`"). The comment says the reason "names ids and numbers, never source text", which isn't guaranteed. `complete_validated` already caps the same reason at 500 chars for the retry prompt (`llm.rs:221`).

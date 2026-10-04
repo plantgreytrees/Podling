@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 use crate::error::{CoreError, Result};
 use crate::plugin::{
     ADJUDICATE_PROMPT_VERSION, AdjudicationClaim, AdjudicationEvidence, CompletionRequest,
-    LlmProvider, LlmTask, VerdictDraft, complete_validated,
+    LlmProvider, LlmTask, VerdictDraft, complete_validated, reason_excerpt,
 };
 use crate::stage::Stage;
 
@@ -135,7 +135,8 @@ pub struct Adjudicate<'a> {
 
 impl Stage for Adjudicate<'_> {
     const ID: &'static str = "adjudicate";
-    const VERSION: u32 = 1;
+    // 2: a fallback's stored reason is bounded by `reason_excerpt`.
+    const VERSION: u32 = 2;
     type Input = AdjudicateInput;
     type Output = Verdicts;
 
@@ -199,7 +200,9 @@ impl Adjudicate<'_> {
             build_verdict(text, claim)
         }) {
             Err(CoreError::InvalidProviderOutput { message, .. }) => {
-                // The reason names ids and numbers, never source text.
+                // The reason can quote part of the model's reply (serde names an
+                // unknown variant in full), so only a bounded excerpt is kept.
+                let message = reason_excerpt(&message);
                 tracing::warn!(claim = %claim.id(), reason = %message, "verdict rejected; recording it as unresolved");
                 Ok(fallback(claim, message))
             }
@@ -486,6 +489,23 @@ mod tests {
         );
         let stances: Vec<Stance> = verdict.cites().iter().map(|c| c.stance).collect();
         assert_eq!(stances, [Stance::Supports, Stance::Contradicts]);
+    }
+
+    #[test]
+    fn a_fallback_keeps_only_a_bounded_reason() {
+        let c = claim();
+        let favours = "x".repeat(2000);
+        let llm = Replying::new(vec![reply(&c, &favours, "Why.", &[0, 1])]);
+        let verdicts = Adjudicate { llm: &llm }.run(&input()).unwrap();
+        assert_eq!(llm.seen.borrow().len(), 2);
+        let reason = verdicts.as_slice()[0].fallback().unwrap();
+        assert!(reason.contains("unknown variant"), "{reason}");
+        assert_eq!(
+            reason.chars().count(),
+            crate::plugin::MAX_REASON_CHARS + 1,
+            "the cap plus the ellipsis"
+        );
+        assert!(reason.ends_with('…'));
     }
 
     #[test]

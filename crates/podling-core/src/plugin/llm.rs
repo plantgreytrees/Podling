@@ -200,9 +200,23 @@ pub struct QuoteRef {
     pub sentence: usize,
 }
 
+/// The most characters of a rejection reason that are shown to the model or
+/// stored. A reason can quote part of the model's reply (serde names an
+/// unknown variant in full), so it is bounded.
+pub const MAX_REASON_CHARS: usize = 500;
+
+/// `reason`, cut to [`MAX_REASON_CHARS`] with a trailing `…` if it was longer.
+pub fn reason_excerpt(reason: &str) -> String {
+    match reason.char_indices().nth(MAX_REASON_CHARS) {
+        Some((end, _)) => format!("{}…", &reason[..end]),
+        None => reason.to_owned(),
+    }
+}
+
 /// Runs `request` and checks the reply with `validate` (parse it, resolve its
 /// references, whatever the stage needs). If the reply is rejected, asks once
-/// more with the rejection reason appended to the instructions, then gives up
+/// more with the rejection reason ([`reason_excerpt`]) appended to the
+/// instructions, then gives up
 /// with [`CoreError::InvalidProviderOutput`]. Transport failures are not
 /// retried here: the provider has its own policy.
 pub fn complete_validated<T>(
@@ -218,7 +232,7 @@ pub fn complete_validated<T>(
     };
     tracing::warn!(stage, %reason, "provider output rejected; asking once more");
 
-    let excerpt: String = reason.chars().take(500).collect();
+    let excerpt = reason_excerpt(&reason);
     let retry = CompletionRequest {
         instructions: format!(
             "{}\n\nYour previous reply was rejected: {excerpt}\nReply again with the corrected JSON object only.",
@@ -418,6 +432,17 @@ mod tests {
             instructions: String::new(),
             input,
         }
+    }
+
+    #[test]
+    fn a_reason_excerpt_is_cut_on_a_character_boundary() {
+        assert_eq!(reason_excerpt("short"), "short");
+        let exact = "é".repeat(MAX_REASON_CHARS);
+        assert_eq!(reason_excerpt(&exact), exact);
+        let long = "é".repeat(MAX_REASON_CHARS + 3);
+        let cut = reason_excerpt(&long);
+        assert_eq!(cut.chars().count(), MAX_REASON_CHARS + 1);
+        assert!(cut.ends_with("é…"));
     }
 
     #[test]
