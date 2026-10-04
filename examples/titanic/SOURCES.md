@@ -32,10 +32,11 @@ directory is one independence group.
 The excerpts are verbatim, with these changes only:
 
 - The headings are ours.
-- Each file keeps a few consecutive sentences from each page, and drops the
-  rest.
-- References to witnesses and pages in parentheses were removed: "(pp. 229
-  and 450)" from the US report, and "(Hichens, 969)" and "(Boxhall, 15346)"
-  from the British report.
-- The 1912 spelling and typos are kept, including "the Titanic stuck the
-  ice".
+- Each file keeps one sentence from each page, the one that disagrees with
+  the other report, and drops the rest. Short excerpts keep the script
+  request inside a small local model's context window (Ollama's default is
+  4096 tokens).
+- The witness reference "(Hichens, 969)" was removed from the British
+  report's collision sentence.
+- In the British rescue sentence, "he" is Arthur Rostron, the Carpathia's
+  captain.
