@@ -379,6 +379,10 @@ class MossBackend(Backend):
     """MOSS-TTSD v1.0 (8B): the Qwen3 backbone in 4-bit NF4, audio heads in bf16."""
 
     def load(self, voices: list[Voice]) -> None:
+        # transformers 5 materialises checkpoint tensors on the GPU from a thread
+        # pool, so bf16 tensors pile up faster than they are quantised and the
+        # load overflows 8 GB. Sequential loading quantises each in turn.
+        os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
         import torch
         from transformers import AutoModel, AutoProcessor, BitsAndBytesConfig
 
@@ -386,12 +390,17 @@ class MossBackend(Backend):
         repo = BACKENDS["moss"]["model"]
         self.torch = torch
         self.processor = AutoProcessor.from_pretrained(repo, trust_remote_code=True)
-        self.processor.audio_tokenizer = self.processor.audio_tokenizer.to("cuda")
+        # The audio tokenizer is 1.77B parameters in fp32 (~7 GB), which cannot
+        # share 8 GB with the backbone, so it encodes and decodes on the CPU.
         quant = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch.bfloat16,
-            llm_int8_skip_modules=["lm_heads", "emb_ext"],
+            # Only the 16 small audio heads and embeddings stay bf16. The text
+            # head (lm_heads.0, 0.64B parameters) is quantised too: left in bf16
+            # beside the unquantisable 0.64B text embedding, it pushes the model
+            # past 8 GB.
+            llm_int8_skip_modules=["emb_ext", *(f"lm_heads.{i}" for i in range(1, 17))],
         )
         self.model = AutoModel.from_pretrained(
             repo,
