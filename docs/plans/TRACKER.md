@@ -33,3 +33,8 @@
 | [phase3-nli-ledger](./phase3-nli-ledger.md) | 5 | real-providers | crates/podling-core/src/plugin | rust | high | MERGED | 2026-10-01 |
 | [phase3-nli-ledger](./phase3-nli-ledger.md) | 6 | live-and-docs | examples/tunguska, docs | rust | normal | MERGED | 2026-10-01 |
 | [scrutinise-phase3-nli-ledger](./scrutinise-phase3-nli-ledger.md) | 1 | script-prompt-version | crates/podling-core | rust | normal | MERGED | 2026-10-01 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 1 | verdict-contracts | crates/podling-types | rust | normal | PENDING | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 2 | adjudicate-stage | crates/podling-core/src/stages/adjudicate.rs | rust | high | PENDING | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 3 | script-integration | crates/podling-core/src/stages/script.rs | rust | high | PENDING | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 4 | titanic-example | examples/titanic | rust | normal | PENDING | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 5 | live-and-docs | docs | markdown | normal | PENDING | 2026-10-04 |
