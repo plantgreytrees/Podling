@@ -33,7 +33,7 @@ use podling_types::{Chunk, ChunkId, Claim, ClaimId, DocumentId, PerMille, TextSp
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::windows::{MAX_WINDOW_SENTENCES, windows};
+use super::windows::{MAX_WINDOW_SENTENCES, MAX_WINDOW_WORDS, windows};
 use crate::error::{CoreError, Result};
 use crate::plugin::{
     EmbeddingProvider, NliPair, NliProvider, cosine, embed_checked, score_checked,
@@ -106,7 +106,7 @@ struct Candidate {
 
 impl Stage for GroundClaims<'_> {
     const ID: &'static str = "ground_claims";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     type Input = GroundInput;
     type Output = Grounded;
 
@@ -117,6 +117,7 @@ impl Stage for GroundClaims<'_> {
             "ground_k": GROUND_K,
             "ground_entail_pm": GROUND_ENTAIL_PM,
             "max_window_sentences": MAX_WINDOW_SENTENCES,
+            "max_window_words": MAX_WINDOW_WORDS,
         })
     }
 

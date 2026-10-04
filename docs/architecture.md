@@ -274,6 +274,11 @@ which passes the lexical check because it shares most of its words with the chun
   over its 512, and even a short chunk fails: a faithful paraphrase of one sentence of
   a four-sentence chunk scored 0.000 entailment against the chunk and 0.998 against
   the sentence. The 4 windows most similar to the claim by embedding are scored.
+- No window is longer than 120 words (`MAX_WINDOW_WORDS` in
+  [`windows.rs`](../crates/podling-core/src/stages/windows.rs)). A longer sentence, such
+  as a list with no full stops, is split into overlapping 120-word slices. Without that,
+  DeBERTa cut the premise off at 512 tokens, and a faithful claim about item 117 of a
+  long list scored 0.617 where one about item 1 scored 0.965.
 - Each premise starts with the document title and the chunk's headings
   (`"<title>. <heading>. <window>"`), because extraction rule 2 has the model name
   what a heading names. Without that prefix such claims scored 0.000; with it, 0.997.
@@ -317,7 +322,7 @@ order, so the result doesn't depend on input order.
 
 **[`score_stances`](../crates/podling-core/src/stages/score_stances.rs)** reads each claim
 against other groups' sources. Premises are windows of one or two consecutive sentences,
-well under DeBERTa's 512 tokens. For each claim, only windows from groups that have no
+at most 120 words, well under DeBERTa's 512 tokens. For each claim, only windows from groups that have no
 evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are scored:
 - entailment ≥ 0.800: `Supports`;
 - else contradiction ≥ 0.950 **and** cosine ≥ 0.60: `Contradicts`. NLI models over-call

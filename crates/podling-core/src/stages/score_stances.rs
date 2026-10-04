@@ -44,7 +44,7 @@ pub const CONTRADICT_PM: u16 = 950;
 pub const MIN_CONTRADICT_SIMILARITY_PM: u16 = 600;
 // Re-exported so the constant keeps its public path here; it lives with the
 // window code both NLI stages share.
-pub use super::windows::MAX_WINDOW_SENTENCES;
+pub use super::windows::{MAX_WINDOW_SENTENCES, MAX_WINDOW_WORDS};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StanceInput {
@@ -62,7 +62,7 @@ pub struct ScoreStances<'a> {
 
 impl Stage for ScoreStances<'_> {
     const ID: &'static str = "score_stances";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -76,6 +76,7 @@ impl Stage for ScoreStances<'_> {
             "contradict_pm": CONTRADICT_PM,
             "min_contradict_similarity_pm": MIN_CONTRADICT_SIMILARITY_PM,
             "max_window_sentences": MAX_WINDOW_SENTENCES,
+            "max_window_words": MAX_WINDOW_WORDS,
         })
     }
 
