@@ -23,9 +23,10 @@ kind = "open_ai_compat"
 base_url = "http://localhost:11434/v1"
 model = "llama3.1:8b"
 temperature = 0.2
-# Writing the script takes a local 8B model 80 to 120 seconds on an 8 GB card,
-# and several minutes on a CPU-only server.
-timeout_secs = 600
+# Writing the script takes a local 8B model 80 to 120 seconds on an 8 GB card.
+# A CPU-only server can manage as little as 1 to 2 tokens a second, so one
+# reply can take ten minutes or more.
+timeout_secs = 1800
 
 [embedding]
 kind = "open_ai_compat"

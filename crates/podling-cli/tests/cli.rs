@@ -454,9 +454,10 @@ fn live_run_against_a_real_server() {
     let key_env = std::env::var("PODLING_LIVE_LLM_KEY_ENV").ok();
     let mut llm = compat_llm(&url, key_env.as_deref());
     llm = llm.replace("model = \"tiny\"", &format!("model = \"{model}\""));
-    // A local 8B model needs 80 to 120 s to write the script; the default
-    // timeout is 120 s.
-    llm.push_str("timeout_secs = 300\n");
+    // A local 8B model needs 80 to 120 s to write the script on a GPU, and
+    // can take ten minutes or more on a CPU-only server; the default timeout
+    // is 120 s.
+    llm.push_str("timeout_secs = 1800\n");
 
     let tmp = tempfile::tempdir().unwrap();
     let episode = episode_with_llm(tmp.path(), &llm);
