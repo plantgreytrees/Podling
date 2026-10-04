@@ -5,9 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use podling_core::plugin::{
-    Completion, CompletionRequest, LedgerClaim, LlmProvider, LlmTask, SourceText,
+    Completion, CompletionRequest, FakeLlm, LedgerClaim, LlmProvider, LlmTask, SourceText,
 };
-use podling_core::{CoreError, DiskCache, RunReport, pipeline};
+use podling_core::{CoreError, DiskCache, GroundingCounts, RunReport, pipeline};
 use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script};
 use serde_json::{Value, json};
 
@@ -481,6 +481,7 @@ fn a_contradicting_source_contests_both_claims() {
             "ingest",
             "chunk",
             "extract_claims",
+            "ground_claims",
             "cluster_claims",
             "score_stances",
             "ledger",
@@ -557,4 +558,130 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
     let report = pipeline::run(&spec(&fixtures()), &fixtures(), None, tmp.path()).unwrap();
     let ids: Vec<&str> = hits(&report).into_iter().map(|(id, _)| id).collect();
     assert_eq!(ids, STAGES);
+}
+
+/// The cache keys of the episode without `[embedding]` and `[nli]`, recorded
+/// on `main` before `ground_claims` existed (commit f12b046). Adding NLI
+/// grounding must not move them. A deliberate bump of one of these stages
+/// (see "The five bump rules" in docs/architecture.md) updates its line here.
+const NO_NLI_KEYS: [(&str, &str); 6] = [
+    (
+        "ingest",
+        "5bbf36eb1044c6336e376993c584a8e9a5377d0e50b6e91614ec17a97869be78",
+    ),
+    (
+        "chunk",
+        "f1e9f15d11dacd5b91550932ea19b8e88c06f0ae7638f18c3a9e582450695d1a",
+    ),
+    (
+        "extract_claims",
+        "e8d7dc70e13faf8979ef7d1a7140cdd7a5b5dc5275f781538cb1b96c6b71867d",
+    ),
+    (
+        "ledger",
+        "2a120f337669852c147ed39b55abd8e02f1ba7f56425832d78ae4c399cb3ee28",
+    ),
+    (
+        "script",
+        "3a6ed74ef9ca18f4d12460ec90d4200d9c31c23d0c6225bf36fd67a4f2388664",
+    ),
+    (
+        "analyse",
+        "038465e90df3d8074e5054c6b0c489c397aaa33443cfe556cf8d76e07ff058b9",
+    ),
+];
+
+fn keys(report: &RunReport) -> Vec<(&str, &str)> {
+    report
+        .stages
+        .iter()
+        .map(|s| (s.id.as_str(), s.key.as_str()))
+        .collect()
+}
+
+#[test]
+fn without_nli_the_cache_keys_are_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let report = pipeline::run(&spec(&fixtures()), &fixtures(), None, tmp.path()).unwrap();
+    assert_eq!(keys(&report), NO_NLI_KEYS);
+    assert_eq!(report.grounding, None);
+
+    // Turning grounding on adds stages after extraction; extraction itself
+    // is keyed exactly as before.
+    let mut grounded = spec(&fixtures());
+    grounded.embedding = Some(toml::from_str("kind = \"fake\"").unwrap());
+    grounded.nli = Some(toml::from_str("kind = \"fake\"").unwrap());
+    let report = pipeline::run(&grounded, &fixtures(), None, &tmp.path().join("nli")).unwrap();
+    let extract = keys(&report)
+        .into_iter()
+        .find(|(id, _)| *id == "extract_claims")
+        .unwrap();
+    assert_eq!(extract, NO_NLI_KEYS[2]);
+    assert!(report.grounding.is_some());
+}
+
+/// `FakeLlm`, except that extraction also states a distortion of the chunk
+/// in its own words: "led" where the source says "joined".
+///
+/// The fixture's heading ("Field notes") shares no word with the claims on
+/// purpose: title words don't count toward the lexical share, so a title of
+/// "Kulik joined the expedition." would leave only "led" to count, and the
+/// lexical check would reject the distortion before NLI ever saw it.
+struct Distorting;
+
+impl LlmProvider for Distorting {
+    fn id(&self) -> &str {
+        "distorting"
+    }
+
+    fn fingerprint(&self) -> Value {
+        json!({ "provider": "distorting" })
+    }
+
+    fn complete(&self, request: &CompletionRequest) -> Result<Completion, CoreError> {
+        match request.task {
+            LlmTask::ExtractClaims => Ok(Completion {
+                text: json!({ "claims": [
+                    { "text": "Kulik led the expedition." },
+                    { "text": "Kulik joined the expedition." },
+                ]})
+                .to_string(),
+            }),
+            _ => FakeLlm.complete(request),
+        }
+    }
+}
+
+fn run_distortion(cache: Option<&DiskCache>, out: &Path) -> RunReport {
+    let base = fixtures().join("distortion");
+    pipeline::run_with_llm(&spec(&base), &Distorting, &base, cache, out).unwrap()
+}
+
+#[test]
+fn nli_drops_a_distortion_the_lexical_check_lets_through() {
+    let tmp = tempfile::tempdir().unwrap();
+    let report = run_distortion(None, tmp.path());
+    assert_eq!(
+        report.grounding,
+        Some(GroundingCounts {
+            dropped_claims: 1,
+            rejected_evidence: 1,
+        })
+    );
+    let ledger: Ledger = read_body(tmp.path(), "ledger");
+    let texts: Vec<&str> = ledger.entries().iter().map(|e| e.claim.text()).collect();
+    assert_eq!(texts, ["Kulik joined the expedition."]);
+    let claims = fs::read_to_string(tmp.path().join("claims.json")).unwrap();
+    assert!(!claims.contains("Kulik led"), "{claims}");
+}
+
+#[test]
+fn the_rejection_count_survives_a_cache_hit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let first = run_distortion(Some(&cache), &tmp.path().join("a"));
+    let second = run_distortion(Some(&cache), &tmp.path().join("b"));
+    assert!(hits(&second).contains(&("ground_claims", true)));
+    assert_eq!(second.grounding, first.grounding);
+    assert_eq!(second.grounding.unwrap().dropped_claims, 1);
 }

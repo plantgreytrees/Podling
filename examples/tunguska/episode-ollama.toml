@@ -29,7 +29,8 @@ temperature = 0.2
 # so the 120 second default can time out. A hosted model needs far less.
 timeout_secs = 300
 
-# [embedding] and [nli] turn on the grounding stages: claims worded
+# [embedding] and [nli] turn on the grounding stages: a claim its own passage
+# doesn't entail is dropped (the run prints how many), claims worded
 # differently by two sources are merged, and every claim is checked against
 # the other sources' sentences, so a paraphrase corroborates it and a
 # contradiction contests it. Set both, or neither.

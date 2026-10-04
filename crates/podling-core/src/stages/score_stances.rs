@@ -14,20 +14,19 @@
 //! large the sources.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Range;
 
 use podling_types::{
-    Chunk, Claim, DocumentId, Evidence, EvidenceBasis, PerMille, SourceRef, Stance, TextSpan,
+    Chunk, Claim, DocumentId, Evidence, EvidenceBasis, PerMille, SourceRef, Stance,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use super::windows::windows;
 use crate::error::{CoreError, Result};
 use crate::plugin::{
     EmbeddingProvider, NliPair, NliProvider, cosine, embed_checked, score_checked,
 };
 use crate::stage::Stage;
-use crate::text::sentences;
 
 /// Premise windows retrieved per claim (the cost bound).
 pub const RETRIEVE_K: usize = 4;
@@ -43,8 +42,9 @@ pub const SUPPORT_ENTAIL_PM: u16 = 800;
 pub const CONTRADICT_PM: u16 = 950;
 /// A contradiction only counts between texts about the same thing.
 pub const MIN_CONTRADICT_SIMILARITY_PM: u16 = 600;
-/// Longest premise window, in consecutive sentences.
-pub const MAX_WINDOW_SENTENCES: usize = 2;
+// Re-exported so the constant keeps its public path here; it lives with the
+// window code both NLI stages share.
+pub use super::windows::{MAX_WINDOW_SENTENCES, MAX_WINDOW_WORDS};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StanceInput {
@@ -62,7 +62,7 @@ pub struct ScoreStances<'a> {
 
 impl Stage for ScoreStances<'_> {
     const ID: &'static str = "score_stances";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -76,11 +76,13 @@ impl Stage for ScoreStances<'_> {
             "contradict_pm": CONTRADICT_PM,
             "min_contradict_similarity_pm": MIN_CONTRADICT_SIMILARITY_PM,
             "max_window_sentences": MAX_WINDOW_SENTENCES,
+            "max_window_words": MAX_WINDOW_WORDS,
         })
     }
 
     fn run(&self, input: &StanceInput) -> Result<Vec<Claim>> {
-        let windows = windows(input)?;
+        let groups = groups(input)?;
+        let windows = windows(&input.chunks);
         let claim_texts: Vec<&str> = input.claims.iter().map(Claim::text).collect();
         let window_texts: Vec<&str> = windows.iter().map(|w| w.text).collect();
         let texts: Vec<&str> = claim_texts.iter().chain(&window_texts).copied().collect();
@@ -102,7 +104,7 @@ impl Stage for ScoreStances<'_> {
             let mut ranked: Vec<(usize, PerMille)> = windows
                 .iter()
                 .enumerate()
-                .filter(|(_, w)| !backed.contains(w.group))
+                .filter(|(_, w)| !backed.contains(groups[w.chunk]))
                 .map(|(i, _)| {
                     let similarity = cosine(&claim_vectors[c], &window_vectors[i]);
                     (i, PerMille::from_probability(similarity))
@@ -196,18 +198,6 @@ impl Stage for ScoreStances<'_> {
     }
 }
 
-/// A span of one to [`MAX_WINDOW_SENTENCES`] consecutive sentences of a chunk:
-/// short enough for an NLI model's input, long enough to hold a fact that
-/// spans a sentence break.
-struct Window<'a> {
-    /// Index into `StanceInput::chunks`.
-    chunk: usize,
-    group: &'a str,
-    text: &'a str,
-    /// The window's span in the chunk's *document*, as evidence records it.
-    span: TextSpan,
-}
-
 struct Candidate {
     claim: usize,
     window: usize,
@@ -237,44 +227,31 @@ impl Judged {
     }
 }
 
-/// Every premise window of every chunk, in chunk order.
-fn windows(input: &StanceInput) -> Result<Vec<Window<'_>>> {
-    let mut out = Vec::new();
-    for (i, chunk) in input.chunks.iter().enumerate() {
-        let source = input.sources.get(chunk.document()).ok_or_else(|| {
-            CoreError::InvalidProviderOutput {
-                stage: ScoreStances::ID,
-                message: format!("chunk {} belongs to an unknown document", chunk.id()),
-            }
-        })?;
-        let text = chunk.text();
-        let sentences = sentences(text);
-        for first in 0..sentences.len() {
-            for len in 1..=MAX_WINDOW_SENTENCES {
-                let Some(last) = sentences.get(first + len - 1) else {
-                    break;
-                };
-                let range: Range<usize> = sentences[first].start..last.end;
-                let offset = chunk.span().start();
-                let span = TextSpan::new(offset + range.start, offset + range.end)
-                    .expect("a sentence range is ordered");
-                out.push(Window {
-                    chunk: i,
-                    group: source.independence_group.as_str(),
-                    text: &text[range],
-                    span,
-                });
-            }
-        }
-    }
-    Ok(out)
+/// The independence group of each chunk, by chunk index. A chunk whose
+/// document has no source is an error.
+fn groups(input: &StanceInput) -> Result<Vec<&str>> {
+    input
+        .chunks
+        .iter()
+        .map(|chunk| {
+            input
+                .sources
+                .get(chunk.document())
+                .map(|source| source.independence_group.as_str())
+                .ok_or_else(|| CoreError::InvalidProviderOutput {
+                    stage: ScoreStances::ID,
+                    message: format!("chunk {} belongs to an unknown document", chunk.id()),
+                })
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plugin::{FakeEmbedding, FakeNli, NliScores};
-    use podling_types::{ClaimStatus, Document, classify};
+    use crate::text::sentences;
+    use podling_types::{ClaimStatus, Document, TextSpan, classify};
 
     fn chunk_in(group: &str, text: &str) -> (Chunk, SourceRef) {
         let source = SourceRef {
