@@ -62,7 +62,8 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
 - malformed JSON;
 - a quote that names an unknown chunk or a sentence the chunk doesn't have
   (or that doesn't resolve in its document);
-- a citation of a claim id that isn't in the ledger;
+- a citation of a claim id that isn't in the ledger (a chunk id cited as a claim
+  is named as one, so the retry can correct it);
 - a turn whose text has a `{{quote:N}}` with no quote reference N, a quote
   reference with no `{{quote:N}}`, or a malformed placeholder;
 - a turn whose text puts three or more words in quotation marks itself: the
@@ -81,7 +82,8 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
 All three LLM stages call the model through
 [`complete_validated`](../crates/podling-core/src/plugin/llm.rs). If a reply fails
 those checks, the model is asked once more with the reason appended to the
-instructions. A second failure is the error, so a stage makes at most two calls per
+instructions, cut to 500 characters (`reason_excerpt`), since a reason can quote
+part of the reply. A second failure is the error, so a stage makes at most two calls per
 chunk, script or Contested claim. The adjudicator alone turns that error into a
 verdict instead of failing (see [Adjudicating Contested claims](#adjudicating-contested-claims)). Transport failures are not retried there, because the provider
 has its own policy (below).
@@ -348,7 +350,7 @@ so editing anything else leaves the verdicts cached.
 **Fallback.** A reply that is still rejected after the retry (bad JSON, an unknown
 number, a missing side, a quotation mark, a favoured side with no cite) becomes an
 `Unresolved` verdict citing the first piece of evidence on each side, with the
-rejection reason in `fallback`. The stage never picks a side the model didn't
+rejection reason in `fallback`, cut to 500 characters. The stage never picks a side the model didn't
 argue. A transport failure (the server down, a timeout) fails the stage instead,
 so it is never cached as a verdict.
 
