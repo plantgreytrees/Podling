@@ -36,5 +36,5 @@
 | [phase4-adjudicator](./phase4-adjudicator.md) | 1 | verdict-contracts | crates/podling-types | rust | normal | MERGED | 2026-10-04 |
 | [phase4-adjudicator](./phase4-adjudicator.md) | 2 | adjudicate-stage | crates/podling-core/src/stages/adjudicate.rs | rust | high | MERGED | 2026-10-04 |
 | [phase4-adjudicator](./phase4-adjudicator.md) | 3 | script-integration | crates/podling-core/src/stages/script.rs | rust | high | MERGED | 2026-10-04 |
-| [phase4-adjudicator](./phase4-adjudicator.md) | 4 | titanic-example | examples/titanic | rust | normal | PENDING | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 4 | titanic-example | examples/titanic | rust | normal | MERGED | 2026-10-04 |
 | [phase4-adjudicator](./phase4-adjudicator.md) | 5 | live-and-docs | docs | markdown | normal | PENDING | 2026-10-04 |

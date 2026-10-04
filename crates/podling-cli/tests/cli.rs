@@ -49,19 +49,29 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
 
 #[test]
 fn every_example_episode_parses() {
-    let dir = example().parent().unwrap().to_owned();
-    for name in ["episode.toml", "episode-ollama.toml"] {
-        let text = fs::read_to_string(dir.join(name)).unwrap();
-        let spec: podling_types::EpisodeSpec =
-            toml::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}"));
-        // The Ollama episode shows the grounding stages; the offline one
-        // stays without them, so it needs no downloads.
-        assert_eq!(
-            spec.embedding.is_some() && spec.nli.is_some(),
-            name == "episode-ollama.toml",
-            "{name}"
-        );
+    let examples = example().parent().unwrap().parent().unwrap().to_owned();
+    let mut seen = 0;
+    for entry in fs::read_dir(&examples).unwrap() {
+        let dir = entry.unwrap().path();
+        for name in ["episode.toml", "episode-ollama.toml"] {
+            let path = dir.join(name);
+            let text =
+                fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+            let spec: podling_types::EpisodeSpec =
+                toml::from_str(&text).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+            // The Ollama episode shows the grounding stages; the offline one
+            // stays without them, so it needs no downloads.
+            assert_eq!(
+                spec.embedding.is_some() && spec.nli.is_some(),
+                name == "episode-ollama.toml",
+                "{}",
+                path.display()
+            );
+            seen += 1;
+        }
     }
+    // Tunguska and Titanic, two episodes each.
+    assert!(seen >= 4, "{seen}");
 }
 
 #[test]

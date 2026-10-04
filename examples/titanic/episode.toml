@@ -1,0 +1,19 @@
+# Two official inquiries into the loss of the Titanic, which disagree on when
+# the iceberg was sighted and on how many people were saved. Each directory is
+# one independence group. See SOURCES.md.
+#
+#   cargo run -p podling-cli -- run --episode examples/titanic/episode.toml
+#
+# The offline fake LLM and no grounding: claims stay SingleSource and nothing
+# is Contested. episode-ollama.toml adds the grounding stages and the
+# adjudicator.
+
+title = "The Titanic inquiries"
+topic = "how the 1912 Titanic inquiries disagreed"
+target_minutes = 5
+llm = { kind = "fake" }
+sources = [
+  { kind = "local_files", root = "sources/us-senate", independence_group = "us-senate" },
+  { kind = "local_files", root = "sources/british-inquiry", independence_group = "british-inquiry" },
+]
+analysers = [{ kind = "quote_verifier" }]

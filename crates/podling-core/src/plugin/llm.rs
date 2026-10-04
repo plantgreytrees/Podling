@@ -287,6 +287,13 @@ impl FakeLlm {
                 ClaimStatus::Contested { .. } => ("The sources disagree here", Emotion::Serious),
                 ClaimStatus::Unsupported => continue,
             };
+            // A claim copied from a source sentence can carry its quotation
+            // marks, and a turn must not type quotations, so they are dropped.
+            let claim: String = entry
+                .text
+                .chars()
+                .filter(|c| !matches!(c, '"' | '\u{201C}' | '\u{201D}'))
+                .collect();
             turns.push(DraftTurn {
                 speaker: if i % 2 == 0 {
                     guest.clone()
@@ -294,8 +301,8 @@ impl FakeLlm {
                     host.clone()
                 },
                 text: match &entry.verdict {
-                    Some(verdict) => format!("{lead}: {} {}", entry.text, verdict.explanation),
-                    None => format!("{lead}: {}", entry.text),
+                    Some(verdict) => format!("{lead}: {claim} {}", verdict.explanation),
+                    None => format!("{lead}: {claim}"),
                 },
                 emotion,
                 citations: vec![entry.id.clone()],
