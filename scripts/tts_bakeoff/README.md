@@ -19,6 +19,10 @@ CPU (with the CPU real-time factor of each).
 
 ```bash
 cd scripts/tts_bakeoff
+# Dia2's packaging omits its subpackages, so it is installed editable from the
+# reviewed commit unpacked here (vendor/ is gitignored).
+mkdir -p vendor/dia2 && curl -sL https://github.com/nari-labs/dia2/archive/8687268f4ed3ed20704638fd353b51491de3b476.tar.gz \
+  | tar -xz --strip-components=1 -C vendor/dia2
 uv sync --extra dia2                       # one backend's environment at a time
 uv run --extra dia2 python bakeoff.py --fetch-voices
 # Free the GPU first: the script refuses to start while Ollama has a model on it.
@@ -65,7 +69,7 @@ transformers instead.
 | huggingface-hub | Apache-2.0 | all |
 | speechbrain | Apache-2.0 | all |
 | nvidia-ml-py | BSD-3-Clause | all |
-| dia2 (git, commit `8687268`) | Apache-2.0 | dia2 |
+| dia2 (vendored source, commit `8687268`) | Apache-2.0 | dia2 |
 | transformers | Apache-2.0 | dia2, moss (qwen via qwen-tts) |
 | accelerate | Apache-2.0 | moss |
 | bitsandbytes | MIT | moss |

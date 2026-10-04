@@ -309,25 +309,49 @@ class Dia2Backend(Backend):
 
     def load(self, voices: list[Voice]) -> None:
         import torch
-        from dia2 import Dia2
+        from dia2 import Dia2, engine
         from dia2.runtime import voice_clone
 
         if len(voices) > 2:
             raise SystemExit("Dia2 supports two speakers")
         # Dia2 times the prefix clip's words with whisper-timestamped (AGPL-3.0),
-        # which is excluded from the environment. Whisper on the CPU does it here.
+        # which is excluded from the environment. Whisper on the CPU does it here,
+        # once per clip at load: Dia2 asks again on every chunk, and a sidecar
+        # would store a voice's timings rather than recompute them per call.
+        self.prefix_words = {str(v.wav): self._time_words(v.wav) for v in voices}
         voice_clone.transcribe_words = self._prefix_words
         self.torch = torch
         self.model = Dia2.from_repo(
             BACKENDS["dia2"]["model"], device="cuda", dtype="bfloat16"
         )
+        # Dia2 decodes a whole chunk's Mimi frames in one GPU pass while the
+        # generation cache is still resident, which overflows 8 GB on a
+        # 90-second chunk. A CPU copy of the codec decodes instead; the GPU copy
+        # still encodes the voice prefixes.
+        engine.decode_audio = self._decode_on_cpu
+        self.cpu_mimi = None
 
     @staticmethod
-    def _prefix_words(audio_path: str, device, language=None):
+    def _time_words(wav: Path):
         from dia2.runtime.voice_clone import WhisperWord
 
-        _, words = transcribe("small.en", read_mono(Path(audio_path), 16_000))
+        _, words = transcribe("small.en", read_mono(wav, 16_000))
         return [WhisperWord(text=w, start=s, end=e) for w, s, e in words]
+
+    def _prefix_words(self, audio_path: str, device, language=None):
+        return self.prefix_words[audio_path]
+
+    def _decode_on_cpu(self, runtime, tokens):
+        from dia2.audio.codec import DEFAULT_MIMI_MODEL_ID, MimiCodec
+
+        if tokens.shape[-1] == 0:
+            return self.torch.zeros(0)
+        if self.cpu_mimi is None:
+            self.cpu_mimi = MimiCodec.from_pretrained(
+                DEFAULT_MIMI_MODEL_ID, device=self.torch.device("cpu")
+            )
+        self.torch.cuda.empty_cache()
+        return self.cpu_mimi.decode(tokens.cpu())[0, 0]
 
     def synth(self, turns, voices, seed):
         from dia2 import GenerationConfig, SamplingConfig

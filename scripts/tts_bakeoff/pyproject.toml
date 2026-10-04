@@ -27,13 +27,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dia2 = [
-  # Dia2 is not on PyPI; pinned to a reviewed commit.
-  "dia2 @ git+https://github.com/nari-labs/dia2@8687268f4ed3ed20704638fd353b51491de3b476",
+  # Dia2 is not on PyPI, and its packaging lists only the top-level package, so
+  # a built wheel lacks dia2.core: it works only as an editable install of the
+  # reviewed commit unpacked into vendor/dia2 (see README).
+  "dia2",
   "transformers>=4.55.3,<5",
 ]
 moss = [
   # MOSS-TTSD's model and processor code come from the Hugging Face repo
-  # (trust_remote_code), pinned by revision in bakeoff.py. These are the
+  # (trust_remote_code); results.json records the revision used. These are the
   # runtime dependencies MOSS-TTS lists for that code.
   "transformers==5.0.0",
   "accelerate>=1.10.1",
@@ -56,6 +58,7 @@ conflicts = [[{ extra = "dia2" }, { extra = "moss" }, { extra = "qwen" }]]
 override-dependencies = ["whisper-timestamped ; sys_platform == 'never'"]
 
 [tool.uv.sources]
+dia2 = { path = "vendor/dia2", editable = true }
 torch = [{ index = "pytorch-cu128" }]
 torchaudio = [{ index = "pytorch-cu128" }]
 

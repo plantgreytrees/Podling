@@ -4,3 +4,4 @@ out/
 .models/
 voices/
 __pycache__/
+vendor/
