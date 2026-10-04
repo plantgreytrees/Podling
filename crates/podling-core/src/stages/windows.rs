@@ -44,6 +44,9 @@ pub(crate) fn windows(chunks: &[Chunk]) -> Vec<Window<'_>> {
     for (i, chunk) in chunks.iter().enumerate() {
         let text = chunk.text();
         let offset = chunk.span().start();
+        // A closure that changes what it captures (`out.push`) borrows it
+        // mutably, so it must itself be bound `mut`: calling it mutates it.
+        // The borrow of `out` ends with the loop body, before `out` returns.
         let mut push = |range: Range<usize>| {
             let span = TextSpan::new(offset + range.start, offset + range.end)
                 .expect("a sentence range is ordered");
@@ -97,8 +100,13 @@ fn words(text: &str) -> Vec<Range<usize>> {
 /// Byte ranges of [`MAX_WINDOW_WORDS`]-word slices over `words`, each starting
 /// half a slice after the one before, the last ending at the last word. A fact
 /// up to half a slice long lies wholly inside at least one of them.
+///
+/// `words` must be longer than [`MAX_WINDOW_WORDS`]; `windows` only calls this
+/// for a sentence over the cap.
 fn slices(words: &[Range<usize>]) -> Vec<Range<usize>> {
     let stride = MAX_WINDOW_WORDS / 2;
+    // `saturating_sub` stops at 0 instead of panicking (debug) or wrapping
+    // round (release) when the subtraction would go below zero.
     let last_start = words.len().saturating_sub(MAX_WINDOW_WORDS);
     // `step_by` yields 0, stride, 2 × stride, … below `last_start`; the final
     // slice is then pinned to the end, so the tail is never left out.
