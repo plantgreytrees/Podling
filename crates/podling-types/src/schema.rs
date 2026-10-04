@@ -10,6 +10,7 @@ use crate::envelope::{ArtifactKind, Envelope};
 use crate::episode::EpisodeSpec;
 use crate::ledger::Ledger;
 use crate::script::Script;
+use crate::verdict::Verdicts;
 
 /// The schema of each artifact kind as written to disk: the episode spec is
 /// plain TOML; every other artifact is wrapped in an [`Envelope`].
@@ -30,6 +31,7 @@ pub fn of(kind: ArtifactKind) -> Schema {
         ArtifactKind::Chunks => enveloped::<Vec<Chunk>>(),
         ArtifactKind::Claims => enveloped::<Vec<Claim>>(),
         ArtifactKind::Ledger => enveloped::<Ledger>(),
+        ArtifactKind::Verdicts => enveloped::<Verdicts>(),
         ArtifactKind::Script => enveloped::<Script>(),
         ArtifactKind::Analysis => enveloped::<AnalysisReport>(),
     }

@@ -1,6 +1,8 @@
 //! Text-generation providers and the output shapes they must produce.
 
-use podling_types::{ChunkId, ClaimId, ClaimStatus, Emotion, Ledger, Speaker, SpeakerId};
+use podling_types::{
+    ChunkId, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Speaker, SpeakerId, Stance,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -17,6 +19,11 @@ use crate::text::sentences;
 ///    ([`LedgerClaim`]), without evidence.
 pub const PROMPT_VERSION: u32 = 3;
 
+/// Version of the adjudicator's prompt and input shape, in its cache key only.
+/// Kept apart from [`PROMPT_VERSION`] so a change to the adjudicator doesn't
+/// re-run claim extraction.
+pub const ADJUDICATE_PROMPT_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmTask {
@@ -26,6 +33,9 @@ pub enum LlmTask {
     /// Input: `{ "topic", "target_minutes", "ledger": [LedgerClaim],
     /// "sources": [SourceText] }`. Output: JSON `ScriptDraft`.
     WriteScript,
+    /// Input: `{ "claim": AdjudicationClaim, "evidence": [AdjudicationEvidence] }`
+    /// for one Contested claim. Output: a JSON [`VerdictDraft`].
+    AdjudicateClaim,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -87,6 +97,39 @@ impl LedgerClaim {
             })
             .collect()
     }
+}
+
+/// The Contested claim shown to the model in [`LlmTask::AdjudicateClaim`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdjudicationClaim {
+    pub id: ClaimId,
+    pub text: String,
+}
+
+/// One piece of the claim's evidence, numbered so the verdict can cite it by
+/// `n` instead of by its (hash-shaped) chunk id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdjudicationEvidence {
+    /// Position in the claim's evidence list, counting from 0.
+    pub n: usize,
+    pub stance: Stance,
+    /// Title of the evidence's source document.
+    pub source: String,
+    pub independence_group: String,
+    /// The passage the stance rests on: the NLI premise, the merged wording,
+    /// or the chunk the claim was extracted from.
+    pub text: String,
+}
+
+/// The reply to [`LlmTask::AdjudicateClaim`]. The stage checks it against the
+/// claim's evidence before it becomes a `Verdict`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerdictDraft {
+    pub claim: ClaimId,
+    pub favours: Favours,
+    pub explanation: String,
+    /// `n` of each piece of evidence the verdict rests on.
+    pub cites: Vec<usize>,
 }
 
 /// One chunk of source text as shown to the model in [`LlmTask::WriteScript`],
@@ -248,6 +291,35 @@ impl FakeLlm {
         Ok(ScriptDraft { cast, turns })
     }
 
+    /// Never takes a side: cites the first piece of evidence on each side and
+    /// says the sources disagree.
+    fn adjudicate(input: &Value) -> Result<VerdictDraft> {
+        let claim: AdjudicationClaim = serde_json::from_value(input["claim"].clone())
+            .map_err(|err| invalid_input(format!("claim: {err}")))?;
+        let evidence: Vec<AdjudicationEvidence> = serde_json::from_value(input["evidence"].clone())
+            .map_err(|err| invalid_input(format!("evidence: {err}")))?;
+        let first = |stance| evidence.iter().find(|e| e.stance == stance);
+        let sides: Vec<&AdjudicationEvidence> = [Stance::Supports, Stance::Contradicts]
+            .into_iter()
+            .filter_map(first)
+            .collect();
+        let explanation = match sides.as_slice() {
+            [supporting, contradicting] => format!(
+                "The {} source and the {} source give different accounts, and the sources \
+                 do not settle which is right.",
+                supporting.independence_group, contradicting.independence_group
+            ),
+            _ => "The sources give different accounts, and they do not settle which is right."
+                .to_owned(),
+        };
+        Ok(VerdictDraft {
+            claim: claim.id,
+            favours: Favours::Unresolved,
+            explanation,
+            cites: sides.iter().map(|e| e.n).collect(),
+        })
+    }
+
     fn opening(host: &SpeakerId, topic: &str, first_source: Option<&SourceText>) -> DraftTurn {
         let quote = first_source.and_then(|source| {
             let first = source.sentences.first()?;
@@ -291,7 +363,8 @@ impl LlmProvider for FakeLlm {
     fn fingerprint(&self) -> Value {
         // Bump when the fake's behaviour changes.
         // 3: the opening turn says `{{quote:0}}` instead of typing the sentence.
-        json!({ "provider": "fake", "version": 3 })
+        // 4: answers `AdjudicateClaim`.
+        json!({ "provider": "fake", "version": 4 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
@@ -300,6 +373,7 @@ impl LlmProvider for FakeLlm {
                 serde_json::to_string(&Self::extract_claims(&request.input)?)?
             }
             LlmTask::WriteScript => serde_json::to_string(&Self::write_script(&request.input)?)?,
+            LlmTask::AdjudicateClaim => serde_json::to_string(&Self::adjudicate(&request.input)?)?,
         };
         Ok(Completion { text })
     }
@@ -477,6 +551,34 @@ mod tests {
         let req = request(LlmTask::ExtractClaims, json!({}));
         let err = complete_validated(&Down, "s", &req, parse_object).unwrap_err();
         assert!(matches!(err, CoreError::Provider { .. }));
+    }
+
+    #[test]
+    fn the_fake_adjudicator_cites_both_sides_and_takes_none() {
+        let claim = podling_types::Claim::new("The blast was in 1908.");
+        let input = json!({
+            "claim": { "id": claim.id(), "text": claim.text() },
+            "evidence": [
+                { "n": 0, "stance": "supports", "source": "A", "independence_group": "a", "text": "1908." },
+                { "n": 1, "stance": "supports", "source": "A", "independence_group": "a", "text": "1908!" },
+                { "n": 2, "stance": "contradicts", "source": "B", "independence_group": "b", "text": "1907." },
+            ],
+        });
+        let reply = FakeLlm
+            .complete(&request(LlmTask::AdjudicateClaim, input))
+            .unwrap();
+        let draft: VerdictDraft = serde_json::from_str(&reply.text).unwrap();
+        assert_eq!(&draft.claim, claim.id());
+        assert_eq!(draft.favours, Favours::Unresolved);
+        assert_eq!(draft.cites, vec![0, 2]);
+        assert!(
+            draft
+                .explanation
+                .starts_with("The a source and the b source give different accounts"),
+            "{}",
+            draft.explanation
+        );
+        assert!(!draft.explanation.contains('"'));
     }
 
     #[test]

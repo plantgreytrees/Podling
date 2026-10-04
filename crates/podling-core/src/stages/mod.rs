@@ -1,5 +1,6 @@
-//! The six pipeline stages, in the order [`crate::pipeline::run`] calls them.
+//! The pipeline stages, in the order [`crate::pipeline::run`] calls them.
 
+pub mod adjudicate;
 pub mod analyse;
 pub mod chunk;
 pub mod cluster_claims;
@@ -9,6 +10,7 @@ pub mod ledger;
 pub mod score_stances;
 pub mod script;
 
+pub use adjudicate::{Adjudicate, AdjudicateInput};
 pub use analyse::{Analyse, AnalyseInput};
 pub use chunk::ChunkDocuments;
 pub use cluster_claims::ClusterClaims;
