@@ -1,8 +1,8 @@
 # Hand-off: next goal
 
 > Written 2026-10-01 at the end of Phase 3 (embeddings and NLI in the claim
-> ledger). The branch `worktree-phase3-nli-ledger` holds everything below; merge
-> it into `main` before starting (see "Before you start").
+> ledger); updated 2026-10-04 after NLI grounding in extraction. Both are merged
+> into `main`.
 
 ## Goal
 
@@ -76,8 +76,7 @@ The adjudicator would not catch these either, since only Contested claims reach 
 
 ## Before you start
 
-- Merge this branch: `git merge --no-ff worktree-phase3-nli-ledger` from the
-  main checkout. There is no git remote, so there is nothing to push.
+- Start from `main`. There is no git remote, so there is nothing to push.
 - Ollama runs in the docker container `infra_docker_compose-ollama-1` on port
   11434, with `llama3.1:8b` and `nomic-embed-text` pulled. `cargo` is at
   `~/.cargo/bin`, which isn't on the default PATH.
@@ -100,3 +99,5 @@ The adjudicator would not catch these either, since only Contested claims reach 
 | [phase2-llm-provider](plans/phase2-llm-provider.md) | complete |
 | [quote-placeholders](plans/quote-placeholders.md) | complete; two cold-cache llama3.1:8b runs pass with 0 errors |
 | [phase3-nli-ledger](plans/phase3-nli-ledger.md) | complete; live runs recorded in the plan ("Live results") |
+| [nli-extraction-grounding](plans/nli-extraction-grounding.md) | complete; live runs recorded in the plan ("Live results") |
+| [scrutinise-nli-extraction-grounding](plans/scrutinise-nli-extraction-grounding.md) | complete; premise windows capped at 120 words |
