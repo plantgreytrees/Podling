@@ -6,17 +6,17 @@ tracker_rows: [TRACKER#phase5-tts-audio/1, TRACKER#phase5-tts-audio/2, TRACKER#p
 guards:
   blast_radius: done
   completeness_sweep: done
-  blind_rederivation: skipped(root-only agent mode: agent-mode-guard blocks non-strategist Task; the plan-strategist pass supplied the independent decomposition, see "Decomposition")
+  blind_rederivation: "skipped(root-only agent mode: agent-mode-guard blocks non-strategist Task; the plan-strategist pass supplied the independent decomposition, see \"Decomposition\")"
 coverage:
-  contract:      2.1–2.6 (EpisodeSpec cast/tts/asr, AudioManifest, ArtifactKind::Audio, SCHEMA_VERSION), 4.1 (TtsProvider + ChunkRequest), 5.2 (WriteScript honours a declared cast), 5.3 (LlmProvider::release), 6.1–6.4 (Beat/Pace/Nonverbal/callback_to on Script + ScriptDraft, PROMPT_VERSION), 8.1 (AsrProvider), 3.2 (sidecar HTTP protocol, versioned)
-  data:          4.5–4.6 (content-addressed audio blob store beside the JSON cache; `cache clear`/`stats` learn its shape). N/A for databases: none exist
-  config:        2.1–2.3 ([[cast]] with pinned voices, [tts], [asr] episode sections), 4.3 (user-level sidecar profiles, never in the episode file), 5.3 ([llm] unload_after for Ollama), 10.1 (examples/tunguska/episode-tts.toml)
-  security:      4.3–4.4 (sidecar program comes from user config, argv only, no shell, 127.0.0.1 only, killed on Drop), 3.3 (sidecar binds loopback, validates paths under a run dir), 4.2 (sidecar responses size-capped and validated), 2.2 (voice licence recorded per clip), 1.4 + 3.5 + 8.6 (dependency and weight licence audit)
-  tests:         2.6, 3.4, 4.7, 4.8, 5.6, 5.7, 6.5, 6.6, 7.5, 7.6, 8.7, 8.8, 9.6, 9.7, 10.2–10.3
-  observability: 4.4 (sidecar spawn/ready/exit spans with pid and elapsed_ms), 5.4 (per-chunk synth span: seconds of audio, RTF), 8.5 (per-chunk verify log: WER, quote misses, retries, take chosen), 9.5 (episode LUFS / true peak / duration logged and in the manifest)
-  interface:     5.5 (CLI prints the episode audio path; readable Config error naming a missing voice or sidecar profile), 4.4 (OOM / sidecar-not-ready hint naming `ollama stop` and the profile file)
-  docs:          10.4 (architecture.md), 10.5 (README), 10.6 (handoff.md), 3.6 (sidecars/tts/README.md)
-  rollback:      git revert of the branch. Without [tts] the pipeline runs today's stages and writes today's artifacts plus the schema_version bump (tests 5.7, 6.6); the sidecar is a separate directory with no Rust dependency on it
+  contract:      "2.1–2.6 (EpisodeSpec cast/tts/asr, AudioManifest, ArtifactKind::Audio, SCHEMA_VERSION), 4.1 (TtsProvider + ChunkRequest), 5.2 (WriteScript honours a declared cast), 5.3 (LlmProvider::release), 6.1–6.4 (Beat/Pace/Nonverbal/callback_to on Script + ScriptDraft, PROMPT_VERSION), 8.1 (AsrProvider), 3.2 (sidecar HTTP protocol, versioned)"
+  data:          "4.5–4.6 (content-addressed audio blob store beside the JSON cache; `cache clear`/`stats` learn its shape). N/A for databases: none exist"
+  config:        "2.1–2.3 ([[cast]] with pinned voices, [tts], [asr] episode sections), 4.3 (user-level sidecar profiles, never in the episode file), 5.3 ([llm] unload_after for Ollama), 10.1 (examples/tunguska/episode-tts.toml)"
+  security:      "4.3–4.4 (sidecar program comes from user config, argv only, no shell, 127.0.0.1 only, killed on Drop), 3.3 (sidecar binds loopback, validates paths under a run dir), 4.2 (sidecar responses size-capped and validated), 2.2 (voice licence recorded per clip), 1.4 + 3.5 + 8.6 (dependency and weight licence audit)"
+  tests:         "2.6, 3.4, 4.7, 4.8, 5.6, 5.7, 6.5, 6.6, 7.5, 7.6, 8.7, 8.8, 9.6, 9.7, 10.2–10.3"
+  observability: "4.4 (sidecar spawn/ready/exit spans with pid and elapsed_ms), 5.4 (per-chunk synth span: seconds of audio, RTF), 8.5 (per-chunk verify log: WER, quote misses, retries, take chosen), 9.5 (episode LUFS / true peak / duration logged and in the manifest)"
+  interface:     "5.5 (CLI prints the episode audio path; readable Config error naming a missing voice or sidecar profile), 4.4 (OOM / sidecar-not-ready hint naming `ollama stop` and the profile file)"
+  docs:          "10.4 (architecture.md), 10.5 (README), 10.6 (handoff.md), 3.6 (sidecars/tts/README.md)"
+  rollback:      "git revert of the branch. Without [tts] the pipeline runs today's stages and writes today's artifacts plus the schema_version bump (tests 5.7, 6.6); the sidecar is a separate directory with no Rust dependency on it"
 units:
   - id: 1
     scope_id: tts-bakeoff
@@ -24,7 +24,7 @@ units:
     depends_on: []
     module: scripts/tts_bakeoff
     language: python
-    security: normal
+    security: "normal"
     scope:
       read: [examples/tunguska/episode-ollama.toml, crates/podling-types/src/script.rs]
       docs: [.claude/CLAUDE.md, docs/plans/phase5-tts-audio.md]
@@ -41,7 +41,7 @@ units:
     depends_on: [1]
     module: crates/podling-types
     language: rust
-    security: normal
+    security: "normal"
     scope:
       read:
         - crates/podling-types/src/episode.rs
@@ -71,7 +71,7 @@ units:
     depends_on: [1, 2]
     module: sidecars/tts
     language: python
-    security: high
+    security: "high"
     scope:
       read: [scripts/tts_bakeoff/bakeoff.py, crates/podling-types/src/audio.rs]
       docs: [docs/plans/phase5-tts-audio.md]
@@ -93,7 +93,7 @@ units:
     depends_on: [2]
     module: crates/podling-core/src/plugin
     language: rust
-    security: high
+    security: "high"
     scope:
       read:
         - crates/podling-core/src/plugin/mod.rs
@@ -128,7 +128,7 @@ units:
     depends_on: [3, 4]
     module: crates/podling-core/src/stages
     language: rust
-    security: normal
+    security: "normal"
     scope:
       read:
         - crates/podling-core/src/pipeline.rs
@@ -168,7 +168,7 @@ units:
     depends_on: [5]
     module: crates/podling-types/src/script.rs, crates/podling-core/src/stages/script.rs
     language: rust
-    security: normal
+    security: "normal"
     scope:
       read:
         - crates/podling-types/src/script.rs
@@ -198,7 +198,7 @@ units:
     depends_on: [5, 6]
     module: crates/podling-core/src/stages/plan_chunks.rs
     language: rust
-    security: normal
+    security: "normal"
     scope:
       read:
         - crates/podling-types/src/script.rs
@@ -227,7 +227,7 @@ units:
     depends_on: [5]
     module: crates/podling-core/src/plugin/whisper.rs, crates/podling-core/src/stages/verify_audio.rs
     language: rust
-    security: normal
+    security: "normal"
     scope:
       read:
         - crates/podling-core/src/plugin/cross_encoder.rs
@@ -262,7 +262,7 @@ units:
     depends_on: [7, 8]
     module: crates/podling-core/src/stages/assemble.rs
     language: rust
-    security: normal
+    security: "normal"
     scope:
       read:
         - crates/podling-core/src/stages/assemble.rs
@@ -291,7 +291,7 @@ units:
     depends_on: [9]
     module: examples/tunguska, docs
     language: markdown
-    security: normal
+    security: "normal"
     scope:
       read: [examples/tunguska/episode-ollama.toml, crates/podling-types/src/episode.rs, sidecars/tts/README.md]
       docs: [docs/architecture.md, README.md, docs/handoff.md, docs/plans/phase5-tts-audio.md]
