@@ -12,22 +12,25 @@ never text the model typed.
 
 ## Status
 
-This is **Phase 3: embeddings and NLI in the claim ledger**. The pipeline runs end
+This is **Phase 4: an adjudicator for Contested claims**. The pipeline runs end
 to end, either offline with a deterministic fake LLM or with any OpenAI-compatible
 model (Ollama, llama.cpp, vLLM, LM Studio, OpenAI):
 
 ```
-sources → documents → chunks → claims → [cluster → stances] → ledger → script → analysis
+sources → documents → chunks → claims → [cluster → stances] → ledger → verdicts → script → analysis
 ```
 
 With the optional `[embedding]` and `[nli]` sections, the same fact worded differently
 by two independent sources becomes one Corroborated claim, and a source that
 contradicts a claim makes it Contested. A local NLI model decides both, not exact text
 matching (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)).
+When two sources disagree, an LLM adjudicator says which side the sources favour, or
+that it is unresolved, and the script explains the disagreement from that (see
+[Explaining disagreements](#explaining-disagreements)).
 
 Every stage is cached, and every artifact is a versioned JSON file with an exported JSON
-Schema. Text-to-speech, PDF ingestion, MCP source connectors and an LLM adjudicator for
-Contested claims come in later phases. See [docs/architecture.md](docs/architecture.md).
+Schema. Text-to-speech, PDF ingestion and MCP source connectors come in later
+phases. See [docs/architecture.md](docs/architecture.md).
 
 ## Prerequisites
 
@@ -52,8 +55,8 @@ cargo run -p podling-cli -- run --episode examples/tunguska/episode.toml
 ```
 
 It prints one row per stage showing whether the cache was hit, then writes
-`episode`, `documents`, `chunks`, `claims`, `ledger`, `script` and
-`analysis` JSON files to `.podling/out`. Run it again and every stage is a
+`episode`, `documents`, `chunks`, `claims`, `ledger`, `verdicts`, `script`
+and `analysis` JSON files to `.podling/out`. Run it again and every stage is a
 cache hit.
 
 | Command | What it does |
@@ -132,7 +135,8 @@ export OPENAI_API_KEY=...   # never put the key in the episode file
 | `timeout_secs` | Optional, default 120. |
 
 **Privacy.** With a hosted provider, the text of your sources (chunk by chunk,
-then the claim ledger and numbered source sentences for the script) is sent to
+then the passages behind each Contested claim, then the claim ledger and numbered
+source sentences for the script) is sent to
 that provider. With a local server on `localhost` nothing leaves your machine, so
 that is the recommended default. The key is sent only as an `Authorization:
 Bearer` header. It is never written to the cache, the artifacts, a log line or an error
@@ -215,3 +219,26 @@ To run the test that talks to a real server (it is `#[ignore]`d, so a normal
 PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b \
   cargo test -p podling-cli -- --ignored live
 ```
+
+### Explaining disagreements
+
+[`examples/titanic`](examples/titanic) has two sources that really disagree: the 1912
+US Senate and British inquiries into the Titanic give different times for the
+iceberg warning and different numbers of survivors (see
+[its SOURCES.md](examples/titanic/SOURCES.md)). With grounding on, those claims are
+Contested, and the `adjudicate` stage asks the LLM about each one:
+
+```sh
+cargo run -p podling-cli -- run --episode examples/titanic/episode-ollama.toml
+```
+
+`verdicts.json` holds one verdict per Contested claim: which side the sources favour
+(`supporting`, `contradicting` or `unresolved`), a short explanation without
+quotations, and the evidence it rests on. The script then gives both accounts and
+explains the disagreement, without stating either side as settled. The verdict never
+changes the claim's status, and it quotes nothing.
+
+It costs one LLM request per Contested claim, plus one retry if the reply is
+rejected; with nothing Contested (always the case without `[nli]`) there is none. A
+reply still rejected after the retry becomes an `unresolved` verdict that records why
+(`fallback`), so a weak model can't make the adjudicator take a side.

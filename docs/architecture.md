@@ -1,13 +1,13 @@
 # Architecture
 
-> **Status:** current as of 2026-10-01. It covers Phase 1 (core contracts), the
+> **Status:** current as of 2026-10-04. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes, Phase 2 (the OpenAI-compatible LLM provider) and its
 > scrutinise fixes (unreferenced-quotation check, claim grounding, script input
 > size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
-> can name things from the title and headings, and Phase 3 (embeddings and NLI
-> in the claim ledger).
+> can name things from the title and headings, Phase 3 (embeddings and NLI
+> in the claim ledger), and Phase 4 (the Contested-claim adjudicator).
 
-This document describes the state after Phase 3. Where the design
+This document describes the state after Phase 4. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
 
 ## Crates
@@ -37,7 +37,9 @@ needs concurrency, such as parallel TTS or streaming.
  [cluster_claims] ► Vec<Claim>     paraphrases merged: mutual NLI entailment, equal numbers
  [score_stances] ─► Vec<Claim>     other groups' sentences checked by NLI: Supports / Contradicts
  ledger ─────────► Ledger          classify(): status from distinct independence groups
- script ─────────► Script          LLM sees each claim's id, text and status, and numbered
+ adjudicate ─────► Verdicts        one LLM call per Contested claim: which side the sources
+                                   favour, or Unresolved; none when nothing is Contested
+ script ─────────► Script          LLM sees each claim's id, text, status and verdict, and numbered
                                    sentences; returns QuoteRef { chunk, sentence }
                                    and writes {{quote:N}} in the turn text where the quote goes;
                                    Quote::from_document copies the words and the stage fills the
@@ -48,8 +50,9 @@ needs concurrency, such as parallel TTS or streaming.
 [`pipeline::run`](../crates/podling-core/src/pipeline.rs) calls the stages in
 order. The two bracketed ones run only when the episode has both `[embedding]`
 and `[nli]` (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli));
-without them the run has the same six stages, cache keys and artifact bodies as
-before Phase 3. Each call goes through
+without them nothing can be Contested, so `adjudicate` makes no call and writes an
+empty `verdicts.json`, and the other artifacts' bodies are byte for byte what they were
+before Phase 3 (only the envelope's `schema_version` has moved on). Each call goes through
 [`stage::cached`](../crates/podling-core/src/stage.rs), which opens a
 `tracing` span `stage{id, version}`, logs `cache_hit` and `elapsed_ms`, and
 adds a `StageRecord` to the `RunReport`. Every artifact is written as
@@ -75,11 +78,12 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
   ([`embed_checked`](../crates/podling-core/src/plugin/embedding.rs),
   [`score_checked`](../crates/podling-core/src/plugin/nli.rs)).
 
-Both LLM stages call the model through
+All three LLM stages call the model through
 [`complete_validated`](../crates/podling-core/src/plugin/llm.rs). If a reply fails
 those checks, the model is asked once more with the reason appended to the
 instructions. A second failure is the error, so a stage makes at most two calls per
-chunk or script. Transport failures are not retried there, because the provider
+chunk, script or Contested claim. The adjudicator alone turns that error into a
+verdict instead of failing (see [Adjudicating Contested claims](#adjudicating-contested-claims)). Transport failures are not retried there, because the provider
 has its own policy (below).
 
 `pipeline::run` also fails closed if two fetched documents share an id but
@@ -129,8 +133,10 @@ and are still cache hits.
    fingerprint holds the base URL, model, temperature, max output tokens and a
    request-layout version, and never the API key, so rotating a key keeps the cache.
 4. **You changed a prompt or the shape of an LLM input.** Bump
-   [`PROMPT_VERSION`](../crates/podling-core/src/plugin/llm.rs). Both LLM stages
-   put it in their config fingerprint next to the instruction text.
+   [`PROMPT_VERSION`](../crates/podling-core/src/plugin/llm.rs). `extract_claims`
+   and `script` put it in their config fingerprint next to the instruction text.
+   The adjudicator has its own `ADJUDICATE_PROMPT_VERSION`, so changing its prompt
+   doesn't re-run claim extraction.
 5. **You changed an embedding or NLI provider's behaviour.** Rule 3 applies to
    them too: `EmbeddingProvider::fingerprint()` and `NliProvider::fingerprint()`
    are in both grounding stages' cache keys. The fakes carry a `version` field to
@@ -163,7 +169,6 @@ Deferred to later phases:
 - TTS and ASR provider traits.
 - MCP source connectors.
 - PDF ingestion (Docling / pdfium).
-- A Contested-claim adjudicator: the next phase.
 - Replacing the lexical grounding check in `extract_claims` with an NLI check
   (see the grounding check below).
 
@@ -314,6 +319,45 @@ is a `Config` error before any stage runs. A relative `model_dir` resolves again
 episode file's directory, and a missing model file is one error line naming the
 `hf download` command.
 
+## Adjudicating Contested claims
+
+A Contested claim has evidence from at least one independence group against it.
+[`adjudicate`](../crates/podling-core/src/stages/adjudicate.rs) asks the LLM which
+side the sources favour, so the script can explain the disagreement instead of
+only reporting it. It writes one [`Verdict`](../crates/podling-types/src/verdict.rs)
+per Contested claim to `verdicts.json`:
+- `favours`: `supporting`, `contradicting` or `unresolved`. The prompt makes
+  `unresolved` the default and forbids outside knowledge.
+- `explanation`: one or two plain sentences, at most 600 characters, with no
+  quotation marks, so quoted words still come only from source spans.
+- `cites`: the evidence the verdict rests on, as `EvidenceRef { chunk, stance,
+  premise }`. The model sees the evidence numbered, with each passage (the NLI
+  premise, the merged wording, or else the chunk) and its source's title, and
+  cites by number. The stage checks every number and requires a cite from each
+  side the evidence has.
+- `fallback`: set only when the stage gave up on the model (below).
+
+**Status is untouched.** The verdict sits next to the ledger; `ClaimStatus` still
+comes only from `classify()`, and a claim the sources favour is still Contested.
+
+**Cost bound.** One request per Contested claim, plus at most one retry when the
+reply is rejected. With no Contested claims (every run without `[nli]`) there is no
+request at all. Only the Contested claims and their passages are in the cache key,
+so editing anything else leaves the verdicts cached.
+
+**Fallback.** A reply that is still rejected after the retry (bad JSON, an unknown
+number, a missing side, a quotation mark, a favoured side with no cite) becomes an
+`Unresolved` verdict citing the first piece of evidence on each side, with the
+rejection reason in `fallback`. The stage never picks a side the model didn't
+argue. A transport failure (the server down, a timeout) fails the stage instead,
+so it is never cached as a verdict.
+
+**In the script.** The script request's ledger entry for a judged claim carries
+`verdict: { favours, explanation }`, without the evidence references (whose chunk
+ids a small model once mistook for claim ids). The prompt says to give both
+accounts, say which side the sources favour or that it is unresolved, explain
+why, and never state either side as settled.
+
 ## Why a claim ledger, not debating agents
 
 Agents that "argue it out" produce outcomes that depend on prompts and
@@ -324,7 +368,8 @@ sampling, and you can't audit them afterwards. The ledger makes trust
 - It counts distinct *independence groups*, not documents. Syndicated copies of one report
   therefore never look like corroboration.
 - An LLM is needed only where judgement really is required: extracting
-  claims, writing the script, and (later) adjudicating Contested claims. The NLI
+  claims, writing the script, and adjudicating Contested claims, where it adds a
+  verdict but never changes the status. The NLI
   model is not a judge of status either: it produces scored evidence, and fixed
   thresholds turn scores into stances.
 
