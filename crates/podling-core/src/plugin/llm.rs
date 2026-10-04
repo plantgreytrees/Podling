@@ -1,7 +1,7 @@
 //! Text-generation providers and the output shapes they must produce.
 
 use podling_types::{
-    ChunkId, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Speaker, SpeakerId, Stance,
+    ChunkId, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Speaker, SpeakerId, Stance, Verdicts,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -17,7 +17,9 @@ use crate::text::sentences;
 ///    instead of the quoted words.
 /// 3: the script request's ledger lists each claim's id, text and status
 ///    ([`LedgerClaim`]), without evidence.
-pub const PROMPT_VERSION: u32 = 3;
+/// 4: a Contested claim's ledger entry carries the adjudicator's verdict
+///    ([`LedgerVerdict`]).
+pub const PROMPT_VERSION: u32 = 4;
 
 /// Version of the adjudicator's prompt and input shape, in its cache key only.
 /// Kept apart from [`PROMPT_VERSION`] so a change to the adjudicator doesn't
@@ -82,11 +84,23 @@ pub struct LedgerClaim {
     pub id: ClaimId,
     pub text: String,
     pub status: ClaimStatus,
+    /// The adjudicator's verdict, on Contested claims only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<LedgerVerdict>,
+}
+
+/// A verdict as the script model sees it. Its evidence references are left
+/// out for the same reason the claim's evidence is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerVerdict {
+    pub favours: Favours,
+    pub explanation: String,
 }
 
 impl LedgerClaim {
-    /// The ledger's claims, in ledger order.
-    pub fn from_ledger(ledger: &Ledger) -> Vec<Self> {
+    /// The ledger's claims, in ledger order, each with its verdict if it has
+    /// one.
+    pub fn from_ledger(ledger: &Ledger, verdicts: &Verdicts) -> Vec<Self> {
         ledger
             .entries()
             .iter()
@@ -94,6 +108,10 @@ impl LedgerClaim {
                 id: entry.claim.id().clone(),
                 text: entry.claim.text().to_owned(),
                 status: entry.status.clone(),
+                verdict: verdicts.get(entry.claim.id()).map(|v| LedgerVerdict {
+                    favours: v.favours(),
+                    explanation: v.explanation().to_owned(),
+                }),
             })
             .collect()
     }
@@ -275,7 +293,10 @@ impl FakeLlm {
                 } else {
                     host.clone()
                 },
-                text: format!("{lead}: {}", entry.text),
+                text: match &entry.verdict {
+                    Some(verdict) => format!("{lead}: {} {}", entry.text, verdict.explanation),
+                    None => format!("{lead}: {}", entry.text),
+                },
                 emotion,
                 citations: vec![entry.id.clone()],
                 quotes: vec![],
@@ -364,7 +385,7 @@ impl LlmProvider for FakeLlm {
         // Bump when the fake's behaviour changes.
         // 3: the opening turn says `{{quote:0}}` instead of typing the sentence.
         // 4: answers `AdjudicateClaim`.
-        json!({ "provider": "fake", "version": 4 })
+        json!({ "provider": "fake", "version": 5 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
@@ -435,7 +456,7 @@ mod tests {
         }]);
         let input = json!({
             "topic": "Tunguska",
-            "ledger": LedgerClaim::from_ledger(&ledger),
+            "ledger": LedgerClaim::from_ledger(&ledger, &Verdicts::default()),
             "sources": sources,
         });
 

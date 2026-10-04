@@ -105,6 +105,7 @@ pub fn run_with_llm(
         topic: spec.topic.clone(),
         target_minutes: spec.target_minutes,
         ledger,
+        verdicts,
         chunks: claim_input.chunks,
         documents,
     };
@@ -130,7 +131,7 @@ pub fn run_with_llm(
     write(out_dir, ArtifactKind::Chunks, &script_input.chunks)?;
     write(out_dir, ArtifactKind::Claims, &claims)?;
     write(out_dir, ArtifactKind::Ledger, &script_input.ledger)?;
-    write(out_dir, ArtifactKind::Verdicts, &verdicts)?;
+    write(out_dir, ArtifactKind::Verdicts, &script_input.verdicts)?;
     write(out_dir, ArtifactKind::Script, &analyse_input.script)?;
     write(out_dir, ArtifactKind::Analysis, &analysis)?;
     Ok(report)
