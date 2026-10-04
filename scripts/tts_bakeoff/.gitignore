@@ -1,0 +1,6 @@
+# Bake-off outputs, downloaded models and voice clips: never committed.
+.venv/
+out/
+.models/
+voices/
+__pycache__/
