@@ -33,6 +33,8 @@ units:
         - scripts/tts_bakeoff/bakeoff.py
         - scripts/tts_bakeoff/README.md
         - scripts/tts_bakeoff/.gitignore
+        - scripts/tts_bakeoff/uv.lock              # scope correction: `uv sync` writes it
+        - scripts/tts_bakeoff/fixtures/            # scope correction: the 96-word example sources give a <1 min script
         - docs/plans/phase5-tts-audio.md
     tooling: { implementer: implementer, gates: [dependency-auditor], skills: [], guards: [], mcp: [] }
   - id: 2
