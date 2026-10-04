@@ -168,13 +168,36 @@ Depends on: ground-claims-stage
 
 ### Step 4 — live-check (., rust, normal)
 Depends on: pipeline-wiring
-- [ ] 4.1 Symlink the NLI weights into the worktree (`examples/tunguska/models/nli-deberta-v3-base`) and run `podling run --episode examples/tunguska/episode-ollama.toml` twice from a cold cache, then once warm. Record in this plan: exit code, the `ground_claims` timing, pairs, and dropped/rejected counts with each rejected claim's text and entailment. Judge each rejection as a true or false negative. Also run the ignored test from 2.5. → accept: exits 0 with no `error` in analysis.json; warm run shows `ground_claims` hit and the same counts; any false negative is recorded with its score
+- [x] 4.1 Symlink the NLI weights into the worktree (`examples/tunguska/models/nli-deberta-v3-base`) and run `podling run --episode examples/tunguska/episode-ollama.toml` twice from a cold cache, then once warm. Record in this plan: exit code, the `ground_claims` timing, pairs, and dropped/rejected counts with each rejected claim's text and entailment. Judge each rejection as a true or false negative. Also run the ignored test from 2.5. → accept: exits 0 with no `error` in analysis.json; warm run shows `ground_claims` hit and the same counts; any false negative is recorded with its score
 
 ### Step 5 — docs (., markdown, normal)
 Depends on: live-check
 - [x] 5.1 `docs/architecture.md`: add `ground_claims` to the stage diagram (`:36`). Rewrite the grounding-check paragraph (`:245`), which currently ends "wiring it into this check is a follow-up", to describe the lexical pre-filter plus NLI grounding. Remove the "Replacing the lexical grounding check" bullet (`:167`). Add `ground_claims` to bump rule 5 (`:134`). → accept: every cited path and symbol exists
 - [x] 5.2 `docs/handoff.md:54`: remove the "NLI grounding in extraction" follow-up and record the known misses: hedge removal ("almost burned" → "burned" scored 0.994) and a figure moved within the chunk (0.966). → accept: section updated
 - [x] 5.3 `README.md` / `examples/tunguska/episode-ollama.toml` comment: one line saying that `[nli]` also drops claims their own chunk doesn't entail. → accept: present
+
+## Live results (2026-10-04)
+
+`examples/tunguska/episode-ollama.toml` (llama3.1:8b and nomic-embed-text on Ollama,
+CPU only; DeBERTa-v3-base on CPU), with `timeout_secs` raised for the slow CPU server.
+
+| Run | Binary | Exit | `ground_claims` | Kept / dropped / rejected | analysis.json |
+|---|---|---|---|---|---|
+| 1, cold | `be10c28` | 0 | miss, 3.8 s, 34 pairs | 9 / 0 / 0 | 1 info, 0 error |
+| 2, cold | `be10c28` to the ledger, then `437e530` | 0 | miss, 34 pairs (v1 and again as v2) | 9 / 0 / 0 | 1 info, 0 error |
+| 3, warm | `437e530` | 0 | hit | 9 / 0 / 0 | 1 info, 0 error |
+
+- No rejection to judge: all 9 kept claims are faithful to their chunk, so there is no
+  false negative. Tunguska holds no distortion; the offline `distortion` fixture and the
+  ignored live test cover a rejection.
+- The window cap from `scrutinise-nli-extraction-grounding` changed nothing here (no
+  Tunguska sentence is over 120 words): after the `ground_claims`/`score_stances`
+  VERSION bump both stages re-ran and the ledger was a cache hit.
+- Run 2's `script` stage first timed out twice at 900 s while another job saturated the
+  CPU (load average about 50); with a 3000 s timeout it took 1151 s and passed. The run
+  that timed out had already finished every grounding stage. Run 3's script is
+  byte-identical to run 2's.
+- The warm run prints `grounding: 0 claim(s) dropped, 0 evidence item(s) rejected`.
 
 ## Sequencing
 Pure refactor first, so the window helper is proven by score_stances' existing tests. Then
