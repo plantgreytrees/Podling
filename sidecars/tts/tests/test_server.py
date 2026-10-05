@@ -14,8 +14,9 @@ from typing import Any
 
 import pytest
 
-from podling_tts.backends import BackendError
+from podling_tts.backends import ADAPTER_VERSION, BackendError
 from podling_tts.backends.fake import FakeBackend
+from podling_tts.backends.qwen import QwenBackend
 from podling_tts.protocol import PREFIX, PROTOCOL
 from podling_tts.server import Worker, build_server
 
@@ -115,11 +116,34 @@ def read_f32_wav(path: Path) -> tuple[int, int]:
 # 3.1 / 3.2: health, synthesis, validation
 
 
+def test_a_local_model_dirs_weights_follow_its_files(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}")
+    (model / "model.safetensors").write_bytes(b"\x00" * 16)
+    (model / "notes.txt").write_text("not a weight")
+    first = QwenBackend(model_dir=str(model)).weights()
+    assert first.startswith("sha256:")
+    assert first != "model"
+
+    (model / "notes.txt").write_text("still not a weight")
+    assert QwenBackend(model_dir=str(model)).weights() == first
+
+    (model / "model.safetensors").write_bytes(b"\x01" * 16)
+    assert QwenBackend(model_dir=str(model)).weights() != first
+
+
+def test_a_model_dir_without_weights_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(BackendError):
+        QwenBackend(model_dir=str(tmp_path)).weights()
+
+
 def test_health_reports_protocol_backend_and_capabilities(client: Client) -> None:
     status, body = client.request("GET", "/health")
     assert status == 200
     assert body["protocol"] == PROTOCOL
     assert body["backend"] == "fake"
+    assert body["adapter"] == ADAPTER_VERSION
     assert body["capabilities"] == {
         "multi_speaker": False,
         "max_chunk_secs": 120,

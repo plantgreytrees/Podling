@@ -18,6 +18,10 @@ from typing import Any
 
 from podling_tts.protocol import SynthesizeRequest, SynthesizeResult, Turn
 
+# Bump when an adapter changes what a model is asked to say or how (`in_line`, the
+# per-turn seed, clip rendering), so Podling's cache stops reusing the old audio.
+ADAPTER_VERSION = 1
+
 
 class BackendError(RuntimeError):
     """The model failed or cannot run; the server answers 503 with the message."""

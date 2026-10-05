@@ -8,6 +8,7 @@ assembler places it). Needs the `qwen` extra and a CUDA GPU.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,32 @@ def snapshot(model: str) -> Path:
         ) from err
 
 
+def digest(model_dir: Path) -> str:
+    """`sha256:<hex>` over a local model's weight and config files, names included.
+
+    A `--model-dir` has no commit to name it, and its directory name stays the same
+    when the weights inside change, so the files themselves are hashed (once).
+    """
+    files = sorted(
+        p
+        for pattern in ("*.safetensors", "*.json")
+        for p in model_dir.rglob(pattern)
+        if p.is_file()
+    )
+    if not files:
+        raise BackendError(f"{model_dir} holds no *.safetensors or *.json files")
+    h = hashlib.sha256()
+    for path in files:
+        name = path.relative_to(model_dir).as_posix().encode()
+        h.update(len(name).to_bytes(8, "little"))
+        h.update(name)
+        h.update(path.stat().st_size.to_bytes(8, "little"))
+        with path.open("rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+    return f"sha256:{h.hexdigest()}"
+
+
 class QwenBackend(Backend):
     name = "qwen"
     model = MODEL
@@ -49,14 +76,20 @@ class QwenBackend(Backend):
 
     def __init__(self, model_dir: str | None = None, language: str = "English"):
         self.path = Path(model_dir) if model_dir else snapshot(MODEL)
+        self.local = model_dir is not None
         self.language = language
+        self._weights: str | None = None
         self._model: Any = None
         # Voice-clone prompts are cached per reference clip and transcript.
         self._prompts: dict[tuple[Path, str], Any] = {}
 
     def weights(self) -> str:
-        # A hub snapshot directory is named after the commit it holds.
-        return self.path.name
+        if not self.local:
+            # A hub snapshot directory is named after the commit it holds.
+            return self.path.name
+        if self._weights is None:
+            self._weights = digest(self.path)
+        return self._weights
 
     @property
     def loaded(self) -> bool:

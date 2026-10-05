@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from podling_tts.backends import Backend, BackendError, make_backend
+from podling_tts.backends import ADAPTER_VERSION, Backend, BackendError, make_backend
 from podling_tts.protocol import PREFIX, PROTOCOL, ProtocolError, parse_synthesize
 
 HOST = "127.0.0.1"
@@ -55,6 +55,7 @@ class Worker:
             "backend": b.name,
             "model": b.model,
             "weights": b.weights(),
+            "adapter": ADAPTER_VERSION,
             "loaded": b.loaded,
             "capabilities": b.capabilities(),
         }
