@@ -140,6 +140,13 @@ expression: schema
           "format": "uint64",
           "minimum": 0
         },
+        "encoded": {
+          "description": "The compressed copy asked for by `[mix] encode`, relative to the\noutput directory, e.g. `episode.opus`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "integrated_lufs": {
           "description": "EBU R128 integrated loudness, in LUFS (target −16).",
           "type": "number",

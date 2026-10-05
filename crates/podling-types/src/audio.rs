@@ -122,6 +122,10 @@ pub struct EpisodeAudio {
     pub integrated_lufs: f64,
     /// True peak in dBTP (at most −1).
     pub true_peak_dbtp: f64,
+    /// The compressed copy asked for by `[mix] encode`, relative to the
+    /// output directory, e.g. `episode.opus`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoded: Option<PathBuf>,
 }
 
 /// Credit for one voice: the clip it was cloned from and its licence.

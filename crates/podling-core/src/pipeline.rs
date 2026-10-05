@@ -9,12 +9,13 @@ use std::path::{Path, PathBuf};
 
 use podling_types::{
     ArtifactKind, AsrConfig, AudioManifest, Document, DocumentId, Envelope, EpisodeAudio,
-    EpisodeSpec, Finding, PerMille, Script, SourceRef, Speaker, TtsConfig,
+    EpisodeSpec, Finding, MixConfig, PerMille, Script, SourceRef, Speaker, TtsConfig,
 };
 use serde::Serialize;
 
-use crate::audio::{Pcm, WavFormat};
+use crate::audio::WavFormat;
 use crate::cache::{BlobStore, DiskCache};
+use crate::encode::Encoder;
 use crate::error::{CoreError, Result};
 use crate::plugin::{
     AsrProvider, LlmProvider, build_analysers, build_asr, build_grounding, build_llm,
@@ -25,7 +26,7 @@ use crate::stages::assemble::{SAMPLE_RATE, assemble};
 use crate::stages::{
     Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
     GroundClaims, GroundInput, Ingest, ScoreStances, ScriptInput, StanceInput, Takes, Verification,
-    Voices, WriteScript, synthesize_script, verify_audio,
+    Voices, WriteScript, synthesize_overlays, synthesize_script, verify_audio,
 };
 
 /// The episode's audio file, in the output directory.
@@ -275,6 +276,7 @@ struct AudioPlan<'a> {
     /// transcript, so a fully cached run never loads it.
     asr: Box<dyn AsrProvider>,
     takes: Takes,
+    mix: MixConfig,
 }
 
 /// Whisper's default limit, used for the fake recogniser too.
@@ -329,6 +331,7 @@ impl<'a> AudioPlan<'a> {
             voices: Voices::resolve(&spec.cast, base_dir)?,
             asr,
             takes,
+            mix: spec.mix.clone().unwrap_or_default(),
         })
     }
 
@@ -348,13 +351,13 @@ impl<'a> AudioPlan<'a> {
             Some(cache) => cache.blobs(),
             None => BlobStore::new(out_dir.join(".blobs")),
         };
-        let chunks = {
+        let (chunks, overlays) = {
             let mut tts = build_tts(self.tts, &self.profiles)?;
             let verification = Verification {
                 asr: self.asr.as_mut(),
                 takes: self.takes,
             };
-            synthesize_script(
+            let chunks = synthesize_script(
                 script,
                 &self.voices,
                 tts.as_mut(),
@@ -362,18 +365,31 @@ impl<'a> AudioPlan<'a> {
                 &blobs,
                 cache,
                 report,
-            )?
+            )?;
+            let overlays =
+                synthesize_overlays(script, &self.voices, tts.as_mut(), &blobs, cache, report)?;
+            (chunks, overlays)
             // `tts` is dropped at the end of this block: a sidecar worker is
             // stopped and the GPU freed before assembly starts.
         };
-        let (records, pcms): (Vec<_>, Vec<Pcm>) =
-            chunks.into_iter().map(|c| (c.record, c.pcm)).unzip();
+        let records: Vec<_> = chunks.iter().map(|c| c.record.clone()).collect();
         let findings = verify_audio::findings(&records, self.takes.max_wer_pm);
-        let episode = assemble(&pcms)?;
+        let episode = assemble(script, &chunks, &overlays, &self.mix.gaps_ms)?;
+        // The chunks' audio isn't needed again; free it before the WAV
+        // is encoded.
+        drop(chunks);
 
         let path = out_dir.join(EPISODE_WAV);
         let wav = episode.pcm.to_wav(WavFormat::Int16)?;
         fs::write(&path, wav).map_err(|err| CoreError::io(&path, err))?;
+        let encoded = match self.mix.encode {
+            Some(format) => {
+                let encoded = Encoder::new(format).encode(&path, out_dir)?;
+                tracing::info!(path = %encoded.display(), "episode encoded");
+                encoded.file_name().map(PathBuf::from)
+            }
+            None => None,
+        };
         let manifest = AudioManifest {
             sample_rate: SAMPLE_RATE,
             chunks: records,
@@ -382,6 +398,7 @@ impl<'a> AudioPlan<'a> {
                 duration_ms: (episode.pcm.seconds() * 1000.0).round() as u64,
                 integrated_lufs: episode.loudness.integrated_lufs,
                 true_peak_dbtp: episode.loudness.true_peak_dbtp,
+                encoded,
             },
             voices: self.voices.credits().to_vec(),
         };

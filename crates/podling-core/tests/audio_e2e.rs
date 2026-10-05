@@ -103,8 +103,11 @@ fn the_fake_episode_becomes_a_loudness_normalised_wav() {
         (loudness.integrated_lufs - TARGET_LUFS).abs() <= 0.5,
         "{loudness:?}"
     );
+    assert!(loudness.true_peak_dbtp <= -1.0, "{loudness:?}");
 
     let manifest = manifest(&out);
+    assert!(manifest.episode.true_peak_dbtp <= -1.0);
+    assert_eq!(manifest.episode.encoded, None);
     let script: Value =
         serde_json::from_str(&fs::read_to_string(out.join("script.json")).unwrap()).unwrap();
     let turns = script["body"]["turns"].as_array().unwrap().len();
@@ -206,7 +209,9 @@ fn a_misheard_chunk_is_regenerated_and_its_second_take_kept() {
 
     let manifest = manifest(&out);
     let chunks = manifest.chunks.len();
-    assert_eq!(synth(&report).len(), chunks + 1, "one regeneration");
+    // One regeneration, and the script's one "mm-hm" over another turn
+    // (made on its own, never transcribed).
+    assert_eq!(synth(&report).len(), chunks + 2, "one regeneration");
     assert_eq!(transcribed(&report).len(), chunks + 1);
     let first = &manifest.chunks[0];
     assert_eq!((first.take, first.verified), (1, true), "take 2 was kept");

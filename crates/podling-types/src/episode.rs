@@ -42,6 +42,9 @@ pub struct EpisodeSpec {
     /// Transcribes each synthesised chunk to check it against the script.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asr: Option<AsrConfig>,
+    /// Gaps between turns and an optional compressed copy. Needs `[tts]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mix: Option<MixConfig>,
 }
 
 /// What kind of episode to make. Only non-fiction exists today; fiction modes
@@ -275,6 +278,88 @@ fn default_takes() -> u8 {
 
 fn default_max_retries() -> u8 {
     2
+}
+
+/// How the synthesised chunks are put together into one episode file.
+/// Applies to every TTS backend, so it is a section of its own rather than
+/// part of `[tts]` (whose fields depend on its `kind`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MixConfig {
+    /// Silence before a turn, by the turn's pace.
+    #[serde(default)]
+    pub gaps_ms: Gaps,
+    /// Also writes the episode in a compressed format, through `ffmpeg`
+    /// (which must be on `PATH`). `episode.wav` is always written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encode: Option<Encode>,
+}
+
+/// Milliseconds of silence before a turn, by its pace; `interrupt` is how far
+/// an interrupting turn overlaps the one before it. Each key is optional.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Gaps {
+    #[serde(default = "Gaps::default_quick")]
+    pub quick: u16,
+    #[serde(default = "Gaps::default_normal")]
+    pub normal: u16,
+    #[serde(default = "Gaps::default_beat")]
+    pub beat: u16,
+    #[serde(default = "Gaps::default_long_pause")]
+    pub long_pause: u16,
+    #[serde(default = "Gaps::default_interrupt")]
+    pub interrupt: u16,
+}
+
+impl Gaps {
+    fn default_quick() -> u16 {
+        120
+    }
+    fn default_normal() -> u16 {
+        300
+    }
+    fn default_beat() -> u16 {
+        600
+    }
+    fn default_long_pause() -> u16 {
+        1000
+    }
+    fn default_interrupt() -> u16 {
+        150
+    }
+}
+
+impl Default for Gaps {
+    fn default() -> Self {
+        Self {
+            quick: Self::default_quick(),
+            normal: Self::default_normal(),
+            beat: Self::default_beat(),
+            long_pause: Self::default_long_pause(),
+            interrupt: Self::default_interrupt(),
+        }
+    }
+}
+
+/// A compressed format for the episode, beside `episode.wav`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Encode {
+    /// Ogg Opus, 64 kbit/s: small, and what podcast apps play natively.
+    Opus,
+    /// MP3, VBR around 130 kbit/s: plays everywhere.
+    Mp3,
+}
+
+impl Encode {
+    /// The file extension, which is also ffmpeg's name for the container.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Encode::Opus => "opus",
+            Encode::Mp3 => "mp3",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

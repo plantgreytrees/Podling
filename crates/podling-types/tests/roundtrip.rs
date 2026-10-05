@@ -139,6 +139,7 @@ fn artifacts_roundtrip() {
             duration_ms: 600_000,
             integrated_lufs: -16.02,
             true_peak_dbtp: -1.4,
+            encoded: Some("episode.opus".into()),
         },
         voices: vec![VoiceCredit {
             speaker: SpeakerId("host".into()),

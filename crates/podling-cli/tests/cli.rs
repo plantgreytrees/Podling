@@ -102,10 +102,17 @@ fn second_run_of_the_example_is_all_cache_hits() {
     let first = run();
     let stdout = String::from_utf8_lossy(&first.get_output().stdout).into_owned();
     let first = stage_rows(stdout.as_bytes());
-    let chunks = first.iter().filter(|(id, _)| id == SYNTH_STAGE).count();
+    let chunks = first
+        .iter()
+        .filter(|(id, _)| id == TRANSCRIBE_STAGE)
+        .count();
     assert!(chunks > 0, "the example has [tts]: {stdout}");
-    // Each chunk is synthesised, then transcribed to check it.
-    assert_eq!(first.len(), STAGES.len() + 2 * chunks);
+    // Each chunk is synthesised, then transcribed to check it. The fake
+    // script's one "mm-hm" over another speaker's turn is then synthesised
+    // on its own, and not transcribed.
+    let synthesised = first.iter().filter(|(id, _)| id == SYNTH_STAGE).count();
+    assert_eq!(synthesised, chunks + 1, "{first:?}");
+    assert_eq!(first.len(), STAGES.len() + 2 * chunks + 1);
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
     let wav = out.join("episode.wav");
     assert!(
@@ -119,6 +126,7 @@ fn second_run_of_the_example_is_all_cache_hits() {
         .iter()
         .copied()
         .chain(std::iter::repeat_n([SYNTH_STAGE, TRANSCRIBE_STAGE], chunks).flatten())
+        .chain([SYNTH_STAGE])
         .map(|s| (s.to_string(), "hit".to_string()))
         .collect();
     assert_eq!(second, expected);
@@ -129,8 +137,9 @@ fn second_run_of_the_example_is_all_cache_hits() {
         .assert()
         .success()
         .stdout(
-            predicate::str::starts_with(format!("{} entries,", STAGES.len() + 2 * chunks))
-                .and(predicate::str::contains(format!("; {chunks} audio blobs"))),
+            predicate::str::starts_with(format!("{} entries,", STAGES.len() + 2 * chunks + 1)).and(
+                predicate::str::contains(format!("; {} audio blobs", chunks + 1)),
+            ),
         );
     podling(&cache).args(["cache", "clear"]).assert().success();
     podling(&cache)

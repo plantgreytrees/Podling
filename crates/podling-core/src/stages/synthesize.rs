@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use podling_types::{
-    BeatKind, CastMember, ChunkRecord, ContentHash, NonverbalAt, PerMille, Script, SpeakerId,
-    VoiceCredit, VoiceRef,
+    BeatKind, CastMember, ChunkRecord, ContentHash, Emotion, NonverbalAt, NonverbalKind, PerMille,
+    Script, SpeakerId, VoiceCredit, VoiceRef,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -312,6 +312,8 @@ impl Stage for SynthesizeChunk<'_> {
 pub struct SynthesizedChunk {
     pub record: ChunkRecord,
     pub pcm: Pcm,
+    /// What the chunk speaks: which turn, or part of one, each piece is.
+    pub pieces: Vec<Piece>,
     /// Where each of the chunk's pieces is in `pcm`, when the backend said.
     pub turn_spans: Option<Vec<Range<usize>>>,
 }
@@ -515,10 +517,95 @@ pub fn synthesize_script(
                 verified: best.passed,
             },
             pcm: best.pcm,
+            pieces: planned.pieces.clone(),
             turn_spans,
         });
     }
     Ok(chunks)
+}
+
+/// A sound made over, before or after a turn by someone other than the turn's
+/// speaker, rendered on its own for the assembler's second track.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverlayClip {
+    /// The turn it goes with.
+    pub turn: usize,
+    pub at: NonverbalAt,
+    pub pcm: Pcm,
+}
+
+/// Renders the sounds [`spoken`] leaves out of the chunks: those over a turn,
+/// and those made by someone other than the turn's speaker.
+///
+/// Each backchannel ("mm-hm") becomes a one-turn chunk of its own in that
+/// speaker's voice, cached like any other take, so a rerun makes it no
+/// more. It is not checked by speech recognition: a two-word response is
+/// below what a recogniser hears reliably, and it carries no facts. A laugh,
+/// chuckle or sigh has no words to send, and the protocol has no way to ask
+/// for a sound alone, so it is left out and logged.
+pub fn synthesize_overlays(
+    script: &Script,
+    voices: &Voices,
+    tts: &mut dyn TtsProvider,
+    blobs: &BlobStore,
+    cache: Option<&DiskCache>,
+    report: &mut RunReport,
+) -> Result<Vec<OverlayClip>> {
+    let synthesize = SynthesizeChunk::new(tts, voices, blobs);
+    // The same response by the same speaker is made once per run.
+    let mut made: BTreeMap<(SpeakerId, String), Pcm> = BTreeMap::new();
+    let mut clips = Vec::new();
+    for (index, turn) in script.turns().iter().enumerate() {
+        let apart = turn
+            .nonverbal
+            .iter()
+            .filter(|n| n.at == NonverbalAt::Over || n.by != turn.speaker);
+        for sound in apart {
+            let NonverbalKind::Backchannel { text } = &sound.kind else {
+                tracing::warn!(
+                    turn = index,
+                    by = %sound.by.0,
+                    kind = ?sound.kind,
+                    at = ?sound.at,
+                    "a sound with no words can only be made by its speaker, before or after \
+                     their own turn; left out"
+                );
+                continue;
+            };
+            let key = (sound.by.clone(), text.clone());
+            let pcm = match made.get(&key) {
+                Some(pcm) => pcm.clone(),
+                None => {
+                    let spoken = SpokenTurn::plain(sound.by.clone(), text, Emotion::Neutral);
+                    let input = ChunkInput {
+                        chunk: ChunkSpec {
+                            voices: voices.keys_for([&spoken])?,
+                            turns: vec![spoken],
+                            context: None,
+                        },
+                        take: 0,
+                        context_audio: ContextAudio::default(),
+                    };
+                    let result = cached(&synthesize, &input, cache, report)?;
+                    let bytes = blobs.get(&result.blob)?.ok_or_else(|| {
+                        CoreError::InvalidProviderOutput {
+                            stage: SynthesizeChunk::ID,
+                            message: format!("audio blob {} vanished during the run", result.blob),
+                        }
+                    })?;
+                    let pcm = Pcm::from_wav(&bytes)?;
+                    made.insert(key, pcm.clone());
+                    pcm
+                }
+            };
+            clips.push(OverlayClip {
+                turn: index,
+                at: sound.at,
+                pcm,
+            });
+        }
+    }
+    Ok(clips)
 }
 
 /// The speaker of every turn in `turns`, when there is only one.
