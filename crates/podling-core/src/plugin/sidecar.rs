@@ -117,6 +117,9 @@ pub struct Sidecar {
     port: u16,
     log: PathBuf,
     started: Instant,
+    /// The worker's descendants once it was ready, so `stop` can still find
+    /// them if the worker itself dies first.
+    tree: Descendants,
 }
 
 impl Sidecar {
@@ -162,6 +165,7 @@ impl Sidecar {
             port: 0,
             log,
             started,
+            tree: Descendants::default(),
         };
         tracing::info!(sidecar = name, pid = sidecar.pid(), "sidecar spawned");
 
@@ -195,9 +199,12 @@ impl Sidecar {
             }
         };
         sidecar.port = parse_ready(&line).map_err(|reason| sidecar.failure(&reason))?;
+        // By now a wrapper such as `uv run` has started the real worker.
+        sidecar.tree = Descendants::of(sidecar.pid());
         tracing::info!(
             sidecar = name,
             pid = sidecar.pid(),
+            children = sidecar.tree.len(),
             port = sidecar.port,
             elapsed_ms = started.elapsed().as_millis() as u64,
             "sidecar ready"
@@ -288,19 +295,36 @@ impl Sidecar {
     /// holding the GPU is the worker's child, and would outlive a wrapper
     /// that is killed. The tree stays in Podling's process group, so Ctrl-C
     /// in the terminal still reaches all of it.
+    ///
+    /// The worker may have died first (a crashed `uv run`), leaving the
+    /// process that holds the GPU adopted by init. Those are still reached
+    /// through the pidfds pinned when the worker reported ready.
     fn stop(&mut self) {
         let pid = self.pid();
-        if let Ok(Some(status)) = self.child.try_wait() {
-            self.log_exit(pid, status);
+        // `mem::take` moves the field out and leaves its `Default` behind:
+        // `stop` needs the tree by value while `self` stays borrowed.
+        let mut tree = std::mem::take(&mut self.tree);
+        let mut status = match self.child.try_wait() {
+            Ok(Some(status)) => Some(status),
+            _ => None,
+        };
+        if status.is_none() {
+            // Children started since ready can still be found by parent pid.
+            tree.extend(Descendants::of(pid));
+            terminate(&self.child);
+        } else if let Some(exited) = status.filter(|_| tree.running() == 0) {
+            self.log_exit(pid, exited);
             return;
+        } else {
+            tracing::warn!(
+                sidecar = %self.name,
+                pid,
+                processes = tree.running(),
+                "sidecar exited but processes it started still run; stopping them"
+            );
         }
-        // Found while the worker still runs: once it has exited, its
-        // children belong to init and can no longer be told apart.
-        let tree = Descendants::of(pid);
-        terminate(&self.child);
         tree.terminate();
         let deadline = Instant::now() + STOP_GRACE;
-        let mut status = None;
         while Instant::now() < deadline {
             if status.is_none() {
                 match self.child.try_wait() {
@@ -376,12 +400,36 @@ fn terminate(_: &Child) {
 
 /// The processes a worker started, and theirs, each pinned by a pidfd: a
 /// signal sent through it reaches that process or none, even if its pid has
-/// been reused since.
+/// been reused since, and it still names that process after init adopts it.
+///
+/// Known limits: a process is found only by a scan while its parent is
+/// still the worker's (at ready, and at stop if the worker still runs). So
+/// one started after ready by a worker that then dies, or one that
+/// double-forks away before the ready scan, is missed; the worker's own
+/// parent watch (`sidecars/tts/podling_tts/server.py`, `watch_parent`) is
+/// the fallback for those.
 #[cfg(target_os = "linux")]
+#[derive(Debug, Default)]
 struct Descendants(Vec<(u32, rustix::fd::OwnedFd)>);
 
 #[cfg(target_os = "linux")]
 impl Descendants {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Adds `more`, skipping a process already pinned. A pid is the same
+    /// process only while the pinned one still runs (a running process keeps
+    /// its pid), so exited entries are dropped first.
+    fn extend(&mut self, more: Self) {
+        self.0.retain(|(_, fd)| is_running(fd));
+        for (pid, fd) in more.0 {
+            if !self.0.iter().any(|&(pinned, _)| pinned == pid) {
+                self.0.push((pid, fd));
+            }
+        }
+    }
+
     /// Every live descendant of `root`, from one scan of `/proc`.
     fn of(root: u32) -> Self {
         use rustix::process::{Pid, PidfdFlags, pidfd_open};
@@ -433,14 +481,26 @@ impl Descendants {
         }
     }
 
-    /// How many are still running. A zombie has finished: it only waits for
-    /// its parent (by now init) to collect it.
+    /// How many are still running.
     fn running(&self) -> usize {
-        self.0
-            .iter()
-            .filter(|(pid, _)| proc_stat(*pid).is_some_and(|(state, _)| state != 'Z'))
-            .count()
+        self.0.iter().filter(|(_, fd)| is_running(fd)).count()
     }
+}
+
+/// Whether the process behind a pidfd still runs. Its pidfd becomes
+/// readable once it exits (a zombie has exited), and asking through the fd
+/// cannot mistake another process that reuses the pid for it.
+#[cfg(target_os = "linux")]
+fn is_running(fd: &rustix::fd::OwnedFd) -> bool {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let mut fds = [PollFd::new(fd, PollFlags::IN)];
+    let now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // An error says nothing about the process; count it as gone, so `stop`
+    // does not wait on it (it is signalled through the pidfd either way).
+    poll(&mut fds, Some(&now)).is_ok_and(|_| !fds[0].revents().contains(PollFlags::IN))
 }
 
 /// The state letter and parent pid in `/proc/<pid>/stat`. The command name
@@ -457,6 +517,7 @@ fn proc_stat(pid: u32) -> Option<(char, u32)> {
 
 /// Elsewhere only the worker itself is stopped.
 #[cfg(not(target_os = "linux"))]
+#[derive(Debug, Default)]
 struct Descendants;
 
 #[cfg(not(target_os = "linux"))]
@@ -464,6 +525,12 @@ impl Descendants {
     fn of(_: u32) -> Self {
         Self
     }
+
+    fn len(&self) -> usize {
+        0
+    }
+
+    fn extend(&mut self, _: Self) {}
 
     fn terminate(&self) {}
 
