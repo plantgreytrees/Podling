@@ -4,3 +4,8 @@ target/
 .claude/worktrees/
 # Downloaded model weights (see the example episodes for the command).
 examples/*/models/
+# The TTS worker's virtualenv and Python caches.
+sidecars/tts/.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
