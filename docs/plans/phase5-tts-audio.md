@@ -65,6 +65,12 @@ units:
         - crates/podling-types/tests/schema_snapshot.rs
         - crates/podling-types/tests/snapshots/
         - crates/podling-core/tests/fixtures/golden/
+        # widened in execution: the [tts] companion check sits next to build_grounding,
+        # and the core/CLI tests enumerate ArtifactKind
+        - crates/podling-core/src/plugin/mod.rs
+        - crates/podling-core/src/pipeline.rs
+        - crates/podling-core/tests/pipeline.rs
+        - crates/podling-cli/tests/cli.rs
     tooling: { implementer: implementer, gates: [code-reviewer, api-reviewer, idiom-reviewer],
                skills: [language-aware-planning], guards: [cargo fmt, cargo clippy, cargo test], mcp: [] }
   - id: 3
@@ -528,12 +534,12 @@ Depends on: none
 ### Step 2 — audio-contracts (., rust, normal)
 Tooling: implementer · gates code-reviewer, api-reviewer, idiom-reviewer · skills language-aware-planning · guards cargo fmt/clippy/test
 Depends on: tts-bakeoff
-- [ ] 2.1 Add `EpisodeSpec.cast: Vec<CastMember { id, name, role, voice: VoiceRef }>` (`#[serde(default)]`) → accept: an episode without `[[cast]]` parses unchanged; duplicate ids rejected.
-- [ ] 2.2 Add `VoiceRef { reference: PathBuf, transcript: String, licence: String }` with `deny_unknown_fields`; empty licence rejected → accept: unit test for the empty-licence error.
-- [ ] 2.3 Add `TtsConfig { Fake {}, Sidecar { sidecar: String, takes: u8, max_retries: u8 } }` and `AsrConfig { Fake {}, Whisper { model_dir: PathBuf, max_wer_pm: PerMille } }` (`PerMille` from Phase 3 keeps the config `Eq` and rejects > 1000); `[tts]` requires `[[cast]]` and `[asr]` (checked at build, a `Config` error) → accept: tests for each missing-companion error message.
-- [ ] 2.4 Add `crates/podling-types/src/audio.rs` with `TurnRange` (validated `try_from`), `AudioManifest { sample_rate, chunks: Vec<ChunkRecord>, episode: EpisodeAudio { path, duration_ms, integrated_lufs, true_peak_dbtp }, voices: Vec<VoiceCredit> }`, `ChunkRecord { id, turns: TurnRange, blob: ContentHash, seed, take, wer_pm: PerMille, quote_misses, verified }` → accept: roundtrip test.
-- [ ] 2.5 Add `ArtifactKind::Audio` (`audio.json`), register in `schema.rs`, bump `SCHEMA_VERSION` 3→4 → accept: `ArtifactKind::ALL` has 8 entries; schema export writes `audio.schema.json`.
-- [ ] 2.6 Accept the new insta snapshots and refresh golden fixtures → accept: `cargo test -p podling-types` and `cargo test -p podling-core` pass.
+- [x] 2.1 Add `EpisodeSpec.cast: Vec<CastMember { id, name, role, voice: VoiceRef }>` (`#[serde(default)]`) → accept: an episode without `[[cast]]` parses unchanged; duplicate ids rejected. *(`episode_without_audio_sections_is_unchanged`, `cast_ids_are_unique`; absent sections are not serialised, so `episode.json` keeps its shape.)*
+- [x] 2.2 Add `VoiceRef { reference: PathBuf, transcript: String, licence: String }` with `deny_unknown_fields`; empty licence rejected → accept: unit test for the empty-licence error. *(`a_voice_needs_a_licence_and_a_transcript`; an empty transcript is rejected too, since cloning needs it.)*
+- [x] 2.3 Add `TtsConfig { Fake {}, Sidecar { sidecar: String, takes: u8, max_retries: u8 } }` and `AsrConfig { Fake {}, Whisper { model_dir: PathBuf, max_wer_pm: PerMille } }` (`PerMille` from Phase 3 keeps the config `Eq` and rejects > 1000); `[tts]` requires `[[cast]]` and `[asr]` (checked at build, a `Config` error) → accept: tests for each missing-companion error message. *(`plugin::check_audio`, called by the pipeline next to `build_grounding` before any stage; also rejects `[asr]` without `[tts]` and `takes = 0`. Test `audio_sections_come_together`. Scope widened to `plugin/mod.rs` and `pipeline.rs` for this.)*
+- [x] 2.4 Add `crates/podling-types/src/audio.rs` with `TurnRange` (validated `try_from`), `AudioManifest { sample_rate, chunks: Vec<ChunkRecord>, episode: EpisodeAudio { path, duration_ms, integrated_lufs, true_peak_dbtp }, voices: Vec<VoiceCredit> }`, `ChunkRecord { id, turns: TurnRange, blob: ContentHash, seed, take, wer_pm: PerMille, quote_misses, verified }` → accept: roundtrip test. *(`artifacts_roundtrip`, `turn_ranges_are_never_empty`. Loudness is `f64`, so the manifest is `PartialEq` only; it is an output, never a cache key.)*
+- [x] 2.5 Add `ArtifactKind::Audio` (`audio.json`), register in `schema.rs`, bump `SCHEMA_VERSION` 3→4 → accept: `ArtifactKind::ALL` has 8 entries; schema export writes `audio.schema.json`. *(`schema_version_is_pinned`; CLI `schema_export_writes_one_parseable_file_per_kind` lists `audio`.)*
+- [x] 2.6 Accept the new insta snapshots and refresh golden fixtures → accept: `cargo test -p podling-types` and `cargo test -p podling-core` pass. *(Golden fixtures need no refresh: the test already normalises `schema_version`. It now also asserts no `audio.json` is written without `[tts]`; the core tests also gained `audio.json` exclusion and the CLI test, so scope widened to `crates/podling-core/tests/pipeline.rs` and `crates/podling-cli/tests/cli.rs`.)*
 
 ### Step 3 — tts-sidecar (., python, high)
 Tooling: implementer · gates code-reviewer, security-auditor, dependency-auditor

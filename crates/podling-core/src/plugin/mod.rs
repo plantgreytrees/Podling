@@ -14,10 +14,11 @@ pub mod openai;
 pub mod openai_embeddings;
 pub mod source;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use podling_types::{
-    AnalyserConfig, EmbeddingConfig, EpisodeSpec, LlmConfig, NliConfig, SourceSpec,
+    AnalyserConfig, EmbeddingConfig, EpisodeSpec, LlmConfig, NliConfig, SourceSpec, TtsConfig,
 };
 
 use crate::error::{CoreError, Result};
@@ -67,6 +68,38 @@ pub fn build_grounding(spec: &EpisodeSpec, base_dir: &Path) -> Result<Option<Gro
         _ => Err(CoreError::Config {
             message: "[embedding] and [nli] work together: set both, or neither".into(),
         }),
+    }
+}
+
+/// Checks the audio sections: `[[cast]]` ids are unique, and `[tts]` comes
+/// with a `[[cast]]` (the pinned voices) and an `[asr]` (to verify the audio).
+/// Like [`build_grounding`], a half configuration is reported before any
+/// stage runs.
+pub fn check_audio(spec: &EpisodeSpec) -> Result<()> {
+    let config = |message: &str| CoreError::Config {
+        message: message.into(),
+    };
+    let mut ids = BTreeSet::new();
+    for member in &spec.cast {
+        if !ids.insert(&member.id) {
+            return Err(CoreError::Config {
+                message: format!("[[cast]] lists speaker {:?} twice", member.id.0),
+            });
+        }
+    }
+    match (&spec.tts, &spec.asr) {
+        (None, None) => Ok(()),
+        (None, Some(_)) => Err(config("[asr] checks synthesised audio, so it needs [tts]")),
+        (Some(_), None) => Err(config(
+            "[tts] needs [asr] to check the audio against the script",
+        )),
+        (Some(_), Some(_)) if spec.cast.is_empty() => Err(config(
+            "[tts] needs [[cast]]: one entry per speaker, each with a voice",
+        )),
+        (Some(TtsConfig::Sidecar { takes: 0, .. }), Some(_)) => {
+            Err(config("[tts] takes must be at least 1"))
+        }
+        (Some(_), Some(_)) => Ok(()),
     }
 }
 
@@ -185,5 +218,47 @@ mod tests {
                 "{message}"
             );
         }
+    }
+
+    const CAST: &str = r#"
+        [[cast]]
+        id = "ada"
+        name = "Ada"
+        role = "host"
+        voice = { reference = "voices/ada.wav", transcript = "Hello.", licence = "CC0-1.0" }
+    "#;
+
+    fn audio_error(extra: &str) -> String {
+        match check_audio(&episode(extra)) {
+            Err(CoreError::Config { message }) => message,
+            other => panic!("expected a Config error for {extra:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn audio_sections_come_together() {
+        check_audio(&episode("")).unwrap();
+        // A cast alone is fine: it pins the script's speakers.
+        check_audio(&episode(CAST)).unwrap();
+        let full = format!("tts = {{ kind = \"fake\" }}\nasr = {{ kind = \"fake\" }}\n{CAST}");
+        check_audio(&episode(&full)).unwrap();
+
+        let message = audio_error("tts = { kind = \"fake\" }\nasr = { kind = \"fake\" }");
+        assert!(message.contains("[[cast]]"), "{message}");
+        let message = audio_error(&format!("tts = {{ kind = \"fake\" }}\n{CAST}"));
+        assert!(message.contains("needs [asr]"), "{message}");
+        let message = audio_error(&format!("asr = {{ kind = \"fake\" }}\n{CAST}"));
+        assert!(message.contains("needs [tts]"), "{message}");
+        let message = audio_error(&format!(
+            "tts = {{ kind = \"sidecar\", sidecar = \"qwen\", takes = 0 }}\n\
+             asr = {{ kind = \"fake\" }}\n{CAST}"
+        ));
+        assert!(message.contains("takes"), "{message}");
+    }
+
+    #[test]
+    fn cast_ids_are_unique() {
+        let message = audio_error(&format!("{CAST}\n{CAST}"));
+        assert!(message.contains("\"ada\" twice"), "{message}");
     }
 }

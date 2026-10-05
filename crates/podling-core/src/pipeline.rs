@@ -11,7 +11,9 @@ use serde::Serialize;
 
 use crate::cache::DiskCache;
 use crate::error::{CoreError, Result};
-use crate::plugin::{LlmProvider, build_analysers, build_grounding, build_llm, build_sources};
+use crate::plugin::{
+    LlmProvider, build_analysers, build_grounding, build_llm, build_sources, check_audio,
+};
 use crate::stage::{GroundingCounts, RunReport, cached};
 use crate::stages::{
     Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
@@ -45,8 +47,10 @@ pub fn run_with_llm(
 ) -> Result<RunReport> {
     let analysers = build_analysers(&spec.analysers);
     // Built before any stage runs, so a bad `[embedding]`/`[nli]` section
-    // fails the run before the LLM has spent any time on it.
+    // fails the run before the LLM has spent any time on it. The audio
+    // sections are checked now for the same reason.
     let grounding = build_grounding(spec, base_dir)?;
+    check_audio(spec)?;
     let mut report = RunReport::default();
 
     let mut fetched = Vec::new();

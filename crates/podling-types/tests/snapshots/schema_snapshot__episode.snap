@@ -14,6 +14,24 @@ expression: schema
         "$ref": "#/$defs/AnalyserConfig"
       }
     },
+    "asr": {
+      "description": "Transcribes each synthesised chunk to check it against the script.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AsrConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cast": {
+      "description": "The speakers, each with a pinned voice. Required by `[tts]`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CastMember"
+      }
+    },
     "embedding": {
       "description": "Embeds claims and source sentences so the NLI stages can pick which\npairs to compare. Needs `nli` too; without both, claims merge only by\nexact wording and every piece of evidence is the claim's own extraction.",
       "anyOf": [
@@ -60,6 +78,17 @@ expression: schema
     },
     "topic": {
       "type": "string"
+    },
+    "tts": {
+      "description": "Turns the script into audio. Needs `[[cast]]` and `[asr]` too; without\nit, the run stops at the script.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TtsConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -87,6 +116,74 @@ expression: schema
             "kind"
           ]
         }
+      ]
+    },
+    "AsrConfig": {
+      "oneOf": [
+        {
+          "description": "Deterministic offline stand-in that hears exactly what was meant.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fake"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Whisper run on the CPU, e.g. `openai/whisper-base.en`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "whisper"
+            },
+            "max_wer_pm": {
+              "description": "A chunk passes when its word error rate is at most this, in\nthousandths (80 = 8%).",
+              "$ref": "#/$defs/PerMille",
+              "default": 80
+            },
+            "model_dir": {
+              "description": "Directory holding the model's `config.json`, `tokenizer.json` and\n`model.safetensors`. A relative path is resolved against the\nepisode file's directory.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "model_dir"
+          ]
+        }
+      ]
+    },
+    "CastMember": {
+      "description": "One speaker in `[[cast]]`.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/SpeakerId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "description": "Free-form role, e.g. `host` or `narrator`.",
+          "type": "string"
+        },
+        "voice": {
+          "$ref": "#/$defs/VoiceRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "role",
+        "voice"
       ]
     },
     "EmbeddingConfig": {
@@ -266,6 +363,12 @@ expression: schema
         }
       ]
     },
+    "PerMille": {
+      "description": "A score from 0 to 1 in thousandths.",
+      "type": "integer",
+      "maximum": 1000,
+      "minimum": 0
+    },
     "SourceSpec": {
       "oneOf": [
         {
@@ -290,6 +393,87 @@ expression: schema
             "independence_group"
           ]
         }
+      ]
+    },
+    "SpeakerId": {
+      "description": "A human-readable speaker handle such as `host` or `guest`.",
+      "type": "string"
+    },
+    "TtsConfig": {
+      "oneOf": [
+        {
+          "description": "Deterministic offline stand-in: a sine tone per speaker.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fake"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A model worker started from a profile in the user-level\n`~/.config/podling/sidecars.toml`. The episode names the profile\nonly, so a shared episode file can never choose a program to run.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sidecar"
+            },
+            "max_retries": {
+              "description": "Extra attempts for a chunk that fails verification.",
+              "type": "integer",
+              "format": "uint8",
+              "default": 2,
+              "maximum": 255,
+              "minimum": 0
+            },
+            "sidecar": {
+              "description": "Profile name in `sidecars.toml`, e.g. `qwen3-tts`.",
+              "type": "string"
+            },
+            "takes": {
+              "description": "Takes made of each banter beat; the best passing one wins.",
+              "type": "integer",
+              "format": "uint8",
+              "default": 2,
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "sidecar"
+          ]
+        }
+      ]
+    },
+    "VoiceRef": {
+      "description": "A reference clip that pins a speaker's voice; every chunk is conditioned\non it.\n\nThe licence is required because voice clips are where non-commercial\nterms sneak in, and it is copied into the audio manifest. Deserialisation\nruns the same checks as [`VoiceRef::new`].",
+      "type": "object",
+      "properties": {
+        "licence": {
+          "description": "SPDX identifier of the clip's licence, e.g. `CC0-1.0` or `CC-BY-4.0`.",
+          "type": "string"
+        },
+        "reference": {
+          "description": "The clip (WAV). A relative path is resolved against the episode\nfile's directory.",
+          "type": "string"
+        },
+        "transcript": {
+          "description": "Exactly what is said in the clip; voice-cloning models need it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "transcript",
+        "licence"
       ]
     }
   }

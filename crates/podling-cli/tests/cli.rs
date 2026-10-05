@@ -153,6 +153,7 @@ fn schema_export_writes_one_parseable_file_per_kind() {
         names,
         [
             "analysis",
+            "audio",
             "chunks",
             "claims",
             "documents",

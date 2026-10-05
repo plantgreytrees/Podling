@@ -63,13 +63,20 @@ fn first_run_misses_and_second_run_hits_every_stage() {
     assert_eq!(hits(&second), STAGES.map(|id| (id, true)).to_vec());
 }
 
+/// Every artifact a run writes when the episode has no `[tts]`: all but audio.
+fn text_artifacts() -> impl Iterator<Item = podling_types::ArtifactKind> {
+    podling_types::ArtifactKind::ALL
+        .into_iter()
+        .filter(|kind| *kind != podling_types::ArtifactKind::Audio)
+}
+
 #[test]
 fn writes_every_artifact_in_a_versioned_envelope() {
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out");
     pipeline::run(&spec(&fixtures()), &fixtures(), None, &out).unwrap();
 
-    for kind in podling_types::ArtifactKind::ALL {
+    for kind in text_artifacts() {
         let path = out.join(format!("{}.json", kind.as_str()));
         let json: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
@@ -93,7 +100,11 @@ fn no_nli_config_writes_todays_artifacts() {
     pipeline::run(&spec(&fixtures()), &fixtures(), None, &out).unwrap();
 
     let current = format!("\"schema_version\": {},", podling_types::SCHEMA_VERSION);
-    for kind in podling_types::ArtifactKind::ALL {
+    assert!(
+        !out.join("audio.json").exists(),
+        "an episode without [tts] must not write audio"
+    );
+    for kind in text_artifacts() {
         let name = format!("{}.json", kind.as_str());
         let golden = fs::read_to_string(fixtures().join("golden").join(&name)).unwrap();
         let golden = golden.replacen("\"schema_version\": 2,", &current, 1);
