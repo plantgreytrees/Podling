@@ -2,7 +2,8 @@
 
 > Written 2026-10-01 at the end of Phase 3 (embeddings and NLI in the claim
 > ledger); updated 2026-10-04 after NLI grounding in extraction, and 2026-10-05
-> after Phase 5 (episode audio), which was built before Phase 4. Phase 5 is on
+> after Phase 5 (episode audio), which was built before Phase 4, and
+> 2026-10-06 after its `/scrutinise` fixes. Phase 5 is on
 > the branch `worktree-phase5-tts-plan` until it is merged into `main`.
 
 ## Goal
@@ -119,3 +120,4 @@ The adjudicator would not catch these either, since only Contested claims reach 
 | [nli-extraction-grounding](plans/nli-extraction-grounding.md) | complete; live runs recorded in the plan ("Live results") |
 | [scrutinise-nli-extraction-grounding](plans/scrutinise-nli-extraction-grounding.md) | complete; premise windows capped at 120 words |
 | [phase5-tts-audio](plans/phase5-tts-audio.md) | Phase 5, episode audio: all units merged on `worktree-phase5-tts-plan`; live runs in the plan ("Live results"); listening passes (1.4, 10.3) pending |
+| [scrutinise-phase5-tts-audio](plans/scrutinise-phase5-tts-audio.md) | three `/scrutinise` rounds; every Warning fixed (units 1–4, 7), the last round clean; units 5, 6 and 8 are PENDING Suggestions |

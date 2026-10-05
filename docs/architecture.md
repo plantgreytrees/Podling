@@ -1,12 +1,15 @@
 # Architecture
 
-> **Status:** current as of 2026-10-05. It covers Phase 1 (core contracts), the
+> **Status:** current as of 2026-10-06. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes, Phase 2 (the OpenAI-compatible LLM provider) and its
 > scrutinise fixes (unreferenced-quotation check, claim grounding, script input
 > size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
 > can name things from the title and headings, Phase 3 (embeddings and NLI
 > in the claim ledger) and Phase 5 (episode audio: TTS, speech-recognition
-> checks, assembly). Phase 4, the Contested-claim adjudicator, is not built yet.
+> checks, assembly) with its `/scrutinise` fixes (backchannel-aware speech
+> checks, a weights- and adapter-aware TTS cache key, a voice licence
+> allow-list, and stopping the sidecar's whole process tree). Phase 4, the
+> Contested-claim adjudicator, is not built yet.
 
 This document describes the state after Phase 5. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -153,10 +156,11 @@ and are still cache hits.
    invalidates the cache on its own. The same goes for **TTS and ASR**:
    `TtsProvider::fingerprint()` is the `synthesize_chunk` config, and
    `AsrProvider::fingerprint()` the `transcribe_chunk` config. `SidecarTts`
-   takes protocol, backend, model and weights snapshot from the worker's
-   `/health` (never the profile name, so renaming a profile keeps the cache);
-   change what a worker adapter sends the model and its reported `model` or
-   `weights` must change with it. `CandleWhisper` has a BLAKE3 hash of its
+   takes protocol, backend, model, weights and adapter version from the
+   worker's `/health` (never the profile name, so renaming a profile keeps the
+   cache). `weights` is the hub snapshot's commit, or a `sha256:` over a
+   `--model-dir`'s weight and config files; change what a worker adapter asks
+   the model to say and bump its `ADAPTER_VERSION`. `CandleWhisper` has a BLAKE3 hash of its
    weights, its decoding thresholds and a version. The fakes carry a `version`.
 
 ## Plugins
@@ -404,15 +408,26 @@ speaks to it.
 - *Start-up.* The worker binds `127.0.0.1` and prints one JSON line,
   `{"listening": "127.0.0.1:<port>", "protocol": 1}`; Podling waits up to 60 s
   for it, then checks `GET /v1/podling/health` (protocol, backend, model,
-  weights, capabilities). Stderr goes to `<run dir>/sidecar.log`, whose tail
+  weights, adapter, capabilities). Stderr goes to `<run dir>/sidecar.log`, whose tail
   every start-up or transport error quotes.
 - *Requests.* `POST /v1/podling/synthesize` names the reference clips and an
   output path inside the run directory Podling created; the worker writes a WAV
   there and answers with its sample rate and turn spans. Audio moves through
   files, so the HTTP bodies stay small. The full protocol is in
   [`sidecars/tts/README.md`](../sidecars/tts/README.md).
-- *Shutdown.* `Drop` sends SIGTERM, waits 5 s, then kills and reaps the process;
-  the run directory is deleted after it.
+- *Shutdown.* `uv run` starts the model as a child, so stopping only the
+  worker could leave the GPU held. When the worker reports ready, Podling pins
+  each of its descendants with a pidfd, which keeps naming that process even
+  after its parent dies and a pid is reused (`Descendants` in `sidecar.rs`).
+  `Drop` adds a fresh scan when the worker still runs, sends SIGTERM to the
+  worker and every pinned process, waits up to 5 s (liveness is read from the
+  pidfds), then kills and reaps what is left; this also happens when the
+  worker has already died and left a child behind. The worker stays in
+  Podling's process group, so Ctrl-C still reaches it. A process started after
+  ready by a worker that then dies, or one that detaches before the ready
+  scan, is caught only by the worker's own parent watch
+  ([`server.py`](../sidecars/tts/podling_tts/server.py) `watch_parent`). The
+  run directory is deleted after it.
 
 **Chunks.** [`plan_chunks`](../crates/podling-core/src/stages/plan_chunks.rs)
 reads the backend's `TtsCapabilities`. A per-turn model (`multi_speaker: false`,
@@ -423,8 +438,10 @@ alone, so errors can't compound.
 
 **Checks and takes.** [`synthesize_script`](../crates/podling-core/src/stages/synthesize.rs)
 makes each chunk, and [`verify_audio`](../crates/podling-core/src/stages/verify_audio.rs)
-transcribes it. A take passes when its word error rate against the chunk text is
-at most `max_wer_pm` and every quote is heard word for word (after
+transcribes it. A take passes when its word error rate against what the chunk says is
+at most `max_wer_pm` (the turn text plus any backchannel its own speaker says
+in line before or after it, `SpokenTurn::said` in
+[`plugin/tts.rs`](../crates/podling-core/src/plugin/tts.rs)) and every quote is heard word for word (after
 normalising case, punctuation and numbers). Banter beats get `takes` takes and
 keep the best passing one. A failing chunk is made again with a new seed up to
 `max_retries` times; if it still fails it becomes an `Error` finding in the
@@ -451,7 +468,10 @@ normalised to −16 LUFS integrated with a −1 dBTP true-peak limiter, measured
 with `ebur128`, and written as 16-bit `episode.wav`. `[mix] encode = "opus"`
 or `"mp3"` adds a copy made by `ffmpeg` (argv, no shell; a missing `ffmpeg` is a
 `Config` error). `audio.json` records every chunk's seed, take and check, the
-episode's loudness and length, and each voice's licence.
+episode's loudness and length, and each voice's licence. A clip's licence
+must be one of `VOICE_LICENCES` (`CC0-1.0`, `CC-BY-3.0`, `CC-BY-4.0`;
+[`episode.rs`](../crates/podling-types/src/episode.rs)); any other is refused
+when the episode is read.
 
 ## Why a claim ledger, not debating agents
 
