@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 
-from podling_tts.backends import Backend, clip_path, write_wav
+from podling_tts.backends import Backend, clip_path, ignored_context, in_line, write_wav
 from podling_tts.protocol import SynthesizeRequest, SynthesizeResult
 
 RATE = 24_000
@@ -51,12 +51,15 @@ class FakeBackend(Backend):
     def synthesize(self, request: SynthesizeRequest) -> SynthesizeResult:
         samples: list[float] = []
         spans: list[tuple[int, int]] = []
-        dropped: list[dict] = []
+        dropped: list[dict] = ignored_context(request)
         clips: list[dict] = []
         for t, turn in enumerate(request.turns):
             if turn.emotion is not None:
                 dropped.append({"turn": t, "kind": "emotion"})
+            text, spoken = in_line(turn)
             for k, event in enumerate(turn.nonverbal):
+                if k in spoken:
+                    continue
                 if event.kind != "backchannel":
                     dropped.append({"turn": t, "kind": event.kind})
                     continue
@@ -74,7 +77,7 @@ class FakeBackend(Backend):
                     }
                 )
             start = len(samples)
-            samples.extend(tone(turn.speaker, turn.text))
+            samples.extend(tone(turn.speaker, text))
             spans.append((start, len(samples)))
         write_wav(request.out_path, samples, RATE)
         return SynthesizeResult(RATE, len(samples), spans, dropped, clips)

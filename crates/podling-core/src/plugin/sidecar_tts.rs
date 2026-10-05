@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use podling_types::{ContentHash, Emotion, SpeakerId};
+use podling_types::{ContentHash, Emotion, Nonverbal, SpeakerId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -43,6 +43,10 @@ struct WireCapabilities {
     max_chunk_secs: u32,
     max_speakers: u8,
     native_sample_rate: u32,
+    /// Whether the model listens to context. A worker that doesn't say is
+    /// taken not to.
+    #[serde(default)]
+    context: bool,
 }
 
 #[derive(Serialize)]
@@ -51,6 +55,9 @@ struct WireTurn<'a> {
     text: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     emotion: Option<Emotion>,
+    /// Already in protocol v1's shape: `{kind, by, at, text?}`.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    nonverbal: &'a [Nonverbal],
 }
 
 #[derive(Serialize)]
@@ -84,6 +91,10 @@ struct WireReply {
     turn_spans: Option<Vec<(usize, usize)>>,
     #[serde(default)]
     dropped: Vec<Value>,
+    /// Sounds rendered as clips of their own. Podling only sends sounds the
+    /// speaker makes in line, so a worker has no reason to return any.
+    #[serde(default)]
+    clips: Vec<Value>,
 }
 
 /// A TTS provider that owns a running worker.
@@ -157,6 +168,7 @@ impl SidecarTts {
             max_chunk_secs: wire.max_chunk_secs,
             max_speakers: wire.max_speakers,
             native_sample_rate: wire.native_sample_rate,
+            context: wire.context,
         };
         tracing::info!(
             sidecar = name,
@@ -269,6 +281,7 @@ fn wire_turns(turns: &[SpokenTurn]) -> Vec<WireTurn<'_>> {
             text: &turn.text,
             // Neutral is the default delivery; only a real hint is sent.
             emotion: (turn.emotion != Emotion::Neutral).then_some(turn.emotion),
+            nonverbal: &turn.nonverbal,
         })
         .collect()
 }
@@ -296,21 +309,21 @@ impl TtsProvider for SidecarTts {
 
     fn synthesize(&mut self, request: &ChunkRequest<'_>) -> Result<ChunkAudio> {
         let started = Instant::now();
-        // Only the voices this chunk (and its context) uses.
+        // Only the voices this chunk (and its context) uses, sounds included.
         let context_turns = request.context.map(|c| c.turns).unwrap_or_default();
+        let speakers = request.turns.iter().chain(context_turns).flat_map(|turn| {
+            std::iter::once(&turn.speaker).chain(turn.nonverbal.iter().map(|n| &n.by))
+        });
         let mut voices = BTreeMap::new();
-        for turn in request.turns.iter().chain(context_turns) {
-            if voices.contains_key(turn.speaker.0.as_str()) {
+        for speaker in speakers {
+            if voices.contains_key(speaker.0.as_str()) {
                 continue;
             }
             let voice = request
                 .voices
-                .get(&turn.speaker)
-                .ok_or_else(|| missing_voice(&turn.speaker))?;
-            voices.insert(
-                turn.speaker.0.as_str(),
-                (self.stage(voice.reference())?, voice),
-            );
+                .get(speaker)
+                .ok_or_else(|| missing_voice(speaker))?;
+            voices.insert(speaker.0.as_str(), (self.stage(voice.reference())?, voice));
         }
         let context = match request.context {
             None => None,
@@ -377,6 +390,12 @@ impl TtsProvider for SidecarTts {
                 "the TTS backend cannot express these; they were left out"
             );
         }
+        if !reply.clips.is_empty() {
+            tracing::warn!(
+                clips = %serde_json::Value::Array(reply.clips),
+                "the TTS backend rendered sounds as separate clips, which are not placed yet"
+            );
+        }
         let seconds = pcm.seconds();
         let elapsed = started.elapsed().as_secs_f64();
         tracing::info!(
@@ -427,26 +446,33 @@ mod tests {
     }
 
     #[test]
-    fn neutral_emotion_is_not_sent() {
-        let turns = [
-            SpokenTurn {
-                speaker: SpeakerId("a".into()),
-                text: "hi".into(),
-                emotion: Emotion::Neutral,
-            },
-            SpokenTurn {
-                speaker: SpeakerId("a".into()),
-                text: "wow".into(),
-                emotion: Emotion::Excited,
-            },
-        ];
+    fn neutral_emotion_and_no_sounds_are_not_sent() {
+        let a = SpeakerId("a".into());
+        let mut wow = SpokenTurn::plain(a.clone(), "wow", Emotion::Excited);
+        wow.nonverbal.push(Nonverbal {
+            kind: podling_types::NonverbalKind::Laugh {},
+            by: a.clone(),
+            at: podling_types::NonverbalAt::After,
+        });
+        let turns = [SpokenTurn::plain(a, "hi", Emotion::Neutral), wow];
         let wire = serde_json::to_value(wire_turns(&turns)).unwrap();
         assert_eq!(
             wire,
             json!([
                 { "speaker": "a", "text": "hi" },
-                { "speaker": "a", "text": "wow", "emotion": "excited" },
+                { "speaker": "a", "text": "wow", "emotion": "excited",
+                  "nonverbal": [{ "kind": "laugh", "by": "a", "at": "after" }] },
             ])
+        );
+    }
+
+    #[test]
+    fn a_worker_that_does_not_mention_context_does_not_get_it() {
+        assert!(
+            !parse_health(&health(1, 24_000))
+                .unwrap()
+                .capabilities
+                .context
         );
     }
 }

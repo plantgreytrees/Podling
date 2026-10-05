@@ -125,6 +125,7 @@ def test_health_reports_protocol_backend_and_capabilities(client: Client) -> Non
         "max_chunk_secs": 120,
         "max_speakers": 8,
         "native_sample_rate": 24_000,
+        "context": False,
     }
 
 
@@ -265,6 +266,28 @@ def test_context_paths_are_validated_and_accepted(
     }
     status, body = client.synthesize(request(run_dir, context=context))
     assert status == 200, body
+    # The fake cannot listen to context, and says so.
+    assert body["dropped"] == [{"kind": "context"}]
+
+
+def test_the_speakers_own_backchannel_before_or_after_is_said_in_line(
+    client: Client, run_dir: Path
+) -> None:
+    turns = [
+        {
+            "speaker": "host",
+            "text": "It flattened the forest",
+            "nonverbal": [
+                {"kind": "backchannel", "by": "host", "at": "before", "text": "Well,"},
+                {"kind": "backchannel", "by": "host", "at": "after", "text": "really."},
+            ],
+        }
+    ]
+    status, body = client.synthesize(request(run_dir, turns=turns))
+    assert status == 200, body
+    assert body["dropped"] == [] and body["clips"] == []
+    # Four words plus two, a quarter second each.
+    assert body["turn_spans"] == [[0, 6 * 6_000]]
 
 
 # --------------------------------------------------------------------------

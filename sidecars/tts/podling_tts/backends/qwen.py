@@ -11,7 +11,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from podling_tts.backends import Backend, BackendError, clip_path, turn_seed, write_wav
+from podling_tts.backends import (
+    Backend,
+    BackendError,
+    clip_path,
+    ignored_context,
+    in_line,
+    turn_seed,
+    write_wav,
+)
 from podling_tts.protocol import SynthesizeRequest, SynthesizeResult, Voice
 
 MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
@@ -111,14 +119,17 @@ class QwenBackend(Backend):
         pieces: list[Any] = []
         length = 0
         spans: list[tuple[int, int]] = []
-        dropped: list[dict] = []
+        dropped: list[dict] = ignored_context(request)
         clips: list[dict] = []
         rate = self.native_sample_rate
         for t, turn in enumerate(request.turns):
             seed = turn_seed(request.seed, t)
             if turn.emotion is not None:
                 dropped.append({"turn": t, "kind": "emotion"})
+            text, spoken = in_line(turn)
             for k, event in enumerate(turn.nonverbal):
+                if k in spoken:
+                    continue
                 if event.kind != "backchannel":
                     dropped.append({"turn": t, "kind": event.kind})
                     continue
@@ -137,7 +148,7 @@ class QwenBackend(Backend):
                         "samples": len(clip),
                     }
                 )
-            audio, rate = self._speak(turn.text, request.voices[turn.speaker], seed)
+            audio, rate = self._speak(text, request.voices[turn.speaker], seed)
             pieces.append(audio)
             spans.append((length, length + len(audio)))
             length += len(audio)

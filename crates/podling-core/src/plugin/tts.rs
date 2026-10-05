@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 
-use podling_types::{Emotion, SpeakerId, VoiceRef};
+use podling_types::{Emotion, Nonverbal, SpeakerId, VoiceRef};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -26,14 +26,37 @@ pub struct TtsCapabilities {
     pub max_speakers: u8,
     /// The rate the model produces; Podling resamples afterwards.
     pub native_sample_rate: u32,
+    /// The model listens to a chunk's [`ChunkContext`]. When it doesn't, no
+    /// context is sent and none goes into a chunk's cache key, so editing a
+    /// turn leaves the next chunk alone.
+    pub context: bool,
 }
 
-/// One turn as it will be spoken: quotes already filled into `text`.
+/// One turn (or part of one) as it will be spoken: quotes already filled
+/// into `text`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpokenTurn {
     pub speaker: SpeakerId,
     pub text: String,
     pub emotion: Emotion,
+    /// Sounds the speaker makes just before or after the words, which the
+    /// backend renders in the same voice (as its own tags, or not at all and
+    /// reported as dropped). Sounds over the turn, or by someone else, are
+    /// placed by the assembler instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nonverbal: Vec<Nonverbal>,
+}
+
+impl SpokenTurn {
+    /// `text` spoken by `speaker`, with no sounds around it.
+    pub fn plain(speaker: SpeakerId, text: impl Into<String>, emotion: Emotion) -> Self {
+        Self {
+            speaker,
+            text: text.into(),
+            emotion,
+            nonverbal: Vec::new(),
+        }
+    }
 }
 
 /// What came just before a chunk. Conditioning only: none of it is spoken
@@ -110,12 +133,16 @@ pub fn synthesize_checked(
         });
     }
     let context_turns = request.context.map(|c| c.turns).unwrap_or_default();
-    for turn in request.turns.iter().chain(context_turns) {
-        if !request.voices.contains_key(&turn.speaker) {
+    for speaker in
+        request.turns.iter().chain(context_turns).flat_map(|turn| {
+            std::iter::once(&turn.speaker).chain(turn.nonverbal.iter().map(|n| &n.by))
+        })
+    {
+        if !request.voices.contains_key(speaker) {
             return Err(CoreError::Config {
                 message: format!(
                     "speaker {:?} has no voice: add it to [[cast]] with a reference clip",
-                    turn.speaker.0
+                    speaker.0
                 ),
             });
         }
@@ -192,20 +219,33 @@ pub struct FakeTts {
 const FAKE_RATE: u32 = 24_000;
 const FAKE_SECONDS_PER_WORD: f32 = 0.25;
 
+/// Behaves like a per-turn model (Qwen3-TTS): one turn per chunk, and no
+/// use for context.
 impl Default for FakeTts {
     fn default() -> Self {
         Self {
             capabilities: TtsCapabilities {
-                multi_speaker: true,
+                multi_speaker: false,
                 max_chunk_secs: 120,
                 max_speakers: 8,
                 native_sample_rate: FAKE_RATE,
+                context: false,
             },
         }
     }
 }
 
 impl FakeTts {
+    /// Behaves like a dialogue model: whole beats per chunk, conditioned on
+    /// the chunk before. The audio is the same either way; only how the
+    /// script is chunked and keyed differs.
+    pub fn dialogue() -> Self {
+        let mut fake = Self::default();
+        fake.capabilities.multi_speaker = true;
+        fake.capabilities.context = true;
+        fake
+    }
+
     fn pitch(speaker: &SpeakerId) -> f32 {
         let hash = blake3::hash(speaker.0.as_bytes());
         120.0 + f32::from(hash.as_bytes()[0]) * (200.0 / 255.0)
@@ -250,11 +290,7 @@ mod tests {
     use super::*;
 
     fn turn(speaker: &str, text: &str) -> SpokenTurn {
-        SpokenTurn {
-            speaker: SpeakerId(speaker.into()),
-            text: text.into(),
-            emotion: Emotion::Neutral,
-        }
+        SpokenTurn::plain(SpeakerId(speaker.into()), text, Emotion::Neutral)
     }
 
     fn voices(ids: &[&str]) -> BTreeMap<SpeakerId, VoiceRef> {
@@ -279,7 +315,7 @@ mod tests {
                     pcm: Pcm::new(24_000, samples),
                     turn_spans: spans,
                 },
-                capabilities: FakeTts::default().capabilities,
+                capabilities: FakeTts::dialogue().capabilities,
             }
         }
     }
@@ -388,6 +424,17 @@ mod tests {
             panic!("expected a Config error");
         };
         assert!(message.contains("\"cy\""), "{message}");
+
+        let mut laughing = turn("ada", "hi");
+        laughing.nonverbal.push(Nonverbal {
+            kind: podling_types::NonverbalKind::Laugh {},
+            by: SpeakerId("dee".into()),
+            at: podling_types::NonverbalAt::Before,
+        });
+        let Err(CoreError::Config { message }) = check(&mut FakeTts::default(), &[laughing]) else {
+            panic!("a sound needs its maker's voice too");
+        };
+        assert!(message.contains("\"dee\""), "{message}");
         assert!(matches!(
             check(&mut FakeTts::default(), &[]),
             Err(CoreError::InvalidProviderOutput { .. })

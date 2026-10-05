@@ -64,6 +64,9 @@ impl Pcm {
                 WavFormat::Int16 => hound::SampleFormat::Int,
             },
         };
+        if format == WavFormat::Float32 {
+            return self.float32_wav(spec);
+        }
         let mut bytes = Cursor::new(Vec::new());
         let mut writer = hound::WavWriter::new(&mut bytes, spec).map_err(wav_error)?;
         for &sample in &self.samples {
@@ -86,6 +89,22 @@ impl Pcm {
     pub fn from_wav(bytes: &[u8]) -> Result<Self> {
         let reader = hound::WavReader::new(Cursor::new(bytes)).map_err(wav_error)?;
         let spec = reader.spec();
+        if is_float32_mono(spec) {
+            // The reader stops at the start of the samples.
+            let len = reader.len() as usize;
+            let start = reader.into_inner().position() as usize;
+            let data = start
+                .checked_add(len * 4)
+                .and_then(|end| bytes.get(start..end))
+                .ok_or_else(|| wav_error(hound::Error::FormatError("truncated sample data")))?;
+            let samples = data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|&b| f32::from_le_bytes(b))
+                .collect();
+            return Ok(Self::new(spec.sample_rate, samples));
+        }
         let samples: Vec<f32> = match spec.sample_format {
             hound::SampleFormat::Float => reader
                 .into_samples::<f32>()
@@ -158,6 +177,41 @@ impl Pcm {
 const RESAMPLE_CHUNK: usize = 1024;
 
 /// A malformed WAV is bad input data, reported like an unreadable source.
+/// Float32 mono, the format of every cached chunk, skips hound's per-sample
+/// path in both directions. That path is generic, so it is compiled in this
+/// crate, unoptimised in a debug build, and a 30-minute episode is tens of
+/// millions of samples: decoding them one by one took seconds.
+fn is_float32_mono(spec: hound::WavSpec) -> bool {
+    spec.sample_format == hound::SampleFormat::Float
+        && spec.bits_per_sample == 32
+        && spec.channels == 1
+}
+
+impl Pcm {
+    /// hound writes the header (of an empty file), the samples are appended
+    /// as little-endian bytes, and the two sizes in the header are patched:
+    /// the RIFF size at byte 4 and the data size, which is the header's last
+    /// four bytes.
+    fn float32_wav(&self, spec: hound::WavSpec) -> Result<Vec<u8>> {
+        debug_assert!(is_float32_mono(spec));
+        let mut bytes = Cursor::new(Vec::with_capacity(80 + 4 * self.samples.len()));
+        hound::WavWriter::new(&mut bytes, spec)
+            .and_then(hound::WavWriter::finalize)
+            .map_err(wav_error)?;
+        let mut bytes = bytes.into_inner();
+        let header = bytes.len();
+        for sample in &self.samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        let too_long = || wav_error(hound::Error::TooWide);
+        let riff = u32::try_from(bytes.len() - 8).map_err(|_| too_long())?;
+        let data = u32::try_from(bytes.len() - header).map_err(|_| too_long())?;
+        bytes[4..8].copy_from_slice(&riff.to_le_bytes());
+        bytes[header - 4..header].copy_from_slice(&data.to_le_bytes());
+        Ok(bytes)
+    }
+}
+
 fn wav_error(err: hound::Error) -> CoreError {
     CoreError::Source {
         path: "<wav>".into(),
@@ -182,6 +236,31 @@ mod tests {
         let pcm = tone(24_000, 0.5);
         let back = Pcm::from_wav(&pcm.to_wav(WavFormat::Float32).unwrap()).unwrap();
         assert_eq!(back, pcm);
+    }
+
+    #[test]
+    fn the_float_fast_path_agrees_with_hound_both_ways() {
+        let pcm = tone(24_000, 0.1);
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 24_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        // hound's own writer, read by the fast path.
+        let mut bytes = Cursor::new(Vec::new());
+        let mut writer = hound::WavWriter::new(&mut bytes, spec).unwrap();
+        for &s in &pcm.samples {
+            writer.write_sample(s).unwrap();
+        }
+        writer.finalize().unwrap();
+        let hound_bytes = bytes.into_inner();
+        assert_eq!(Pcm::from_wav(&hound_bytes).unwrap(), pcm);
+        // The fast writer is byte for byte what hound writes.
+        assert_eq!(pcm.to_wav(WavFormat::Float32).unwrap(), hound_bytes);
+        // A file cut short is an error, not fewer samples.
+        let short = &hound_bytes[..hound_bytes.len() - 3];
+        assert!(Pcm::from_wav(short).is_err());
     }
 
     #[test]

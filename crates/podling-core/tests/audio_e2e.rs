@@ -5,11 +5,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 use podling_core::audio::{Pcm, WavFormat};
+use podling_core::plugin::FakeTts;
 use podling_core::stages::assemble::{TARGET_LUFS, measure};
+use podling_core::stages::{Voices, synthesize_script};
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
-use podling_types::{AudioManifest, BeatKind, Envelope, EpisodeSpec, NonverbalAt, Pace, Script};
+use podling_types::{
+    AudioManifest, Beat, BeatKind, CastMember, Emotion, Envelope, EpisodeSpec, NonverbalAt, Pace,
+    Script, Speaker, SpeakerId, Turn, TurnRange, VoiceRef,
+};
 use serde_json::Value;
 
 fn fixtures() -> PathBuf {
@@ -270,4 +276,95 @@ fn no_worker_is_left_running_once_the_run_returns() {
         Vec::<u32>::new(),
         "the worker is gone"
     );
+}
+
+/// A 30-minute script at 150 words a minute: 90 banter beats, each two
+/// turns of 25 words (20 s a beat). `edit` changes one turn's words.
+fn half_hour_script(edit: Option<usize>) -> Script {
+    let speaker = |id: &str| Speaker {
+        id: SpeakerId(id.into()),
+        name: id.into(),
+        role: "host".into(),
+    };
+    let turns = (0..180)
+        .map(|t| {
+            let edited = if edit == Some(t) { "x" } else { "" };
+            let text: Vec<String> = (0..25).map(|i| format!("t{t}{edited}w{i}")).collect();
+            Turn {
+                speaker: SpeakerId(if t % 2 == 0 { "host" } else { "guest" }.into()),
+                text: format!("{}.", text.join(" ")),
+                emotion: Emotion::Neutral,
+                citations: vec![],
+                quotes: vec![],
+                pace: Pace::Normal,
+                nonverbal: vec![],
+                callback_to: None,
+            }
+        })
+        .collect();
+    let beats = (0..90)
+        .map(|b| Beat {
+            kind: BeatKind::Banter,
+            turns: TurnRange::new(2 * b, 2 * b + 2).unwrap(),
+        })
+        .collect();
+    Script::with_beats(vec![speaker("host"), speaker("guest")], turns, beats).unwrap()
+}
+
+#[test]
+fn a_thirty_minute_script_is_chunked_by_beat_and_cached_per_chunk() {
+    let started = Instant::now();
+    let tmp = tempfile::tempdir().unwrap();
+    let cast: Vec<CastMember> = ["host", "guest"]
+        .iter()
+        .map(|id| {
+            fs::write(tmp.path().join(format!("{id}.wav")), id.as_bytes()).unwrap();
+            CastMember {
+                id: SpeakerId((*id).into()),
+                name: (*id).into(),
+                role: "host".into(),
+                voice: VoiceRef::new(format!("{id}.wav"), "Hello.", "CC0-1.0").unwrap(),
+            }
+        })
+        .collect();
+    let voices = Voices::resolve(&cast, tmp.path()).unwrap();
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let blobs = cache.blobs();
+    let run = |script: &Script| {
+        let mut report = RunReport::default();
+        let chunks = synthesize_script(
+            script,
+            &voices,
+            &mut FakeTts::dialogue(),
+            &blobs,
+            Some(&cache),
+            &mut report,
+        )
+        .unwrap();
+        let misses = synth(&report).iter().filter(|hit| !**hit).count();
+        (chunks, misses)
+    };
+
+    let (chunks, misses) = run(&half_hour_script(None));
+    // Three 20-second beats make a minute: 30 chunks, each ending on a beat.
+    assert_eq!((chunks.len(), misses), (30, 30));
+    let mut next = 0;
+    for chunk in &chunks {
+        let turns = chunk.record.turns;
+        assert_eq!(turns.start(), next, "every turn in exactly one chunk");
+        assert_eq!(turns.end() % 2, 0, "no chunk ends inside a beat");
+        next = turns.end();
+    }
+    assert_eq!(next, 180);
+
+    let (_, misses) = run(&half_hour_script(None));
+    assert_eq!(misses, 0, "a warm rerun makes no TTS calls");
+    let (_, misses) = run(&half_hour_script(Some(100)));
+    assert_eq!(
+        misses, 2,
+        "the edited chunk, and the next one, which hears it"
+    );
+
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_secs_f64() < 10.0, "took {elapsed:?}");
 }

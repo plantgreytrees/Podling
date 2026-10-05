@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from podling_tts.protocol import SynthesizeRequest, SynthesizeResult
+from podling_tts.protocol import SynthesizeRequest, SynthesizeResult, Turn
 
 
 class BackendError(RuntimeError):
@@ -30,6 +30,9 @@ class Backend:
     max_chunk_secs: int = 120
     max_speakers: int = 8
     native_sample_rate: int = 24_000
+    # Whether the model listens to a request's `context`. Podling sends none, and
+    # keys no chunk on it, when it does not.
+    uses_context: bool = False
 
     def weights(self) -> str:
         """An identifier of the exact weights (a revision or hash), for the cache key."""
@@ -45,6 +48,7 @@ class Backend:
             "max_chunk_secs": self.max_chunk_secs,
             "max_speakers": self.max_speakers,
             "native_sample_rate": self.native_sample_rate,
+            "context": self.uses_context,
         }
 
     def load(self) -> None:
@@ -103,6 +107,29 @@ def _f32le(samples: Any) -> bytes:
 def clip_path(out_path: Path, turn: int, index: int) -> Path:
     """Where a separately rendered nonverbal clip goes: beside the main output."""
     return out_path.with_name(f"{out_path.stem}.t{turn}.n{index}.wav")
+
+
+def in_line(turn: Turn) -> tuple[str, set[int]]:
+    """The words to say for `turn`, with the speaker's own backchannels before or after
+    them said in line ("Mm-hm. Right, so..."), and the indices of those events.
+
+    A per-turn model has no tags for sounds, but a backchannel is words, so the
+    speaker can simply say it. Anything else is left for the caller to render or drop.
+    """
+    before: list[str] = []
+    after: list[str] = []
+    spoken: set[int] = set()
+    for k, event in enumerate(turn.nonverbal):
+        own = event.by == turn.speaker and event.kind == "backchannel" and event.text
+        if own and event.at in ("before", "after"):
+            (before if event.at == "before" else after).append(event.text)
+            spoken.add(k)
+    return " ".join([*before, turn.text, *after]), spoken
+
+
+def ignored_context(request: SynthesizeRequest) -> list[dict[str, Any]]:
+    """A `dropped` entry for a context the backend cannot listen to."""
+    return [] if request.context is None else [{"kind": "context"}]
 
 
 def turn_seed(seed: int, turn: int) -> int:

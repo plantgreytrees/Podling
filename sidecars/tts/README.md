@@ -68,7 +68,9 @@ a wrong type or a missing field gets HTTP 400, with the reason in `{"error": ...
 
 - **`GET /health`** returns `{protocol, backend, model, weights, loaded, capabilities}`.
   - `weights` is the model snapshot's commit, so Podling's cache key changes when the weights do.
-  - `capabilities` is `{multi_speaker, max_chunk_secs, max_speakers, native_sample_rate}`.
+  - `capabilities` is `{multi_speaker, max_chunk_secs, max_speakers, native_sample_rate, context}`.
+    `context` says whether the model listens to a request's `context`. When it is false (or missing),
+    Podling sends no context and keys no chunk on it, so editing a turn re-synthesises only its chunk.
 - **`POST /synthesize`** takes:
 
   ```json
@@ -86,8 +88,12 @@ a wrong type or a missing field gets HTTP 400, with the reason in `{"error": ...
   `{sample_rate, samples, turn_spans, dropped, clips}`:
   - `turn_spans` are `[start, end)` sample ranges per turn.
   - `dropped` lists features the model cannot express. Qwen drops `emotion`, `laugh`, `chuckle` and `sigh`.
-  - `clips` are backchannels rendered as their own files beside `out_path`, for the assembler's second track.
-  - `context` is accepted and validated. The Qwen backend speaks one turn per call, so it does not use it.
+  - A backchannel the speaker says just before or after their own words is said in line, as words.
+    Podling only sends those in-voice sounds (`before`/`after` by the turn's speaker); sounds over a
+    turn or by someone else are placed by the assembler.
+  - `clips` are any other backchannels, rendered as their own files beside `out_path`.
+  - `context` is accepted and validated. Neither backend listens to it (Qwen speaks one turn per
+    call), so both report `{"kind": "context"}` in `dropped` when one is sent.
 - **`POST /unload`** with `{}` frees the model but keeps the process.
 
 Status codes for other failures:
