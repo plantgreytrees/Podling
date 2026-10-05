@@ -91,6 +91,119 @@ fn artifacts_roundtrip() {
     roundtrip(&Envelope::new(ArtifactKind::Ledger, ledger));
     roundtrip(&Envelope::new(ArtifactKind::Script, script));
     roundtrip(&Envelope::new(ArtifactKind::Analysis, report));
+
+    let manifest = AudioManifest {
+        sample_rate: 48_000,
+        chunks: vec![ChunkRecord {
+            id: ContentHash::of_parts(&[b"chunk"]),
+            turns: TurnRange::new(0, 3).unwrap(),
+            blob: ContentHash::of_parts(&[b"pcm"]),
+            seed: u64::MAX,
+            take: 1,
+            wer_pm: PerMille::new(42).unwrap(),
+            quote_misses: vec!["We saw a fireball".into()],
+            verified: false,
+        }],
+        episode: EpisodeAudio {
+            path: "episode.wav".into(),
+            duration_ms: 600_000,
+            integrated_lufs: -16.02,
+            true_peak_dbtp: -1.4,
+        },
+        voices: vec![VoiceCredit {
+            speaker: SpeakerId("host".into()),
+            reference: "voices/host.wav".into(),
+            licence: "CC0-1.0".into(),
+        }],
+    };
+    roundtrip(&Envelope::new(ArtifactKind::Audio, manifest));
+}
+
+const AUDIO: &str = r#"
+[tts]
+kind = "sidecar"
+sidecar = "qwen3-tts"
+
+[asr]
+kind = "whisper"
+model_dir = "models/whisper-base.en"
+
+[[cast]]
+id = "host"
+name = "Ada"
+role = "host"
+voice = { reference = "voices/host.wav", transcript = "Welcome back.", licence = "CC0-1.0" }
+"#;
+
+#[test]
+fn episode_without_audio_sections_is_unchanged() {
+    let spec: EpisodeSpec = toml::from_str(EPISODE).unwrap();
+    assert!(spec.cast.is_empty() && spec.tts.is_none() && spec.asr.is_none());
+    // Absent sections are not written back, so the episode artifact of an
+    // audio-free run keeps its old shape.
+    let json = serde_json::to_value(&spec).unwrap();
+    for key in ["cast", "tts", "asr"] {
+        assert!(json.get(key).is_none(), "{key} serialised: {json}");
+    }
+}
+
+#[test]
+fn audio_sections_parse_with_defaults_and_roundtrip() {
+    let spec: EpisodeSpec = toml::from_str(&format!("{EPISODE}{AUDIO}")).unwrap();
+    assert_eq!(
+        spec.tts,
+        Some(TtsConfig::Sidecar {
+            sidecar: "qwen3-tts".into(),
+            takes: 2,
+            max_retries: 2,
+        })
+    );
+    assert_eq!(
+        spec.asr,
+        Some(AsrConfig::Whisper {
+            model_dir: "models/whisper-base.en".into(),
+            max_wer_pm: PerMille::new(80).unwrap(),
+        })
+    );
+    let voice = &spec.cast[0].voice;
+    assert_eq!(
+        (voice.reference(), voice.licence()),
+        (std::path::Path::new("voices/host.wav"), "CC0-1.0")
+    );
+    roundtrip(&spec);
+}
+
+#[test]
+fn a_voice_needs_a_licence_and_a_transcript() {
+    assert_eq!(
+        VoiceRef::new("v.wav", "Hi.", "  "),
+        Err(VoiceRefError::MissingLicence("v.wav".into()))
+    );
+    assert_eq!(
+        VoiceRef::new("v.wav", "", "CC0-1.0"),
+        Err(VoiceRefError::MissingTranscript("v.wav".into()))
+    );
+
+    let no_licence = AUDIO.replace("licence = \"CC0-1.0\"", "licence = \"\"");
+    let err = toml::from_str::<EpisodeSpec>(&format!("{EPISODE}{no_licence}"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no licence"), "{err}");
+
+    let stray = AUDIO.replace("licence = \"CC0-1.0\"", "licence = \"CC0-1.0\", gain = 2");
+    let err = toml::from_str::<EpisodeSpec>(&format!("{EPISODE}{stray}"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("gain"), "{err}");
+}
+
+#[test]
+fn max_wer_is_a_per_mille_score() {
+    let over = AUDIO.replace(
+        "model_dir = \"models/whisper-base.en\"",
+        "model_dir = \"m\"\nmax_wer_pm = 1001",
+    );
+    assert!(toml::from_str::<EpisodeSpec>(&format!("{EPISODE}{over}")).is_err());
 }
 
 const EPISODE: &str = r#"

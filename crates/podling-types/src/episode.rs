@@ -3,10 +3,13 @@
 //! Contains no secrets. Plugins that need credentials will take the *name* of
 //! an environment variable, never the value.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::claim::PerMille;
+use crate::ids::SpeakerId;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +32,16 @@ pub struct EpisodeSpec {
     pub nli: Option<NliConfig>,
     #[serde(default)]
     pub analysers: Vec<AnalyserConfig>,
+    /// The speakers, each with a pinned voice. Required by `[tts]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cast: Vec<CastMember>,
+    /// Turns the script into audio. Needs `[[cast]]` and `[asr]` too; without
+    /// it, the run stops at the script.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tts: Option<TtsConfig>,
+    /// Transcribes each synthesised chunk to check it against the script.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asr: Option<AsrConfig>,
 }
 
 /// What kind of episode to make. Only non-fiction exists today; fiction modes
@@ -134,4 +147,141 @@ pub enum NliConfig {
 pub enum AnalyserConfig {
     /// Checks every quote against its source, word for word.
     QuoteVerifier {},
+}
+
+/// One speaker in `[[cast]]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CastMember {
+    pub id: SpeakerId,
+    pub name: String,
+    /// Free-form role, e.g. `host` or `narrator`.
+    pub role: String,
+    pub voice: VoiceRef,
+}
+
+/// A reference clip that pins a speaker's voice; every chunk is conditioned
+/// on it.
+///
+/// The licence is required because voice clips are where non-commercial
+/// terms sneak in, and it is copied into the audio manifest. Deserialisation
+/// runs the same checks as [`VoiceRef::new`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "RawVoiceRef")]
+pub struct VoiceRef {
+    reference: PathBuf,
+    transcript: String,
+    licence: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RawVoiceRef {
+    /// The clip (WAV). A relative path is resolved against the episode
+    /// file's directory.
+    reference: PathBuf,
+    /// Exactly what is said in the clip; voice-cloning models need it.
+    transcript: String,
+    /// SPDX identifier of the clip's licence, e.g. `CC0-1.0` or `CC-BY-4.0`.
+    licence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum VoiceRefError {
+    #[error("voice {0:?} has no licence: name the clip's licence, e.g. \"CC0-1.0\"")]
+    MissingLicence(PathBuf),
+    #[error("voice {0:?} has no transcript of its reference clip")]
+    MissingTranscript(PathBuf),
+}
+
+impl VoiceRef {
+    pub fn new(
+        reference: impl Into<PathBuf>,
+        transcript: impl Into<String>,
+        licence: impl Into<String>,
+    ) -> Result<Self, VoiceRefError> {
+        let (reference, transcript, licence) =
+            (reference.into(), transcript.into(), licence.into());
+        if licence.trim().is_empty() {
+            return Err(VoiceRefError::MissingLicence(reference));
+        }
+        if transcript.trim().is_empty() {
+            return Err(VoiceRefError::MissingTranscript(reference));
+        }
+        Ok(Self {
+            reference,
+            transcript,
+            licence,
+        })
+    }
+
+    pub fn reference(&self) -> &Path {
+        &self.reference
+    }
+
+    pub fn transcript(&self) -> &str {
+        &self.transcript
+    }
+
+    pub fn licence(&self) -> &str {
+        &self.licence
+    }
+}
+
+impl TryFrom<RawVoiceRef> for VoiceRef {
+    type Error = VoiceRefError;
+
+    fn try_from(raw: RawVoiceRef) -> Result<Self, Self::Error> {
+        Self::new(raw.reference, raw.transcript, raw.licence)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TtsConfig {
+    /// Deterministic offline stand-in: a sine tone per speaker.
+    Fake {},
+    /// A model worker started from a profile in the user-level
+    /// `~/.config/podling/sidecars.toml`. The episode names the profile
+    /// only, so a shared episode file can never choose a program to run.
+    Sidecar {
+        /// Profile name in `sidecars.toml`, e.g. `qwen3-tts`.
+        sidecar: String,
+        /// Takes made of each banter beat; the best passing one wins.
+        #[serde(default = "default_takes")]
+        takes: u8,
+        /// Extra attempts for a chunk that fails verification.
+        #[serde(default = "default_max_retries")]
+        max_retries: u8,
+    },
+}
+
+fn default_takes() -> u8 {
+    2
+}
+
+fn default_max_retries() -> u8 {
+    2
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AsrConfig {
+    /// Deterministic offline stand-in that hears exactly what was meant.
+    Fake {},
+    /// Whisper run on the CPU, e.g. `openai/whisper-base.en`.
+    Whisper {
+        /// Directory holding the model's `config.json`, `tokenizer.json` and
+        /// `model.safetensors`. A relative path is resolved against the
+        /// episode file's directory.
+        model_dir: PathBuf,
+        /// A chunk passes when its word error rate is at most this, in
+        /// thousandths (80 = 8%).
+        #[serde(default = "default_max_wer_pm")]
+        max_wer_pm: PerMille,
+    },
+}
+
+fn default_max_wer_pm() -> PerMille {
+    PerMille::new(80).expect("80 is within 0..=1000")
 }

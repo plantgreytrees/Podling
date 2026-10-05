@@ -16,5 +16,6 @@ fn schemas_match_snapshots() {
 #[test]
 fn schema_version_is_pinned() {
     // Update together with the snapshots above.
-    assert_eq!(podling_types::SCHEMA_VERSION, 3);
+    assert_eq!(podling_types::SCHEMA_VERSION, 4);
+    assert_eq!(podling_types::ArtifactKind::ALL.len(), 8);
 }
