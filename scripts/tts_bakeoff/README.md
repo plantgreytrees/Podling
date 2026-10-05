@@ -11,9 +11,13 @@ CPU (with the CPU real-time factor of each).
 
 | Backend | Model | Kind | How it fits 8 GB |
 |---|---|---|---|
-| `dia2` | `nari-labs/Dia2-1B` | dialogue, 2 speakers, ≤ 2 min per call incl. voice prefixes | bf16 |
-| `moss` | `OpenMOSS-Team/MOSS-TTSD-v1.0` (8B) | dialogue, 1–5 speakers, long context | Qwen3 backbone in NF4 (bitsandbytes); audio heads bf16 |
+| `dia2` | `nari-labs/Dia2-1B` | dialogue, 2 speakers, ≤ 2 min per call incl. voice prefixes | bf16; Mimi decodes on the CPU |
+| `moss` | `OpenMOSS-Team/MOSS-TTSD-v1.0` (8B) | dialogue, 1–5 speakers, long context | **does not fit**: NF4 backbone plus bf16 text embedding is ~5 GB resident and needs another 1.2 GiB mid-load; the 1.77B fp32 audio tokenizer runs on the CPU |
 | `qwen` | `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | one speaker per call | bf16 |
+
+Results and the decision are in `docs/plans/phase5-tts-audio.md` under "Spike results".
+Scoring uses Whisper's sequential long-form decoding with temperature fallback: the chunked
+pipeline looped on clean audio and inflated WER.
 
 ## Run
 
