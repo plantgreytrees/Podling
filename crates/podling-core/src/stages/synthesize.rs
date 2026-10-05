@@ -271,7 +271,7 @@ pub fn synthesize_script(
 
 #[cfg(test)]
 mod tests {
-    use podling_types::{Emotion, Speaker, Turn};
+    use podling_types::{Emotion, Pace, Speaker, Turn};
 
     use super::*;
     use crate::plugin::FakeTts;
@@ -306,6 +306,9 @@ mod tests {
                 emotion: Emotion::Neutral,
                 citations: vec![],
                 quotes: vec![],
+                pace: Pace::Normal,
+                nonverbal: vec![],
+                callback_to: None,
             })
             .collect();
         Script::new(cast, turns).unwrap()

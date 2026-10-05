@@ -157,6 +157,9 @@ pub enum NliConfig {
 pub enum AnalyserConfig {
     /// Checks every quote against its source, word for word.
     QuoteVerifier {},
+    /// Warns on a turn that states a number or a year but cites no claim:
+    /// the likeliest place for banter to slip in an unsourced fact.
+    UncitedFigures {},
 }
 
 /// One speaker in `[[cast]]`.

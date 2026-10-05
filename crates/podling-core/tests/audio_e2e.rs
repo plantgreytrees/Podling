@@ -9,7 +9,7 @@ use std::process::Command;
 use podling_core::audio::{Pcm, WavFormat};
 use podling_core::stages::assemble::{TARGET_LUFS, measure};
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
-use podling_types::{AudioManifest, EpisodeSpec};
+use podling_types::{AudioManifest, BeatKind, Envelope, EpisodeSpec, NonverbalAt, Pace, Script};
 use serde_json::Value;
 
 fn fixtures() -> PathBuf {
@@ -109,6 +109,37 @@ fn the_fake_episode_becomes_a_loudness_normalised_wav() {
     assert_eq!(script["body"]["cast"][0]["name"], "Mara");
     // Without a cache the audio waits beside the artifacts.
     assert!(out.join(".blobs").is_dir());
+}
+
+/// With `[tts]` the script is written for audio: it has beats covering every
+/// turn, pace, a backchannel and a callback, and they survive the round trip
+/// through `script.json`.
+#[test]
+fn a_spoken_episode_has_beats_in_its_script() {
+    let tmp = tempfile::tempdir().unwrap();
+    let spec = audio_episode(tmp.path(), "kind = \"fake\"");
+    let out = tmp.path().join("out");
+    pipeline::run(&spec, tmp.path(), None, &out).unwrap();
+
+    let text = fs::read_to_string(out.join("script.json")).unwrap();
+    let envelope: Envelope<Script> = serde_json::from_str(&text).unwrap();
+    let script = envelope.body;
+    let beats = script.beats();
+    let kinds: Vec<BeatKind> = beats.iter().map(|b| b.kind).collect();
+    assert_eq!(kinds.first(), Some(&BeatKind::QuoteReading));
+    assert_eq!(kinds.last(), Some(&BeatKind::Transition));
+    assert!(kinds.contains(&BeatKind::Banter), "{kinds:?}");
+    let raw: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        raw["body"]["beats"].as_array().unwrap().len(),
+        beats.len(),
+        "the beats are stored, not implied"
+    );
+    let turns = script.turns();
+    assert_eq!(beats.last().unwrap().turns.end(), turns.len());
+    assert_eq!(turns[1].pace, Pace::Quick);
+    assert_eq!(turns[1].nonverbal[0].at, NonverbalAt::Over);
+    assert_eq!(turns.last().unwrap().callback_to, Some(0));
 }
 
 #[test]

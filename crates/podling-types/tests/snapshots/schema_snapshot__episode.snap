@@ -115,6 +115,20 @@ expression: schema
           "required": [
             "kind"
           ]
+        },
+        {
+          "description": "Warns on a turn that states a number or a year but cites no claim:\nthe likeliest place for banter to slip in an unsourced fact.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "uncited_figures"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
         }
       ]
     },

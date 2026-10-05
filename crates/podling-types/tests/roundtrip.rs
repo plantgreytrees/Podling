@@ -61,19 +61,49 @@ fn artifacts_roundtrip() {
     });
     let ledger = Ledger::from_claims([claim.clone()]);
     let quote = Quote::from_document(&doc, TextSpan::new(0, 27).unwrap()).unwrap();
-    let script = Script::new(
+    let host = SpeakerId("host".into());
+    let script = Script::with_beats(
         vec![Speaker {
-            id: SpeakerId("host".into()),
+            id: host.clone(),
             name: "Ada".into(),
             role: "host".into(),
         }],
-        vec![Turn {
-            speaker: SpeakerId("host".into()),
-            text: format!("One witness said: \"{}\"", quote.text()),
-            emotion: Emotion::Serious,
-            citations: vec![claim.id().clone()],
-            quotes: vec![quote],
-        }],
+        vec![
+            Turn {
+                speaker: host.clone(),
+                text: format!("One witness said: \"{}\"", quote.text()),
+                emotion: Emotion::Serious,
+                citations: vec![claim.id().clone()],
+                quotes: vec![quote],
+                pace: Pace::Normal,
+                nonverbal: vec![],
+                callback_to: None,
+            },
+            Turn {
+                speaker: host.clone(),
+                text: "Think about that.".into(),
+                emotion: Emotion::Somber,
+                citations: vec![],
+                quotes: vec![],
+                pace: Pace::LongPause,
+                nonverbal: vec![Nonverbal {
+                    kind: NonverbalKind::Backchannel { text: "Hm.".into() },
+                    by: host,
+                    at: NonverbalAt::Before,
+                }],
+                callback_to: Some(0),
+            },
+        ],
+        vec![
+            Beat {
+                kind: BeatKind::QuoteReading,
+                turns: TurnRange::new(0, 1).unwrap(),
+            },
+            Beat {
+                kind: BeatKind::Transition,
+                turns: TurnRange::new(1, 2).unwrap(),
+            },
+        ],
     )
     .unwrap();
     let report = AnalysisReport {
