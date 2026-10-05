@@ -3,6 +3,10 @@
 # make is Corroborated and a claim only one makes is SingleSource.
 #
 #   cargo run -p podling-cli -- run --episode examples/tunguska/episode.toml
+#
+# Everything here runs offline: the fake TTS speaks each turn as a sine tone
+# (one pitch per speaker), and the run ends with `episode.wav` beside the
+# artifacts.
 
 title = "The Tunguska event"
 topic = "the 1908 Tunguska explosion"
@@ -13,3 +17,25 @@ sources = [
   { kind = "local_files", root = "sources/expedition", independence_group = "expedition" },
 ]
 analysers = [{ kind = "quote_verifier" }]
+
+# The speakers, each pinned to a voice clip. The fake TTS ignores the clips'
+# sound, but they are read and hashed like real ones. These two are plain
+# tones made for this example (CC0-1.0); a real episode uses recorded voices,
+# and the licence of every clip is copied into audio.json.
+[[cast]]
+id = "host"
+name = "Mara"
+role = "host"
+voice = { reference = "voices/tone-host.wav", transcript = "A plain tone.", licence = "CC0-1.0" }
+
+[[cast]]
+id = "guest"
+name = "Tomas"
+role = "co-host"
+voice = { reference = "voices/tone-guest.wav", transcript = "A plain tone.", licence = "CC0-1.0" }
+
+[tts]
+kind = "fake"
+
+[asr]
+kind = "fake"

@@ -23,6 +23,9 @@ const STAGES: [&str; 6] = [
 /// The stages that run only with `[embedding]` and `[nli]` configured.
 const GROUNDING_STAGES: [&str; 3] = ["ground_claims", "cluster_claims", "score_stances"];
 
+/// Runs once per chunk with `[tts]` configured, as the example has.
+const SYNTH_STAGE: &str = "synthesize_chunk";
+
 fn example() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tunguska/episode.toml")
 }
@@ -40,7 +43,7 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
         .filter_map(|line| {
             let mut cols = line.split_whitespace();
             let (id, cache) = (cols.next()?, cols.next()?);
-            (STAGES.contains(&id) || GROUNDING_STAGES.contains(&id))
+            (STAGES.contains(&id) || GROUNDING_STAGES.contains(&id) || id == SYNTH_STAGE)
                 .then(|| (id.to_owned(), cache.to_owned()))
         })
         .collect()
@@ -92,13 +95,25 @@ fn second_run_of_the_example_is_all_cache_hits() {
             .success()
     };
 
-    let first = stage_rows(&run().get_output().stdout);
-    assert_eq!(first.len(), 6);
+    let first = run();
+    let stdout = String::from_utf8_lossy(&first.get_output().stdout).into_owned();
+    let first = stage_rows(stdout.as_bytes());
+    let chunks = first.iter().filter(|(id, _)| id == SYNTH_STAGE).count();
+    assert!(chunks > 0, "the example has [tts]: {stdout}");
+    assert_eq!(first.len(), STAGES.len() + chunks);
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
+    let wav = out.join("episode.wav");
+    assert!(
+        stdout.contains(&format!("episode audio: {}", wav.display())),
+        "{stdout}"
+    );
+    assert!(wav.is_file());
 
     let second = stage_rows(&run().get_output().stdout);
     let expected: Vec<_> = STAGES
         .iter()
+        .copied()
+        .chain(std::iter::repeat_n(SYNTH_STAGE, chunks))
         .map(|s| (s.to_string(), "hit".to_string()))
         .collect();
     assert_eq!(second, expected);
@@ -108,13 +123,18 @@ fn second_run_of_the_example_is_all_cache_hits() {
         .args(["cache", "stats"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("6 entries"));
+        .stdout(
+            predicate::str::starts_with(format!("{} entries,", STAGES.len() + chunks))
+                .and(predicate::str::contains(format!("; {chunks} audio blobs"))),
+        );
     podling(&cache).args(["cache", "clear"]).assert().success();
     podling(&cache)
         .args(["cache", "stats"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("0 entries"));
+        .stdout(predicate::str::starts_with(
+            "0 entries, 0 bytes; 0 audio blobs",
+        ));
 }
 
 #[test]

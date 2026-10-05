@@ -10,6 +10,7 @@ pub mod embedding;
 mod http;
 pub mod llm;
 pub mod nli;
+mod ollama;
 pub mod openai;
 pub mod openai_embeddings;
 pub mod sidecar;

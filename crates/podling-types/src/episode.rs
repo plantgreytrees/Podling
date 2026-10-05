@@ -100,6 +100,11 @@ pub enum LlmConfig {
         /// Cap on generated tokens per request; the server's default when unset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_output_tokens: Option<u32>,
+        /// Ask Ollama to unload the model once the script is written, so the
+        /// GPU is free for text-to-speech. Ollama only: `base_url` must end
+        /// in `/v1`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        unload_after: bool,
     },
 }
 
@@ -123,6 +128,11 @@ pub enum EmbeddingConfig {
         /// Per-request timeout in seconds; the provider's default when unset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_secs: Option<u64>,
+        /// Ask Ollama to unload the model once grounding is done, so the GPU
+        /// is free for the next model. Ollama only: `base_url` must end in
+        /// `/v1`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        unload_after: bool,
     },
 }
 
