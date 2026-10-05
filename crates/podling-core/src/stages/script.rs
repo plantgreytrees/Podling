@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 
 use podling_types::{
-    Chunk, ClaimId, Document, Ledger, Pace, Quote, Script, Speaker, TextSpan, Turn,
+    Beat, BeatKind, Chunk, ClaimId, Document, Ledger, Pace, Quote, Script, Speaker, TextSpan, Turn,
+    TurnRange,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -32,11 +33,12 @@ Reply with one JSON object: {\"cast\": [{\"id\": \"host\", \"name\": \"...\", \"
 /// text-only episode is asked for exactly what it was before.
 const AUDIO_RULES: &str = "\
 This script will be spoken aloud by text-to-speech, so it also carries delivery directions.
-6. Group the turns into `beats`: runs of consecutive turns, in order, that together cover every turn exactly once. Each beat is {\"kind\": <narration|banter|quote_reading|transition>, \"turns\": {\"start\": <index of its first turn>, \"end\": <index of its last turn + 1>}}, with turn indices counting from 0. The first beat starts at 0, each next beat starts where the previous one ended, and the last ends at the number of turns.
+6. Group the turns into beats: runs of consecutive turns with one purpose. Give the first turn of each beat a `beat`: narration, banter, quote_reading or transition. The turns after it have no `beat` until the next beat begins.
 7. Banter is quick back-and-forth between the hosts that reacts to what was just said. Banter adds no new facts: a fact in a banter turn needs its citation like any other.
 8. A turn may set `pace`, the gap before it: quick, normal (the default), beat, long_pause, or interrupt (it cuts in on the turn before). It may list `nonverbal` sounds, used sparingly: {\"kind\": <laugh|chuckle|sigh|backchannel>, \"by\": <cast id>, \"at\": <before|after|over>}, where a backchannel also has \"text\" (e.g. \"Mm-hm.\") and `over` plays while the turn is spoken. A turn that refers back to an earlier turn may set `callback_to` to that turn's index.
+9. Length: about 150 spoken words for each minute of target_minutes, in many short turns, covering every usable claim. Never repeat a line or a point already made: move on to the next claim instead.
 
-Add \"beats\": [...] to the reply object, and `pace`, `nonverbal` and `callback_to` to the turns that use them.";
+Add `beat`, `pace`, `nonverbal` and `callback_to` to the turns that use them. Example of a turn that begins a banter beat: {\"speaker\": \"guest\", \"text\": \"Hold on, really?\", \"emotion\": \"curious\", \"citations\": [], \"quotes\": [], \"beat\": \"banter\", \"pace\": \"quick\"}";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScriptInput {
@@ -77,7 +79,9 @@ impl Stage for WriteScript<'_> {
     //    anyone else is rejected.
     // 9: a script for audio carries beats, pace, nonverbal sounds and
     //    callbacks, checked by `Script::with_beats`.
-    const VERSION: u32 = 9;
+    // 10: beats are marked on the turn that begins each one and the stage
+    //     derives the ranges; audio scripts are told not to repeat themselves.
+    const VERSION: u32 = 10;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -170,8 +174,8 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
     if !input.audio {
         // Not asked for, so not kept: a text-only script keeps its old shape
         // whatever the model volunteers.
-        draft.beats.clear();
         for turn in &mut draft.turns {
+            turn.beat = None;
             turn.pace = Pace::Normal;
             turn.nonverbal.clear();
             turn.callback_to = None;
@@ -184,6 +188,7 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
         .iter()
         .map(|e| e.claim.id())
         .collect();
+    let beats = beats_from_marks(draft.turns.iter().map(|t| t.beat));
     let mut turns = Vec::with_capacity(draft.turns.len());
     for (i, turn) in draft.turns.into_iter().enumerate() {
         if let Some(unknown) = turn.citations.iter().find(|id| !known.contains(id)) {
@@ -219,7 +224,39 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
         check_declared_cast(&turns, &input.cast)?;
         input.cast.clone()
     };
-    Script::with_beats(cast, turns, draft.beats).map_err(|err| err.to_string())
+    Script::with_beats(cast, turns, beats).map_err(|err| err.to_string())
+}
+
+/// Turns per-turn beat marks into beats: each mark begins a beat that runs
+/// up to the next one, and an unmarked first turn begins a narration beat.
+/// The ranges are contiguous and cover every turn by construction, so the
+/// model never counts turns. With no marks at all (a text-only script, or a
+/// model that gave none) there are no stored beats, and `Script::beats`
+/// implies one narration beat per turn.
+fn beats_from_marks(marks: impl Iterator<Item = Option<BeatKind>>) -> Vec<Beat> {
+    let marks: Vec<Option<BeatKind>> = marks.collect();
+    if marks.iter().all(Option::is_none) {
+        return Vec::new();
+    }
+    let starts: Vec<(usize, BeatKind)> = marks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, mark)| match (mark, i) {
+            (Some(kind), _) => Some((i, *kind)),
+            (None, 0) => Some((0, BeatKind::Narration)),
+            (None, _) => None,
+        })
+        .collect();
+    // Each beat ends where the next begins; the last at the final turn.
+    let ends = starts.iter().skip(1).map(|&(i, _)| i).chain([marks.len()]);
+    starts
+        .iter()
+        .zip(ends)
+        .map(|(&(start, kind), end)| Beat {
+            kind,
+            turns: TurnRange::new(start, end).expect("starts are increasing"),
+        })
+        .collect()
 }
 
 /// Every turn must be spoken by a declared speaker: only they have a voice.
@@ -510,7 +547,7 @@ mod tests {
         assert!(AUDIO_RULES.contains("Banter adds no new facts"));
         assert_eq!(request.input["audio"], true);
 
-        use podling_types::{BeatKind, Pace};
+        use podling_types::Pace;
         let kinds: Vec<BeatKind> = script.beats().iter().map(|b| b.kind).collect();
         assert_eq!(
             kinds,
@@ -540,12 +577,13 @@ mod tests {
         assert!(written.get("beats").is_none(), "{written}");
     }
 
-    /// Answers with beats that skip a turn.
-    struct Gappy;
+    /// Marks two beats, leaving the first turn unmarked, and also sends an
+    /// old-style `beats` list with an inclusive end, which is ignored.
+    struct Marking;
 
-    impl LlmProvider for Gappy {
+    impl LlmProvider for Marking {
         fn id(&self) -> &str {
-            "gappy"
+            "marking"
         }
         fn fingerprint(&self) -> Value {
             Value::Null
@@ -554,8 +592,11 @@ mod tests {
             let text = json!({
                 "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
                 "turns": [{ "speaker": "host", "text": "One." },
-                          { "speaker": "host", "text": "Two." }],
-                "beats": [{ "kind": "narration", "turns": { "start": 1, "end": 2 } }],
+                          { "speaker": "host", "text": "Two.", "beat": "banter" },
+                          { "speaker": "host", "text": "Three." },
+                          { "speaker": "host", "text": "Four.", "beat": "banter" },
+                          { "speaker": "host", "text": "Bye.", "beat": "transition" }],
+                "beats": [{ "kind": "narration", "turns": { "start": 0, "end": 0 } }],
             });
             Ok(Completion {
                 text: text.to_string(),
@@ -565,8 +606,7 @@ mod tests {
 
     #[test]
     fn directions_a_text_only_script_did_not_ask_for_are_dropped() {
-        // Gappy's beats are even invalid; unasked for, they are not checked.
-        let script = WriteScript { llm: &Gappy }
+        let script = WriteScript { llm: &Marking }
             .run(&empty_input(vec![], vec![]))
             .unwrap();
         let written = serde_json::to_value(&script).unwrap();
@@ -574,16 +614,37 @@ mod tests {
     }
 
     #[test]
-    fn beats_that_leave_a_turn_out_are_rejected_with_the_reason() {
+    fn beats_run_from_each_mark_to_the_next() {
         let input = ScriptInput {
             audio: true,
             ..empty_input(vec![], vec![])
         };
-        let err = WriteScript { llm: &Gappy }.run(&input).unwrap_err();
-        assert!(
-            reason(&err).contains("beat 0 starts at turn 1, so turns 0..1 are in no beat"),
-            "{err}"
+        let script = WriteScript { llm: &Marking }.run(&input).unwrap();
+        let beats: Vec<(BeatKind, usize, usize)> = script
+            .beats()
+            .iter()
+            .map(|b| (b.kind, b.turns.start(), b.turns.end()))
+            .collect();
+        assert_eq!(
+            beats,
+            [
+                (BeatKind::Narration, 0, 1),
+                (BeatKind::Banter, 1, 3),
+                (BeatKind::Banter, 3, 4),
+                (BeatKind::Transition, 4, 5),
+            ],
+            "two banter beats in a row stay two beats"
         );
+    }
+
+    #[test]
+    fn no_marks_give_no_stored_beats() {
+        let marks = [None, None, None];
+        assert!(beats_from_marks(marks.into_iter()).is_empty());
+        assert!(beats_from_marks(std::iter::empty()).is_empty());
+        let one = beats_from_marks([Some(BeatKind::Banter)].into_iter());
+        assert_eq!(one.len(), 1);
+        assert_eq!((one[0].turns.start(), one[0].turns.end()), (0, 1));
     }
 
     fn speaker(id: &str, name: &str) -> Speaker {

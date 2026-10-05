@@ -1,8 +1,8 @@
 //! Text-generation providers and the output shapes they must produce.
 
 use podling_types::{
-    Beat, BeatKind, ChunkId, ClaimId, ClaimStatus, Emotion, Ledger, Nonverbal, NonverbalAt,
-    NonverbalKind, Pace, Speaker, SpeakerId, TurnRange,
+    BeatKind, ChunkId, ClaimId, ClaimStatus, Emotion, Ledger, Nonverbal, NonverbalAt,
+    NonverbalKind, Pace, Speaker, SpeakerId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21,7 +21,9 @@ use crate::text::sentences;
 /// 4: the script request may carry the episode's fixed `cast`.
 /// 5: a script for audio (`"audio": true`) adds beats, pace, nonverbal
 ///    sounds and callbacks.
-pub const PROMPT_VERSION: u32 = 5;
+/// 6: beats are marked on the turn that begins each one (`beat`), not listed
+///    as index ranges: llama3.1:8b wrote inclusive ends for exclusive ones.
+pub const PROMPT_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,7 +35,8 @@ pub enum LlmTask {
     /// "sources": [SourceText], "cast"?: [Speaker], "audio"?: true }`.
     /// Output: JSON `ScriptDraft`. `cast` is present only when the episode
     /// fixes it; `audio` only when the script will be spoken, and then the
-    /// draft may carry beats, pace, nonverbal sounds and callbacks.
+    /// draft's turns may carry beat marks, pace, nonverbal sounds and
+    /// callbacks.
     WriteScript,
 }
 
@@ -128,10 +131,6 @@ pub struct NumberedSentence {
 pub struct ScriptDraft {
     pub cast: Vec<Speaker>,
     pub turns: Vec<DraftTurn>,
-    /// Only asked for when the script will be spoken; checked by
-    /// `Script::with_beats`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub beats: Vec<Beat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +146,12 @@ pub struct DraftTurn {
     pub citations: Vec<ClaimId>,
     #[serde(default)]
     pub quotes: Vec<QuoteRef>,
+    /// Set on the first turn of each beat; the turns after it, up to the
+    /// next mark, belong to the same beat. Only asked for when the script
+    /// will be spoken. The script stage turns the marks into ranges, so the
+    /// model never counts turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat: Option<BeatKind>,
     #[serde(default, skip_serializing_if = "Pace::is_normal")]
     pub pace: Pace,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -164,6 +169,7 @@ impl DraftTurn {
             emotion,
             citations: vec![],
             quotes: vec![],
+            beat: None,
             pace: Pace::Normal,
             nonverbal: vec![],
             callback_to: None,
@@ -294,39 +300,28 @@ impl FakeLlm {
             "That's all for today.".into(),
             Emotion::Neutral,
         ));
-        let mut draft = ScriptDraft {
-            cast,
-            turns,
-            beats: vec![],
-        };
+        let mut draft = ScriptDraft { cast, turns };
         if input.get("audio") == Some(&Value::Bool(true)) {
             Self::direct_for_audio(&mut draft, &host);
         }
         Ok(draft)
     }
 
-    /// Adds one of each audio direction: beats (the opening, the claims as
-    /// banter, the sign-off), a quick reply with the host's "mm-hm" over it,
-    /// and a sign-off that pauses and calls back to the opening.
+    /// Adds one of each audio direction: beat marks (the opening, the claims
+    /// as banter, the sign-off), a quick reply with the host's "mm-hm" over
+    /// it, and a sign-off that pauses and calls back to the opening.
     fn direct_for_audio(draft: &mut ScriptDraft, host: &SpeakerId) {
         let n = draft.turns.len();
-        let range = |start, end| TurnRange::new(start, end).expect("start < end");
-        let opening = if draft.turns[0].quotes.is_empty() {
+        let opening = &mut draft.turns[0];
+        opening.beat = Some(if opening.quotes.is_empty() {
             BeatKind::Narration
         } else {
             BeatKind::QuoteReading
-        };
-        draft.beats.push(Beat {
-            kind: opening,
-            turns: range(0, 1),
         });
         // Turns 1..n-1 are the claims, if the ledger had any usable ones.
         if n > 2 {
-            draft.beats.push(Beat {
-                kind: BeatKind::Banter,
-                turns: range(1, n - 1),
-            });
             let reply = &mut draft.turns[1];
+            reply.beat = Some(BeatKind::Banter);
             reply.pace = Pace::Quick;
             reply.nonverbal.push(Nonverbal {
                 kind: NonverbalKind::Backchannel {
@@ -336,11 +331,8 @@ impl FakeLlm {
                 at: NonverbalAt::Over,
             });
         }
-        draft.beats.push(Beat {
-            kind: BeatKind::Transition,
-            turns: range(n - 1, n),
-        });
         let sign_off = &mut draft.turns[n - 1];
+        sign_off.beat = Some(BeatKind::Transition);
         sign_off.pace = Pace::LongPause;
         sign_off.callback_to = Some(0);
     }
@@ -386,7 +378,8 @@ impl LlmProvider for FakeLlm {
         // 4: a declared cast in the script request is used.
         // 5: a script request for audio gets beats, pace, a backchannel and
         //    a callback.
-        json!({ "provider": "fake", "version": 5 })
+        // 6: beats are marked on the turns that begin them.
+        json!({ "provider": "fake", "version": 6 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {

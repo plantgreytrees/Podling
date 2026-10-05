@@ -1,8 +1,9 @@
 # Hand-off: next goal
 
 > Written 2026-10-01 at the end of Phase 3 (embeddings and NLI in the claim
-> ledger); updated 2026-10-04 after NLI grounding in extraction. Both are merged
-> into `main`.
+> ledger); updated 2026-10-04 after NLI grounding in extraction, and 2026-10-05
+> after Phase 5 (episode audio), which was built before Phase 4. Phase 5 is on
+> the branch `worktree-phase5-tts-plan` until it is merged into `main`.
 
 ## Goal
 
@@ -31,6 +32,18 @@ evidence stores the premise span and the scores that decided it
 (`EvidenceBasis::Nli` in `crates/podling-types/src/claim.rs`). Nothing reads a
 Contested claim yet except the script model, which sees only its id, text and
 status (`LedgerClaim` in `crates/podling-core/src/plugin/llm.rs`).
+
+## Where Phase 5 leaves it
+
+With `[tts]`, a run ends in `episode.wav`: Qwen3-TTS in a sidecar worker speaks
+each turn in a cloned voice, Whisper (CPU) checks every chunk, and the assembler
+paces, mixes and normalises the episode (see `docs/architecture.md`, "Episode
+audio"). Two things are open:
+- **Listening.** Whether per-turn banter sounds natural, and how the seams and
+  backchannels sound, needs a human ear (plan tasks 1.4 and 10.3). If per-turn
+  banter is rejected, the Dia2 dialogue adapter is the planned fallback.
+- **The adjudicator and audio.** An adjudicator that adds script turns needs
+  nothing new from the audio stages: they read the script only.
 
 ## Design constraints
 
@@ -76,10 +89,12 @@ The adjudicator would not catch these either, since only Contested claims reach 
 
 ## Before you start
 
-- Start from `main`. There is no git remote, so there is nothing to push.
+- Start from `main`. The remote `origin` is `github.com/plantgreytrees/Podling`.
 - Ollama runs in the docker container `infra_docker_compose-ollama-1` on port
   11434, with `llama3.1:8b` and `nomic-embed-text` pulled. `cargo` is at
-  `~/.cargo/bin`, which isn't on the default PATH.
+  `~/.cargo/bin`, which isn't on the default PATH. The container has no GPU,
+  and when its VM swaps it runs at well under 1 token/s; the Phase 5 live runs
+  used a native Ollama on the GPU instead (see that plan's "Live results").
 - The NLI model is in `~/.cache/podling-models/nli-deberta-v3-base`. The live
   example expects it at `examples/tunguska/models/nli-deberta-v3-base`
   (gitignored); a symlink is enough.
@@ -90,7 +105,9 @@ The adjudicator would not catch these either, since only Contested claims reach 
 ## Out of scope
 
 - Token budgeting. `WriteScript` only warns over 24 KiB.
-- TTS, MCP source connectors, PDF ingestion.
+- MCP source connectors, PDF ingestion.
+- Parallel synthesis, and the Dia2 dialogue adapter (unless the listening pass
+  rejects per-turn banter).
 
 ## Where things stand
 
@@ -101,3 +118,4 @@ The adjudicator would not catch these either, since only Contested claims reach 
 | [phase3-nli-ledger](plans/phase3-nli-ledger.md) | complete; live runs recorded in the plan ("Live results") |
 | [nli-extraction-grounding](plans/nli-extraction-grounding.md) | complete; live runs recorded in the plan ("Live results") |
 | [scrutinise-nli-extraction-grounding](plans/scrutinise-nli-extraction-grounding.md) | complete; premise windows capped at 120 words |
+| [phase5-tts-audio](plans/phase5-tts-audio.md) | Phase 5, episode audio: all units merged on `worktree-phase5-tts-plan`; live runs in the plan ("Live results"); listening passes (1.4, 10.3) pending |
