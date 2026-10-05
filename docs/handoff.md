@@ -92,7 +92,9 @@ The adjudicator would not catch these either, since only Contested claims reach 
 - Start from `main`. The remote `origin` is `github.com/plantgreytrees/Podling`.
 - Ollama runs in the docker container `infra_docker_compose-ollama-1` on port
   11434, with `llama3.1:8b` and `nomic-embed-text` pulled. `cargo` is at
-  `~/.cargo/bin`, which isn't on the default PATH.
+  `~/.cargo/bin`, which isn't on the default PATH. The container has no GPU,
+  and when its VM swaps it runs at well under 1 token/s; the Phase 5 live runs
+  used a native Ollama on the GPU instead (see that plan's "Live results").
 - The NLI model is in `~/.cache/podling-models/nli-deberta-v3-base`. The live
   example expects it at `examples/tunguska/models/nli-deberta-v3-base`
   (gitignored); a symlink is enough.

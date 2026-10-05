@@ -524,6 +524,53 @@ open question for the listening pass (1.4).
    desktop holds ~1.2 GB of the 7.6 GB card, which is why MOSS fails. 4.4's OOM hint should also
    mention the desktop.
 
+## Live results (unit 10, 2026-10-05)
+
+`examples/tunguska/episode-tts.toml` with llama3.1:8b, `nomic-embed-text`, NLI on the CPU, Qwen3-TTS
+1.7B Base in the sidecar, Whisper `base.en` on the CPU, voices LibriTTS-R 4446/1089 (CC-BY-4.0).
+RTX 5060, 8,151 MiB as the driver reports it. VRAM was sampled once a second per process with
+`nvidia-smi`.
+
+**Where Ollama ran.** The docker Ollama container has no GPU, and its VM was swapping (0.36 tokens/s):
+the script stage timed out after 1,800 s. The runs below use a native Ollama 0.35.1 on the GPU
+(29 tokens/s, runner process 5,410 MiB). That is the stricter test of the VRAM rule, because the LLM
+does compete with the sidecar for the card. Only the base URL differed from the committed example.
+
+**10.2: 10-minute episode, cold cache.** Exit 0 in 247 s; the script stage took 108 s (one attempt
+rejected for citing a claim not in the ledger).
+
+| | |
+|---|---|
+| Script | 18 turns, 216 words, 18 beats (narration and banter alternating), 8 `quick` paces, 0 quotes |
+| LLM unload → sidecar | llama unloaded, then the sidecar spawned (ready in 232 ms) and exited with 143 (SIGTERM) after 122.9 s |
+| Peak VRAM, sidecar process | **5,120 MiB** (device 6,389 of 8,151 during TTS; the llama runner was absent throughout) |
+| Peak VRAM, device, whole run | 6,888 MiB, during the LLM stage, with no sidecar running |
+| Verification | 18/18 chunks verified, mean WER 3.1 ‰, 0 quote misses; 6 chunks used a take after 0 (one passed on take 1 after 100 ‰, one on take 2 after 91 ‰ twice) |
+| `episode.wav` | 82.3 s, −16.17 LUFS, −1.45 dBTP, PCM s16le 48 kHz mono; `episode.opus` decodes (82.3 s) |
+| Findings | info (quote verifier), warning (`uncited_figures`: "1908") |
+
+**10.3: 30-minute episode, then one edited turn.** The first try was cut off at the 6,000-token
+output cap while the model looped. The second (cold for the script) ran in 137 s and wrote 10 turns,
+167 words and 2 quotes: 10 chunks, 9 verified, `episode.wav` 60.6 s at −16.0 LUFS and −1.00 dBTP,
+sidecar peak 5,356 MiB (device 6,640 during TTS, 6,694 overall during the LLM stage). It exited 1 by
+design: one `Error` finding, because Whisper heard "Leonid Kulik reached the site in 1927." as
+"Leonid **Koolik**…" on every take (best 72 ‰). That is a proper noun spelt by ear, not a speech error;
+a per-episode vocabulary for the scorer would fix it, and is not built.
+
+Editing turn 2 of the cached script ("What else do we have?" → "What else is there?") and rerunning
+took 12 s. Every stage up to the script hit the cache; `synthesize_chunk` had 2 misses and 16 hits,
+and `transcribe_chunk` the same. The 2 misses are the two takes of the one edited chunk (2..3), so
+exactly one chunk was re-synthesised; the sidecar ran for 11.5 s.
+
+**What a "30-minute" target gives.** About 1 minute. The script length is capped by the grounded
+ledger (9 usable claims from the Tunguska sources), not by `target_minutes`. Audio rule 9 now forbids
+repeating a point, which is what the model did when asked to fill 30 minutes. Longer episodes need
+more sources, not a longer target.
+
+**Listening (pending, the user's).** Seams, banter turn-taking and backchannels have not been judged
+by ear: `out-ten10/episode.wav` and `out-thirty/episode.wav` are the files to listen to. This closes
+the listening part of 10.3 and 1.4.
+
 ## Scope Steps (executable core)
 
 ### Step 1 — tts-bakeoff (., python, normal)
@@ -625,8 +672,8 @@ Depends on: beat-chunker, asr-verify
 Tooling: implementer · gates docs-curator · guards cargo test
 Depends on: full-assembler
 - [x] 10.1 Add `examples/tunguska/episode-tts.toml` (Ollama + sidecar profile + CC0 voices) and `voices/README.md` with the download commands and licences (clips gitignored) → accept: file parses; README lists each clip's licence. *(LibriTTS-R test-clean 4446/1089 clips, CC-BY-4.0, not CC0: the bake-off voices, credited in `voices/README.md`, whose curl|tar command was run and gave byte-identical clips. `every_example_episode_parses` loads the file, runs `check_audio`, and requires each cast licence to be CC0-1.0 or CC-BY-4.0 and named in the README.)*
-- [ ] 10.2 Live run: 10-minute Tunguska episode, cold cache → accept: `episode.wav` plays; all chunks verified; peak VRAM of the sidecar process ≤ 7.0 GB (device total recorded beside it); numbers recorded under "Live results".
-- [ ] 10.3 Live run: 30-minute episode, then edit one turn and rerun → accept: one chunk re-synthesised; listening notes on seams and banter recorded.
+- [x] 10.2 Live run: 10-minute Tunguska episode, cold cache → accept: `episode.wav` plays; all chunks verified; peak VRAM of the sidecar process ≤ 7.0 GB (device total recorded beside it); numbers recorded under "Live results". *(Exit 0; 18/18 chunks verified; sidecar peak 5,120 MiB, device 6,389 of 8,151 during TTS, with llama unloaded first; `episode.wav` decodes at −16.17 LUFS, −1.45 dBTP. See "Live results".)*
+- [ ] 10.3 Live run: 30-minute episode, then edit one turn and rerun → accept: one chunk re-synthesised; listening notes on seams and banter recorded. *(Machine part done: one edited turn re-synthesised exactly one chunk (2 takes), every upstream stage cached. The 30-minute target gives about 1 minute, capped by the ledger. Listening notes pending with the user, so this stays open.)*
 - [x] 10.4 Update `docs/architecture.md`: pipeline, TTS/ASR rows in the plugin table, sidecar protocol and lifecycle, blob cache, bump rule for the TTS fingerprint, remove "TTS and ASR provider traits" from Deferred → accept: docs-curator passes. *(Artifact flow, plugin table (TTS, ASR, `UncitedFigures`), new "Episode audio" section, TTS/ASR fingerprints under bump rule 5, Deferred updated. Docs-curator check done in root-only mode: every relative link resolves and every claim was checked against the code.)*
 - [x] 10.5 Update README config table (`[[cast]]`, `[tts]`, `[asr]`, `sidecars.toml`) → accept: every new key documented. *("Episode audio" section: `[[cast]]`, `tts.*`, `asr.*`, `mix.*`, `unload_after`, `sidecars.toml`, `--sidecars`.)*
 - [x] 10.6 Update `docs/handoff.md` "Where things stand" and "Out of scope" → accept: Phase 5 row present. *("Where Phase 5 leaves it", Out of scope, and a phase5-tts-audio row in "Where things stand".)*
