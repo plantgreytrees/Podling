@@ -42,7 +42,7 @@
 | [phase5-tts-audio](./phase5-tts-audio.md) | 7 | beat-chunker | crates/podling-core/src/stages/plan_chunks.rs | rust | normal | MERGED | 2026-10-05 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 8 | asr-verify | crates/podling-core/src/plugin/whisper.rs | rust | normal | MERGED | 2026-10-05 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 9 | full-assembler | crates/podling-core/src/stages/assemble.rs | rust | normal | MERGED | 2026-10-05 |
-| [phase5-tts-audio](./phase5-tts-audio.md) | 10 | live-and-docs | examples/tunguska, docs | markdown | normal | PENDING | 2026-10-04 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 10 | live-and-docs | examples/tunguska, docs | markdown | normal | MERGED | 2026-10-06 |
 | [nli-extraction-grounding](./nli-extraction-grounding.md) | 1 | windows-helper | crates/podling-core/src/stages/windows.rs | rust | normal | MERGED | 2026-10-04 |
 | [nli-extraction-grounding](./nli-extraction-grounding.md) | 2 | ground-claims-stage | crates/podling-core/src/stages/ground_claims.rs | rust | normal | MERGED | 2026-10-04 |
 | [nli-extraction-grounding](./nli-extraction-grounding.md) | 3 | pipeline-wiring | crates/podling-core/src/pipeline.rs, crates/podling-cli | rust | normal | MERGED | 2026-10-04 |
