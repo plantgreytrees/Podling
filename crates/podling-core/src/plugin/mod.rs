@@ -102,6 +102,11 @@ pub fn check_audio(spec: &EpisodeSpec) -> Result<()> {
             });
         }
     }
+    if spec.mix.is_some() && spec.tts.is_none() {
+        return Err(config(
+            "[mix] puts the synthesised audio together, so it needs [tts]",
+        ));
+    }
     match (&spec.tts, &spec.asr) {
         (None, None) => Ok(()),
         (None, Some(_)) => Err(config("[asr] checks synthesised audio, so it needs [tts]")),
@@ -297,6 +302,16 @@ mod tests {
              asr = {{ kind = \"fake\" }}\n{CAST}"
         ));
         assert!(message.contains("takes"), "{message}");
+
+        let mix = "mix = { encode = \"opus\", gaps_ms = { beat = 700 } }";
+        let message = audio_error(mix);
+        assert!(message.contains("[mix]"), "{message}");
+        let spec = episode(&format!("{mix}\n{full}"));
+        check_audio(&spec).unwrap();
+        let mix = spec.mix.unwrap();
+        // Keys left out keep their defaults.
+        assert_eq!((mix.gaps_ms.beat, mix.gaps_ms.quick), (700, 120));
+        assert_eq!(mix.encode, Some(podling_types::Encode::Opus));
     }
 
     #[test]

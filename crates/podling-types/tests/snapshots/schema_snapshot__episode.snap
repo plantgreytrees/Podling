@@ -46,6 +46,17 @@ expression: schema
     "llm": {
       "$ref": "#/$defs/LlmConfig"
     },
+    "mix": {
+      "description": "Gaps between turns and an optional compressed copy. Needs `[tts]`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MixConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "mode": {
       "$ref": "#/$defs/Mode",
       "default": "non_fiction"
@@ -262,6 +273,63 @@ expression: schema
         }
       ]
     },
+    "Encode": {
+      "description": "A compressed format for the episode, beside `episode.wav`.",
+      "oneOf": [
+        {
+          "description": "Ogg Opus, 64 kbit/s: small, and what podcast apps play natively.",
+          "type": "string",
+          "const": "opus"
+        },
+        {
+          "description": "MP3, VBR around 130 kbit/s: plays everywhere.",
+          "type": "string",
+          "const": "mp3"
+        }
+      ]
+    },
+    "Gaps": {
+      "description": "Milliseconds of silence before a turn, by its pace; `interrupt` is how far\nan interrupting turn overlaps the one before it. Each key is optional.",
+      "type": "object",
+      "properties": {
+        "beat": {
+          "type": "integer",
+          "format": "uint16",
+          "default": 600,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "interrupt": {
+          "type": "integer",
+          "format": "uint16",
+          "default": 150,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "long_pause": {
+          "type": "integer",
+          "format": "uint16",
+          "default": 1000,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "normal": {
+          "type": "integer",
+          "format": "uint16",
+          "default": 300,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "quick": {
+          "type": "integer",
+          "format": "uint16",
+          "default": 120,
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
     "LlmConfig": {
       "oneOf": [
         {
@@ -340,6 +408,35 @@ expression: schema
           ]
         }
       ]
+    },
+    "MixConfig": {
+      "description": "How the synthesised chunks are put together into one episode file.\nApplies to every TTS backend, so it is a section of its own rather than\npart of `[tts]` (whose fields depend on its `kind`).",
+      "type": "object",
+      "properties": {
+        "encode": {
+          "description": "Also writes the episode in a compressed format, through `ffmpeg`\n(which must be on `PATH`). `episode.wav` is always written.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Encode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gaps_ms": {
+          "description": "Silence before a turn, by the turn's pace.",
+          "$ref": "#/$defs/Gaps",
+          "default": {
+            "beat": 600,
+            "interrupt": 150,
+            "long_pause": 1000,
+            "normal": 300,
+            "quick": 120
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "Mode": {
       "description": "What kind of episode to make. Only non-fiction exists today; fiction modes\nare planned, so matches on this enum must stay open-ended.",

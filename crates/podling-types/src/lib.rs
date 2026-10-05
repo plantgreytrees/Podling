@@ -22,8 +22,8 @@ pub use claim::{Claim, Evidence, EvidenceBasis, InvalidPerMille, PerMille, Stanc
 pub use document::{Chunk, Document, SourceRef, TextSpan};
 pub use envelope::{ArtifactKind, Envelope, SCHEMA_VERSION};
 pub use episode::{
-    AnalyserConfig, AsrConfig, CastMember, EmbeddingConfig, EpisodeSpec, LlmConfig, Mode,
-    NliConfig, SourceSpec, TtsConfig, VoiceRef, VoiceRefError,
+    AnalyserConfig, AsrConfig, CastMember, EmbeddingConfig, Encode, EpisodeSpec, Gaps, LlmConfig,
+    MixConfig, Mode, NliConfig, SourceSpec, TtsConfig, VoiceRef, VoiceRefError,
 };
 pub use ids::{ChunkId, ClaimId, ContentHash, DocumentId, SourceId, SpeakerId};
 pub use ledger::{ClaimStatus, Ledger, LedgerEntry, classify};
