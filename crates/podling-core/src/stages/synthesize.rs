@@ -425,7 +425,8 @@ pub fn synthesize_script(
             turns,
             context,
         };
-        let expected: Vec<String> = chunk.turns.iter().map(|t| t.text.clone()).collect();
+        // What is said, own backchannels included: that is what the ASR hears.
+        let expected: Vec<String> = chunk.turns.iter().map(SpokenTurn::said).collect();
         let words: usize = expected.iter().map(|t| t.split_whitespace().count()).sum();
         let quotes = quotes_in(script, &planned.pieces);
         let banter = planned
@@ -724,10 +725,10 @@ fn context_for(
 }
 #[cfg(test)]
 mod tests {
-    use podling_types::{Beat, Emotion, Pace, Speaker, Turn, TurnRange};
+    use podling_types::{Beat, Emotion, Nonverbal, Pace, Speaker, Turn, TurnRange};
 
     use super::*;
-    use crate::plugin::{FakeAsr, FakeTts};
+    use crate::plugin::{AsrRequest, FakeAsr, FakeTts, Segment};
 
     fn cast_member(dir: &Path, id: &str, clip: &[u8]) -> CastMember {
         fs::write(dir.join(format!("{id}.wav")), clip).unwrap();
@@ -888,6 +889,60 @@ mod tests {
         assert!(record.verified);
         assert_eq!((record.take, record.wer_pm.get()), (0, 0));
         assert!(f.blobs.get(&chunks[1].record.blob).unwrap().is_some());
+    }
+
+    /// Hears the same words whatever it is sent, as a real recogniser hears
+    /// only the audio: never reads `expected`.
+    struct Hears(&'static str);
+
+    impl AsrProvider for Hears {
+        fn id(&self) -> &str {
+            "hears"
+        }
+
+        fn fingerprint(&self) -> Value {
+            json!({ "hears": self.0 })
+        }
+
+        fn transcribe(&mut self, request: &AsrRequest<'_>) -> Result<Transcript> {
+            Ok(Transcript {
+                segments: vec![Segment {
+                    text: self.0.into(),
+                    start: 0.0,
+                    end: request.pcm.seconds(),
+                }],
+            })
+        }
+    }
+
+    #[test]
+    fn a_turn_with_its_speakers_own_backchannel_verifies_first_time() {
+        let f = fixture();
+        let mut script = script(&[("ada", "One two three four five.")]);
+        let mut turns = script.turns().to_vec();
+        turns[0].nonverbal = vec![Nonverbal {
+            kind: NonverbalKind::Backchannel {
+                text: "Mm-hm.".into(),
+            },
+            by: SpeakerId("ada".into()),
+            at: NonverbalAt::Before,
+        }];
+        script = Script::new(script.cast().to_vec(), turns).unwrap();
+
+        // The TTS says the backchannel in line, so that is what is heard.
+        let chunks = synthesize_script(
+            &script,
+            &f.voices,
+            &mut FakeTts::default(),
+            checked(&mut Hears("Mm-hm. One two three four five.")),
+            &f.blobs,
+            None,
+            &mut RunReport::default(),
+        )
+        .unwrap();
+        let record = &chunks[0].record;
+        assert!(record.verified, "wer {} ‰", record.wer_pm.get());
+        assert_eq!((record.take, record.wer_pm.get()), (0, 0));
     }
 
     #[test]
