@@ -25,6 +25,7 @@ const GROUNDING_STAGES: [&str; 3] = ["ground_claims", "cluster_claims", "score_s
 
 /// Runs once per chunk with `[tts]` configured, as the example has.
 const SYNTH_STAGE: &str = "synthesize_chunk";
+const TRANSCRIBE_STAGE: &str = "transcribe_chunk";
 
 fn example() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tunguska/episode.toml")
@@ -43,7 +44,10 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
         .filter_map(|line| {
             let mut cols = line.split_whitespace();
             let (id, cache) = (cols.next()?, cols.next()?);
-            (STAGES.contains(&id) || GROUNDING_STAGES.contains(&id) || id == SYNTH_STAGE)
+            (STAGES.contains(&id)
+                || GROUNDING_STAGES.contains(&id)
+                || id == SYNTH_STAGE
+                || id == TRANSCRIBE_STAGE)
                 .then(|| (id.to_owned(), cache.to_owned()))
         })
         .collect()
@@ -100,7 +104,8 @@ fn second_run_of_the_example_is_all_cache_hits() {
     let first = stage_rows(stdout.as_bytes());
     let chunks = first.iter().filter(|(id, _)| id == SYNTH_STAGE).count();
     assert!(chunks > 0, "the example has [tts]: {stdout}");
-    assert_eq!(first.len(), STAGES.len() + chunks);
+    // Each chunk is synthesised, then transcribed to check it.
+    assert_eq!(first.len(), STAGES.len() + 2 * chunks);
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
     let wav = out.join("episode.wav");
     assert!(
@@ -113,7 +118,7 @@ fn second_run_of_the_example_is_all_cache_hits() {
     let expected: Vec<_> = STAGES
         .iter()
         .copied()
-        .chain(std::iter::repeat_n(SYNTH_STAGE, chunks))
+        .chain(std::iter::repeat_n([SYNTH_STAGE, TRANSCRIBE_STAGE], chunks).flatten())
         .map(|s| (s.to_string(), "hit".to_string()))
         .collect();
     assert_eq!(second, expected);
@@ -124,7 +129,7 @@ fn second_run_of_the_example_is_all_cache_hits() {
         .assert()
         .success()
         .stdout(
-            predicate::str::starts_with(format!("{} entries,", STAGES.len() + chunks))
+            predicate::str::starts_with(format!("{} entries,", STAGES.len() + 2 * chunks))
                 .and(predicate::str::contains(format!("; {chunks} audio blobs"))),
         );
     podling(&cache).args(["cache", "clear"]).assert().success();

@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use podling_types::{
-    ArtifactKind, AudioManifest, Document, DocumentId, Envelope, EpisodeAudio, EpisodeSpec, Script,
-    SourceRef, Speaker, TtsConfig,
+    ArtifactKind, AsrConfig, AudioManifest, Document, DocumentId, Envelope, EpisodeAudio,
+    EpisodeSpec, Finding, PerMille, Script, SourceRef, Speaker, TtsConfig,
 };
 use serde::Serialize;
 
@@ -17,15 +17,15 @@ use crate::audio::{Pcm, WavFormat};
 use crate::cache::{BlobStore, DiskCache};
 use crate::error::{CoreError, Result};
 use crate::plugin::{
-    LlmProvider, build_analysers, build_grounding, build_llm, build_sources, build_tts,
-    check_audio, default_profiles_path, load_profile,
+    AsrProvider, LlmProvider, build_analysers, build_asr, build_grounding, build_llm,
+    build_sources, build_tts, check_audio, default_profiles_path, load_profile,
 };
 use crate::stage::{GroundingCounts, RunReport, cached};
 use crate::stages::assemble::{SAMPLE_RATE, assemble};
 use crate::stages::{
     Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
-    GroundClaims, GroundInput, Ingest, ScoreStances, ScriptInput, StanceInput, Voices, WriteScript,
-    synthesize_script,
+    GroundClaims, GroundInput, Ingest, ScoreStances, ScriptInput, StanceInput, Takes, Verification,
+    Voices, WriteScript, synthesize_script, verify_audio,
 };
 
 /// The episode's audio file, in the output directory.
@@ -47,7 +47,7 @@ pub fn run(
     out_dir: &Path,
 ) -> Result<RunReport> {
     let llm = build_llm(&spec.llm)?;
-    run_inner(spec, llm.as_ref(), None, base_dir, cache, out_dir)
+    run_inner(spec, llm.as_ref(), None, None, base_dir, cache, out_dir)
 }
 
 /// As [`run`], with sidecar profiles read from `sidecars` instead of the
@@ -60,7 +60,15 @@ pub fn run_with_sidecars(
     out_dir: &Path,
 ) -> Result<RunReport> {
     let llm = build_llm(&spec.llm)?;
-    run_inner(spec, llm.as_ref(), Some(sidecars), base_dir, cache, out_dir)
+    run_inner(
+        spec,
+        llm.as_ref(),
+        Some(sidecars),
+        None,
+        base_dir,
+        cache,
+        out_dir,
+    )
 }
 
 /// As [`run`], but with the LLM provider supplied instead of built from
@@ -72,13 +80,28 @@ pub fn run_with_llm(
     cache: Option<&DiskCache>,
     out_dir: &Path,
 ) -> Result<RunReport> {
-    run_inner(spec, llm, None, base_dir, cache, out_dir)
+    run_inner(spec, llm, None, None, base_dir, cache, out_dir)
+}
+
+/// As [`run_with_llm`], with the speech recogniser supplied too instead of
+/// built from `spec.asr` (which must still be set). The seam for tests that
+/// script what the recogniser hears.
+pub fn run_with_asr(
+    spec: &EpisodeSpec,
+    llm: &dyn LlmProvider,
+    asr: Box<dyn AsrProvider>,
+    base_dir: &Path,
+    cache: Option<&DiskCache>,
+    out_dir: &Path,
+) -> Result<RunReport> {
+    run_inner(spec, llm, None, Some(asr), base_dir, cache, out_dir)
 }
 
 fn run_inner(
     spec: &EpisodeSpec,
     llm: &dyn LlmProvider,
     sidecars: Option<&Path>,
+    asr: Option<Box<dyn AsrProvider>>,
     base_dir: &Path,
     cache: Option<&DiskCache>,
     out_dir: &Path,
@@ -86,12 +109,13 @@ fn run_inner(
     let analysers = build_analysers(&spec.analysers);
     // Built before any stage runs, so a bad `[embedding]`/`[nli]` section
     // fails the run before the LLM has spent any time on it. The audio
-    // sections, the voice clips and the sidecar profile are checked now for
-    // the same reason; the TTS model itself starts only after the script.
+    // sections, the voice clips, the sidecar profile and the speech
+    // recogniser's files are checked now for the same reason; the TTS model
+    // itself starts only after the script.
     let grounding = build_grounding(spec, base_dir)?;
     check_audio(spec)?;
     let audio = match &spec.tts {
-        Some(tts) => Some(AudioPlan::check(spec, tts, sidecars, base_dir)?),
+        Some(tts) => Some(AudioPlan::check(spec, tts, sidecars, asr, base_dir)?),
         None => None,
     };
     let mut report = RunReport::default();
@@ -198,7 +222,7 @@ fn run_inner(
         script,
         documents: script_input.documents,
     };
-    let analysis = cached(
+    let mut analysis = cached(
         &Analyse {
             analysers: &analysers,
         },
@@ -219,9 +243,16 @@ fn run_inner(
     write(out_dir, ArtifactKind::Script, &analyse_input.script)?;
     write(out_dir, ArtifactKind::Analysis, &analysis)?;
 
-    if let Some(audio) = audio {
-        let path = audio.make(&analyse_input.script, cache, out_dir, &mut report)?;
+    if let Some(mut audio) = audio {
+        let (path, findings) = audio.make(&analyse_input.script, cache, out_dir, &mut report)?;
         report.audio = Some(path);
+        // A chunk that never passed speech recognition is reported like a
+        // misquote: an `Error` finding, the run still complete.
+        if !findings.is_empty() {
+            analysis.findings.extend(findings);
+            report.error_findings = analysis.error_count();
+            write(out_dir, ArtifactKind::Analysis, &analysis)?;
+        }
     }
     Ok(report)
 }
@@ -240,15 +271,47 @@ struct AudioPlan<'a> {
     /// Where the sidecar profile was found; unused by the fake.
     profiles: PathBuf,
     voices: Voices,
+    /// Checked and fingerprinted, not loaded: Whisper loads on its first
+    /// transcript, so a fully cached run never loads it.
+    asr: Box<dyn AsrProvider>,
+    takes: Takes,
 }
+
+/// Whisper's default limit, used for the fake recogniser too.
+const DEFAULT_MAX_WER_PM: u16 = 80;
 
 impl<'a> AudioPlan<'a> {
     fn check(
         spec: &EpisodeSpec,
         tts: &'a TtsConfig,
         sidecars: Option<&Path>,
+        asr: Option<Box<dyn AsrProvider>>,
         base_dir: &Path,
     ) -> Result<Self> {
+        let asr_config = spec
+            .asr
+            .as_ref()
+            .expect("check_audio requires [asr] with [tts]");
+        let asr = match asr {
+            Some(asr) => asr,
+            None => build_asr(asr_config, base_dir)?,
+        };
+        let max_wer_pm = match asr_config {
+            AsrConfig::Fake {} => PerMille::new(DEFAULT_MAX_WER_PM).expect("within 0..=1000"),
+            AsrConfig::Whisper { max_wer_pm, .. } => *max_wer_pm,
+        };
+        // The fake's takes don't differ in quality, so one is enough.
+        let (banter, max_retries) = match tts {
+            TtsConfig::Fake {} => (1, 2),
+            TtsConfig::Sidecar {
+                takes, max_retries, ..
+            } => (*takes, *max_retries),
+        };
+        let takes = Takes {
+            banter,
+            max_retries,
+            max_wer_pm,
+        };
         let profiles = match tts {
             TtsConfig::Fake {} => PathBuf::new(),
             TtsConfig::Sidecar { sidecar, .. } => {
@@ -264,18 +327,21 @@ impl<'a> AudioPlan<'a> {
             tts,
             profiles,
             voices: Voices::resolve(&spec.cast, base_dir)?,
+            asr,
+            takes,
         })
     }
 
-    /// Synthesises and assembles the episode; writes `episode.wav` and
-    /// `audio.json`, and returns the WAV's path.
+    /// Synthesises, checks and assembles the episode; writes `episode.wav`
+    /// and `audio.json`, and returns the WAV's path and an `Error` finding
+    /// for each chunk that failed its checks.
     fn make(
-        &self,
+        &mut self,
         script: &Script,
         cache: Option<&DiskCache>,
         out_dir: &Path,
         report: &mut RunReport,
-    ) -> Result<PathBuf> {
+    ) -> Result<(PathBuf, Vec<Finding>)> {
         // With no cache, the audio still needs somewhere to live between
         // synthesis and assembly; it stays beside the artifacts.
         let blobs = match cache {
@@ -284,12 +350,25 @@ impl<'a> AudioPlan<'a> {
         };
         let chunks = {
             let mut tts = build_tts(self.tts, &self.profiles)?;
-            synthesize_script(script, &self.voices, tts.as_mut(), &blobs, cache, report)?
+            let verification = Verification {
+                asr: self.asr.as_mut(),
+                takes: self.takes,
+            };
+            synthesize_script(
+                script,
+                &self.voices,
+                tts.as_mut(),
+                verification,
+                &blobs,
+                cache,
+                report,
+            )?
             // `tts` is dropped at the end of this block: a sidecar worker is
             // stopped and the GPU freed before assembly starts.
         };
         let (records, pcms): (Vec<_>, Vec<Pcm>) =
             chunks.into_iter().map(|c| (c.record, c.pcm)).unzip();
+        let findings = verify_audio::findings(&records, self.takes.max_wer_pm);
         let episode = assemble(&pcms)?;
 
         let path = out_dir.join(EPISODE_WAV);
@@ -307,7 +386,7 @@ impl<'a> AudioPlan<'a> {
             voices: self.voices.credits().to_vec(),
         };
         write(out_dir, ArtifactKind::Audio, &manifest)?;
-        Ok(path)
+        Ok((path, findings))
     }
 }
 
