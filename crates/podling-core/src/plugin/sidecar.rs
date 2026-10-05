@@ -280,33 +280,62 @@ impl Sidecar {
         }
     }
 
-    /// Asks the worker to exit (SIGTERM, which a wrapper such as `uv run`
-    /// passes on to the real worker), waits up to [`STOP_GRACE`], then kills
-    /// it, and reaps it either way so no zombie is left.
+    /// Asks the worker and every process it started to exit (SIGTERM), waits
+    /// up to [`STOP_GRACE`] for all of them, then kills what is left, and
+    /// reaps the worker so no zombie is left.
+    ///
+    /// The whole tree matters: behind a wrapper such as `uv run`, the process
+    /// holding the GPU is the worker's child, and would outlive a wrapper
+    /// that is killed. The tree stays in Podling's process group, so Ctrl-C
+    /// in the terminal still reaches all of it.
     fn stop(&mut self) {
         let pid = self.pid();
         if let Ok(Some(status)) = self.child.try_wait() {
             self.log_exit(pid, status);
             return;
         }
+        // Found while the worker still runs: once it has exited, its
+        // children belong to init and can no longer be told apart.
+        let tree = Descendants::of(pid);
         terminate(&self.child);
+        tree.terminate();
         let deadline = Instant::now() + STOP_GRACE;
+        let mut status = None;
         while Instant::now() < deadline {
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
-                    self.log_exit(pid, status);
-                    return;
+            if status.is_none() {
+                match self.child.try_wait() {
+                    Ok(exited) => status = exited,
+                    Err(_) => break,
                 }
-                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-                Err(_) => break,
             }
+            if status.is_some() && tree.running() == 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
-        tracing::warn!(sidecar = %self.name, pid, "sidecar ignored SIGTERM; killing it");
-        // Errors here mean the process is already gone.
-        let _ = self.child.kill();
-        match self.child.wait() {
-            Ok(status) => self.log_exit(pid, status),
-            Err(err) => tracing::warn!(sidecar = %self.name, pid, %err, "could not reap sidecar"),
+        let status = status.or_else(|| {
+            tracing::warn!(sidecar = %self.name, pid, "sidecar ignored SIGTERM; killing it");
+            // Errors here mean the process is already gone.
+            let _ = self.child.kill();
+            self.child
+                .wait()
+                .inspect_err(|err| {
+                    tracing::warn!(sidecar = %self.name, pid, %err, "could not reap sidecar");
+                })
+                .ok()
+        });
+        let left = tree.running();
+        if left > 0 {
+            tracing::warn!(
+                sidecar = %self.name,
+                pid,
+                processes = left,
+                "sidecar's child processes ignored SIGTERM; killing them"
+            );
+            tree.kill();
+        }
+        if let Some(status) = status {
+            self.log_exit(pid, status);
         }
     }
 
@@ -343,6 +372,106 @@ fn terminate(child: &Child) {
 #[cfg(not(unix))]
 fn terminate(_: &Child) {
     // No SIGTERM here: `stop` falls through to `kill` after the grace period.
+}
+
+/// The processes a worker started, and theirs, each pinned by a pidfd: a
+/// signal sent through it reaches that process or none, even if its pid has
+/// been reused since.
+#[cfg(target_os = "linux")]
+struct Descendants(Vec<(u32, rustix::fd::OwnedFd)>);
+
+#[cfg(target_os = "linux")]
+impl Descendants {
+    /// Every live descendant of `root`, from one scan of `/proc`.
+    fn of(root: u32) -> Self {
+        use rustix::process::{Pid, PidfdFlags, pidfd_open};
+        let parents: Vec<(u32, u32)> = std::fs::read_dir("/proc")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+            .filter_map(|pid| Some((pid, proc_stat(pid)?.1)))
+            .collect();
+        let mut found = Vec::new();
+        let mut queue = vec![root];
+        while let Some(parent) = queue.pop() {
+            for &(pid, _) in parents.iter().filter(|&&(_, ppid)| ppid == parent) {
+                let Some(raw) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
+                    continue;
+                };
+                let Ok(fd) = pidfd_open(raw, PidfdFlags::empty()) else {
+                    continue; // exited since the scan
+                };
+                // The pidfd pins whatever has this pid now; it is the process
+                // from the scan only if its parent is still the same.
+                if proc_stat(pid).is_some_and(|(_, ppid)| ppid == parent) {
+                    found.push((pid, fd));
+                    queue.push(pid);
+                }
+            }
+        }
+        Self(found)
+    }
+
+    fn terminate(&self) {
+        self.signal(rustix::process::Signal::TERM);
+    }
+
+    /// Kills every process still running and waits briefly for them to go.
+    fn kill(&self) {
+        self.signal(rustix::process::Signal::KILL);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while self.running() > 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn signal(&self, signal: rustix::process::Signal) {
+        for (_, fd) in &self.0 {
+            // An error means that process has exited already.
+            let _ = rustix::process::pidfd_send_signal(fd, signal);
+        }
+    }
+
+    /// How many are still running. A zombie has finished: it only waits for
+    /// its parent (by now init) to collect it.
+    fn running(&self) -> usize {
+        self.0
+            .iter()
+            .filter(|(pid, _)| proc_stat(*pid).is_some_and(|(state, _)| state != 'Z'))
+            .count()
+    }
+}
+
+/// The state letter and parent pid in `/proc/<pid>/stat`. The command name
+/// before them is in parentheses and may itself contain spaces or `)`, so
+/// the fields are read after its last `)`.
+#[cfg(target_os = "linux")]
+fn proc_stat(pid: u32) -> Option<(char, u32)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let mut fields = stat.rsplit_once(')')?.1.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let ppid = fields.next()?.parse().ok()?;
+    Some((state, ppid))
+}
+
+/// Elsewhere only the worker itself is stopped.
+#[cfg(not(target_os = "linux"))]
+struct Descendants;
+
+#[cfg(not(target_os = "linux"))]
+impl Descendants {
+    fn of(_: u32) -> Self {
+        Self
+    }
+
+    fn terminate(&self) {}
+
+    fn kill(&self) {}
+
+    fn running(&self) -> usize {
+        0
+    }
 }
 
 /// The port from a listening line, which must name `127.0.0.1` and our
