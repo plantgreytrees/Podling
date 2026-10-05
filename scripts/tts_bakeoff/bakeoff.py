@@ -234,13 +234,27 @@ def whisper(size: str):
     if size not in _WHISPER:
         from transformers import pipeline
 
+        # No chunk_length_s: the chunked pipeline (marked experimental) fell into
+        # repetition loops ("The size of the graphs." x5) that scored good audio
+        # at WER 0.3-0.9. Sequential long-form decoding instead, as Whisper does.
         _WHISPER[size] = pipeline(
             "automatic-speech-recognition",
             model=f"openai/whisper-{size}",
             device="cpu",
-            chunk_length_s=30,
         )
     return _WHISPER[size]
+
+
+# Whisper's own guard against loops: a 30 s window whose output is too
+# repetitive (compression ratio) or too unlikely (mean log-prob) is decoded
+# again at a higher temperature; earlier text is not fed back as a prompt.
+LONG_FORM = {
+    "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+    "compression_ratio_threshold": 1.35,
+    "logprob_threshold": -1.0,
+    "no_speech_threshold": 0.6,
+    "condition_on_prev_tokens": False,
+}
 
 
 def transcribe(
@@ -249,7 +263,7 @@ def transcribe(
     out = whisper(size)(
         {"raw": audio16k, "sampling_rate": 16_000},
         return_timestamps="word",
-        generate_kwargs={"language": None} if not size.endswith(".en") else {},
+        generate_kwargs=LONG_FORM,
     )
     words = [
         (
