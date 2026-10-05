@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 
-use podling_types::{Emotion, Nonverbal, SpeakerId, VoiceRef};
+use podling_types::{Emotion, Nonverbal, NonverbalAt, NonverbalKind, SpeakerId, VoiceRef};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -56,6 +56,31 @@ impl SpokenTurn {
             emotion,
             nonverbal: Vec::new(),
         }
+    }
+
+    /// The words a listener will hear: `text`, with the speaker's own
+    /// backchannels ("Mm-hm.") said in line before or after it. Laughs and
+    /// sighs have no words, so they add nothing. This is what speech
+    /// recognition is checked against.
+    ///
+    /// Mirrors `in_line()` in `sidecars/tts/podling_tts/backends/__init__.py`;
+    /// change both together.
+    pub fn said(&self) -> String {
+        let own_words = |at: NonverbalAt| {
+            self.nonverbal.iter().filter_map(move |n| match &n.kind {
+                NonverbalKind::Backchannel { text }
+                    if n.by == self.speaker && n.at == at && !text.is_empty() =>
+                {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+        };
+        own_words(NonverbalAt::Before)
+            .chain(std::iter::once(self.text.as_str()))
+            .chain(own_words(NonverbalAt::After))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -291,6 +316,27 @@ mod tests {
 
     fn turn(speaker: &str, text: &str) -> SpokenTurn {
         SpokenTurn::plain(SpeakerId(speaker.into()), text, Emotion::Neutral)
+    }
+
+    #[test]
+    fn said_puts_the_speakers_own_backchannels_in_line() {
+        let sound = |kind, by: &str, at| Nonverbal {
+            kind,
+            by: SpeakerId(by.into()),
+            at,
+        };
+        let backchannel = |text: &str| NonverbalKind::Backchannel { text: text.into() };
+        let mut spoken = turn("host", "Right, so.");
+        spoken.nonverbal = vec![
+            sound(backchannel("Mm-hm."), "host", NonverbalAt::Before),
+            sound(NonverbalKind::Chuckle {}, "host", NonverbalAt::Before),
+            sound(backchannel("Yeah."), "guest", NonverbalAt::Before),
+            sound(backchannel("Wow."), "host", NonverbalAt::Over),
+            sound(backchannel(""), "host", NonverbalAt::After),
+            sound(backchannel("Okay."), "host", NonverbalAt::After),
+        ];
+        assert_eq!(spoken.said(), "Mm-hm. Right, so. Okay.");
+        assert_eq!(turn("host", "Plain.").said(), "Plain.");
     }
 
     fn voices(ids: &[&str]) -> BTreeMap<SpeakerId, VoiceRef> {

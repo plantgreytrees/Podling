@@ -115,6 +115,9 @@ def in_line(turn: Turn) -> tuple[str, set[int]]:
 
     A per-turn model has no tags for sounds, but a backchannel is words, so the
     speaker can simply say it. Anything else is left for the caller to render or drop.
+
+    Podling checks the audio against the same words (`SpokenTurn::said` in
+    crates/podling-core/src/plugin/tts.rs); change both together.
     """
     before: list[str] = []
     after: list[str] = []
