@@ -210,6 +210,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         backend = make_backend(args.backend, **options)
         worker = Worker(backend, run_dir)
+        # Hashes a --model-dir now, inside the startup timeout, not on the first /health.
+        backend.weights()
         if args.preload:
             backend.load()
     except (BackendError, OSError) as err:
