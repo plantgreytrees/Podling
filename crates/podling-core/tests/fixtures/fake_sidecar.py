@@ -11,6 +11,7 @@ import os
 import signal
 import struct
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -32,10 +33,12 @@ if args.mode == "wrong-protocol":
     time.sleep(600)
 if args.mode == "stubborn":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-if args.mode == "orphan":
+if args.mode in ("orphan", "orphan-exit"):
     # Like a model process behind `uv run`: a child of the worker that ignores
     # SIGTERM. An ignored signal stays ignored across exec, so it is ignored
     # from the child's first instruction, and its command line carries the tag.
+    # `orphan-exit` then dies on its own, like a crashed `uv`, and leaves the
+    # child behind.
     import subprocess
 
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -130,4 +133,7 @@ print(
     json.dumps({"listening": f"127.0.0.1:{server.server_port}", "protocol": 1}),
     flush=True,
 )
+if args.mode == "orphan-exit":
+    # A second after ready, so Podling's health check has been answered.
+    threading.Timer(1.0, os._exit, args=(0,)).start()
 server.serve_forever()

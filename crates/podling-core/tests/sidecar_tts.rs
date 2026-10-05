@@ -281,6 +281,33 @@ fn a_child_of_the_worker_that_ignores_sigterm_is_killed_too() {
     );
 }
 
+#[test]
+fn a_child_left_behind_by_a_dead_worker_is_killed() {
+    if !python_ok() {
+        return;
+    }
+    // Like `uv run` crashing while the model process it started runs on.
+    let tts = start(&stub("orphan-exit", "dead-parent")).unwrap();
+    let pid = tts.pid();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while alive(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!alive(pid), "the worker exited on its own");
+    assert_eq!(
+        running("dead-parent").len(),
+        1,
+        "its child runs on without it"
+    );
+
+    drop(tts);
+    assert!(
+        running("dead-parent").is_empty(),
+        "the child is gone too: {:?}",
+        running("dead-parent")
+    );
+}
+
 fn synthesize_once(tts: &mut SidecarTts, dir: &Path) -> Result<(), CoreError> {
     let voices = voices(dir);
     let turns = [turn("ada", "Hello there.", Emotion::Neutral)];

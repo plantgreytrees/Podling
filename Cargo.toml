@@ -46,7 +46,8 @@ rubato = "5"
 ebur128 = "0.1"
 # Safe wrappers for signals: the TTS sidecar gets SIGTERM first, so a wrapper
 # such as `uv run` can pass it on. Already in the tree through tempfile.
-rustix = { version = "1", features = ["process"] }
+# `event` gives `poll`, which tells when a pidfd's process has exited.
+rustix = { version = "1", features = ["process", "event"] }
 
 tempfile = "3.27"
 assert_cmd = "2.2"
