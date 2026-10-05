@@ -301,9 +301,13 @@ units:
     language: markdown
     security: "normal"
     scope:
-      read: [examples/tunguska/episode-ollama.toml, crates/podling-types/src/episode.rs, sidecars/tts/README.md]
+      read: [examples/tunguska/episode-ollama.toml, crates/podling-types/src/episode.rs, sidecars/tts/README.md, crates/podling-types/src/script.rs]
       docs: [docs/architecture.md, README.md, docs/handoff.md, docs/plans/phase5-tts-audio.md]
       write:
+        # 10.7 (live-run fix): beats marked on turns, derived by the stage
+        - crates/podling-core/src/plugin/llm.rs
+        - crates/podling-core/src/stages/script.rs
+        - crates/podling-core/tests/pipeline.rs
         - examples/tunguska/episode-tts.toml
         - examples/tunguska/voices/README.md
         - .gitignore
@@ -620,12 +624,13 @@ Depends on: beat-chunker, asr-verify
 ### Step 10 — live-and-docs (., markdown, normal)
 Tooling: implementer · gates docs-curator · guards cargo test
 Depends on: full-assembler
-- [ ] 10.1 Add `examples/tunguska/episode-tts.toml` (Ollama + sidecar profile + CC0 voices) and `voices/README.md` with the download commands and licences (clips gitignored) → accept: file parses; README lists each clip's licence.
+- [x] 10.1 Add `examples/tunguska/episode-tts.toml` (Ollama + sidecar profile + CC0 voices) and `voices/README.md` with the download commands and licences (clips gitignored) → accept: file parses; README lists each clip's licence. *(LibriTTS-R test-clean 4446/1089 clips, CC-BY-4.0, not CC0: the bake-off voices, credited in `voices/README.md`, whose curl|tar command was run and gave byte-identical clips. `every_example_episode_parses` loads the file, runs `check_audio`, and requires each cast licence to be CC0-1.0 or CC-BY-4.0 and named in the README.)*
 - [ ] 10.2 Live run: 10-minute Tunguska episode, cold cache → accept: `episode.wav` plays; all chunks verified; peak VRAM of the sidecar process ≤ 7.0 GB (device total recorded beside it); numbers recorded under "Live results".
 - [ ] 10.3 Live run: 30-minute episode, then edit one turn and rerun → accept: one chunk re-synthesised; listening notes on seams and banter recorded.
-- [ ] 10.4 Update `docs/architecture.md`: pipeline, TTS/ASR rows in the plugin table, sidecar protocol and lifecycle, blob cache, bump rule for the TTS fingerprint, remove "TTS and ASR provider traits" from Deferred → accept: docs-curator passes.
-- [ ] 10.5 Update README config table (`[[cast]]`, `[tts]`, `[asr]`, `sidecars.toml`) → accept: every new key documented.
-- [ ] 10.6 Update `docs/handoff.md` "Where things stand" and "Out of scope" → accept: Phase 5 row present.
+- [x] 10.4 Update `docs/architecture.md`: pipeline, TTS/ASR rows in the plugin table, sidecar protocol and lifecycle, blob cache, bump rule for the TTS fingerprint, remove "TTS and ASR provider traits" from Deferred → accept: docs-curator passes. *(Artifact flow, plugin table (TTS, ASR, `UncitedFigures`), new "Episode audio" section, TTS/ASR fingerprints under bump rule 5, Deferred updated. Docs-curator check done in root-only mode: every relative link resolves and every claim was checked against the code.)*
+- [x] 10.5 Update README config table (`[[cast]]`, `[tts]`, `[asr]`, `sidecars.toml`) → accept: every new key documented. *("Episode audio" section: `[[cast]]`, `tts.*`, `asr.*`, `mix.*`, `unload_after`, `sidecars.toml`, `--sidecars`.)*
+- [x] 10.6 Update `docs/handoff.md` "Where things stand" and "Out of scope" → accept: Phase 5 row present. *("Where Phase 5 leaves it", Out of scope, and a phase5-tts-audio row in "Where things stand".)*
+- [x] 10.7 (added by the live run) Beats that an 8B model can write → accept: the live script stage passes without a beat error. *(llama3.1:8b, asked for `beats` as `{start, end}` index ranges, wrote inclusive ends ("beat 1 starts at turn 2, so turns 1..2 are in no beat") on both attempts, or looped on turns and never reached the list. The model now marks `beat` on the turn that begins each beat and `beats_from_marks` derives contiguous ranges, so coverage holds by construction; an unmarked first turn opens a narration beat, and no marks at all leaves the beats implied. Audio rule 9 asks for about 150 words a minute and no repeated points, and one example audio turn shows the fields. `PROMPT_VERSION` 6, `script` 10, fake LLM 6; the exported `Script` is unchanged, and the ledger and analyse keys in `without_nli_the_cache_keys_are_unchanged` did not move, so a text-only script is byte-identical. Five fake-audio samples: no beat errors; two failed on the existing citation and placeholder checks.)*
 
 ## Acceptance criteria (consolidated for `/orchestrate`)
 

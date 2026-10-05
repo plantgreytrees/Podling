@@ -38,6 +38,9 @@ model = "llama3.1:8b"
 temperature = 0.2
 # A 10-minute script takes a local 8B model several minutes.
 timeout_secs = 1800
+# A small model sometimes repeats itself until the context is full; this
+# stops such a reply early with a clear error instead.
+max_output_tokens = 6000
 # Ollama keeps a model on the GPU for five minutes after its last request;
 # this unloads it as soon as the script is written, so the TTS model fits.
 unload_after = true
