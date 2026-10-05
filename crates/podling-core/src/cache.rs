@@ -78,6 +78,9 @@ struct EntryHeader {
 pub struct CacheStats {
     pub entries: u64,
     pub bytes: u64,
+    /// Binary outputs (audio) in the blob store, counted apart from entries.
+    pub blobs: u64,
+    pub blob_bytes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +95,11 @@ impl DiskCache {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The blob store kept beside the entries, in `<root>/blobs`.
+    pub fn blobs(&self) -> BlobStore {
+        BlobStore::new(self.root.join(BLOBS_DIR))
     }
 
     fn path_for(&self, key: &CacheKey) -> PathBuf {
@@ -134,67 +142,170 @@ impl DiskCache {
     /// temporary file in the same directory and renamed into place, so a
     /// reader never sees a partial file.
     pub fn put<T: Serialize>(&self, key: &CacheKey, stage: &str, value: &T) -> Result<()> {
-        let path = self.path_for(key);
-        let dir = path.parent().unwrap_or(&self.root);
-        fs::create_dir_all(dir).map_err(|err| CoreError::io(dir, err))?;
-
         let bytes = serde_json::to_vec(&EntryRef {
             schema_version: SCHEMA_VERSION,
             stage,
             value,
         })?;
-        let mut tmp =
-            tempfile::NamedTempFile::new_in(dir).map_err(|err| CoreError::io(dir, err))?;
-        tmp.write_all(&bytes)
-            .and_then(|()| tmp.as_file().sync_all())
-            .map_err(|err| CoreError::io(tmp.path(), err))?;
-        tmp.persist(&path)
-            .map_err(|err| CoreError::io(&path, err.error))?;
-        Ok(())
+        write_atomic(&self.path_for(key), &bytes)
     }
 
+    /// Entries, and the blob store's contents counted separately.
     pub fn stats(&self) -> Result<CacheStats> {
-        let mut stats = CacheStats::default();
-        for shard in read_dir_if_exists(&self.root)? {
-            if !(shard.is_dir() && is_shard_dir(&shard)) {
-                continue;
-            }
-            for entry in read_dir_if_exists(&shard)? {
-                if is_entry_file(&entry) {
-                    let len = fs::metadata(&entry)
-                        .map_err(|err| CoreError::io(&entry, err))?
-                        .len();
-                    stats.entries += 1;
-                    stats.bytes += len;
-                }
-            }
-        }
-        Ok(stats)
+        let (entries, bytes) = count_sharded(&self.root, JSON)?;
+        let (blobs, blob_bytes) = count_sharded(self.blobs().root(), WAV)?;
+        Ok(CacheStats {
+            entries,
+            bytes,
+            blobs,
+            blob_bytes,
+        })
     }
 
-    /// Deletes every cached entry, then any directories left empty.
+    /// Deletes every cached entry and blob, then any directories left empty.
     ///
     /// Safety: only files shaped like cache entries (`<2 hex>/<64 hex>.json`,
-    /// plus leftover temp files in those shards) are removed. Anything else
-    /// is left alone with a warning, so pointing `--cache-dir` at the wrong
-    /// directory cannot delete it.
+    /// and `blobs/<2 hex>/<64 hex>.wav`, plus leftover temp files in those
+    /// shards) are removed. Anything else is left alone with a warning, so
+    /// pointing `--cache-dir` at the wrong directory cannot delete it.
     pub fn clear(&self) -> Result<()> {
+        let blobs = self.blobs();
         for entry in read_dir_if_exists(&self.root)? {
-            if !(entry.is_dir() && is_shard_dir(&entry)) {
+            if entry.is_dir() && entry == blobs.root() {
+                blobs.clear()?;
+            } else if entry.is_dir() && is_shard_dir(&entry) {
+                clear_shard(&entry, JSON)?;
+            } else {
                 tracing::warn!(path = %entry.display(), "not a cache entry; leaving it");
-                continue;
             }
-            for file in read_dir_if_exists(&entry)? {
-                if is_entry_file(&file) || is_temp_file(&file) {
-                    fs::remove_file(&file).map_err(|err| CoreError::io(&file, err))?;
-                } else {
-                    tracing::warn!(path = %file.display(), "not a cache entry; leaving it");
-                }
-            }
-            remove_dir_if_empty(&entry)?;
         }
         remove_dir_if_empty(&self.root)
     }
+}
+
+const BLOBS_DIR: &str = "blobs";
+const JSON: &str = ".json";
+const WAV: &str = ".wav";
+
+/// Binary outputs (chunk audio), stored under the BLAKE3 hash of their own
+/// bytes: `<root>/<2 hex>/<64 hex>.wav`.
+///
+/// Content addressing makes a blob immutable: the same bytes always land at
+/// the same path, so writing one twice is a no-op, and a reader can check
+/// what it got against the name. A JSON cache entry refers to a blob by its
+/// hash; a stage that finds the blob gone treats the entry as a miss.
+#[derive(Debug, Clone)]
+pub struct BlobStore {
+    root: PathBuf,
+}
+
+impl BlobStore {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn path_for(&self, hash: &ContentHash) -> PathBuf {
+        let hex = hash.as_str();
+        self.root.join(&hex[..2]).join(format!("{hex}{WAV}"))
+    }
+
+    /// Stores `bytes` and returns their hash. Atomic, like [`DiskCache::put`].
+    pub fn put(&self, bytes: &[u8]) -> Result<ContentHash> {
+        let hash = hash_of(bytes);
+        let path = self.path_for(&hash);
+        // Skip the write only when an intact copy is there already, so a
+        // damaged blob is repaired by the next put.
+        if self.get(&hash)?.is_none() {
+            write_atomic(&path, bytes)?;
+        }
+        Ok(hash)
+    }
+
+    /// The blob's bytes, or `None` when it is missing or its bytes no longer
+    /// match its name (logged; a damaged blob is a miss, never an error).
+    pub fn get(&self, hash: &ContentHash) -> Result<Option<Vec<u8>>> {
+        let path = self.path_for(hash);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(CoreError::io(path, err)),
+        };
+        if hash_of(&bytes) != *hash {
+            tracing::warn!(%hash, "blob does not match its hash; treating as a miss");
+            return Ok(None);
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Deletes every blob (and leftover temp file), leaving foreign files
+    /// with a warning, then any directories left empty.
+    pub fn clear(&self) -> Result<()> {
+        for entry in read_dir_if_exists(&self.root)? {
+            if entry.is_dir() && is_shard_dir(&entry) {
+                clear_shard(&entry, WAV)?;
+            } else {
+                tracing::warn!(path = %entry.display(), "not a blob; leaving it");
+            }
+        }
+        remove_dir_if_empty(&self.root)
+    }
+}
+
+fn hash_of(bytes: &[u8]) -> ContentHash {
+    blake3::hash(bytes)
+        .to_hex()
+        .parse()
+        .expect("BLAKE3 hex is a valid content hash")
+}
+
+/// Writes through a temporary file in the same directory and renames it into
+/// place, so a reader never sees a partial file.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = path.parent().expect("cache paths have a shard directory");
+    fs::create_dir_all(dir).map_err(|err| CoreError::io(dir, err))?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(|err| CoreError::io(dir, err))?;
+    tmp.write_all(bytes)
+        .and_then(|()| tmp.as_file().sync_all())
+        .map_err(|err| CoreError::io(tmp.path(), err))?;
+    tmp.persist(path)
+        .map_err(|err| CoreError::io(path, err.error))?;
+    Ok(())
+}
+
+/// Number and total size of `<2 hex>/<64 hex><ext>` files under `root`.
+fn count_sharded(root: &Path, ext: &str) -> Result<(u64, u64)> {
+    let (mut count, mut bytes) = (0, 0);
+    for shard in read_dir_if_exists(root)? {
+        if !(shard.is_dir() && is_shard_dir(&shard)) {
+            continue;
+        }
+        for entry in read_dir_if_exists(&shard)? {
+            if is_entry_file(&entry, ext) {
+                count += 1;
+                bytes += fs::metadata(&entry)
+                    .map_err(|err| CoreError::io(&entry, err))?
+                    .len();
+            }
+        }
+    }
+    Ok((count, bytes))
+}
+
+/// Removes the `<64 hex><ext>` and temp files in one shard, warns about the
+/// rest, and removes the shard if that left it empty.
+fn clear_shard(shard: &Path, ext: &str) -> Result<()> {
+    for file in read_dir_if_exists(shard)? {
+        if is_entry_file(&file, ext) || is_temp_file(&file) {
+            fs::remove_file(&file).map_err(|err| CoreError::io(&file, err))?;
+        } else {
+            tracing::warn!(path = %file.display(), "not a cache entry; leaving it");
+        }
+    }
+    remove_dir_if_empty(shard)
 }
 
 fn file_name(path: &Path) -> &str {
@@ -211,10 +322,10 @@ fn is_shard_dir(path: &Path) -> bool {
     is_lower_hex(file_name(path), 2)
 }
 
-fn is_entry_file(path: &Path) -> bool {
+fn is_entry_file(path: &Path, ext: &str) -> bool {
     path.is_file()
         && file_name(path)
-            .strip_suffix(".json")
+            .strip_suffix(ext)
             .is_some_and(|stem| is_lower_hex(stem, 64))
 }
 
@@ -370,5 +481,53 @@ mod tests {
             assert!(dir.path().join(kept).exists(), "{kept} was deleted");
         }
         assert!(shard.join("notes.txt").exists());
+    }
+
+    #[test]
+    fn blobs_are_content_addressed() {
+        let dir = tempfile::tempdir().unwrap();
+        let blobs = DiskCache::new(dir.path()).blobs();
+        let hash = blobs.put(b"RIFF audio").unwrap();
+        assert_eq!(hash.as_str(), blake3::hash(b"RIFF audio").to_hex().as_str());
+        assert_eq!(blobs.put(b"RIFF audio").unwrap(), hash, "idempotent");
+        let path = blobs.path_for(&hash);
+        assert!(path.starts_with(dir.path().join("blobs")));
+        assert!(path.to_str().unwrap().ends_with(".wav"));
+        assert_eq!(
+            blobs.get(&hash).unwrap().as_deref(),
+            Some(&b"RIFF audio"[..])
+        );
+
+        fs::write(&path, b"tampered").unwrap();
+        assert_eq!(blobs.get(&hash).unwrap(), None, "a damaged blob is a miss");
+        blobs.put(b"RIFF audio").unwrap();
+        assert!(blobs.get(&hash).unwrap().is_some(), "a put repairs it");
+        fs::remove_file(&path).unwrap();
+        assert_eq!(blobs.get(&hash).unwrap(), None, "a deleted blob is a miss");
+    }
+
+    #[test]
+    fn stats_and_clear_cover_blobs_but_never_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = DiskCache::new(dir.path().join("cache"));
+        cache.put(&key(&json!(1)), "s", &1u8).unwrap();
+        let blobs = cache.blobs();
+        let hash = blobs.put(&[0u8; 100]).unwrap();
+        blobs.put(&[1u8; 50]).unwrap();
+        let stats = cache.stats().unwrap();
+        assert_eq!((stats.entries, stats.blobs, stats.blob_bytes), (1, 2, 150));
+
+        let shard = blobs.path_for(&hash).parent().unwrap().to_owned();
+        fs::write(shard.join("keep.wav"), "precious").unwrap();
+        fs::write(shard.join(".tmpXYZ"), "partial write").unwrap();
+        fs::write(blobs.root().join("README"), "precious").unwrap();
+
+        cache.clear().unwrap();
+
+        let stats = cache.stats().unwrap();
+        assert_eq!((stats.entries, stats.blobs), (0, 0));
+        assert!(!shard.join(".tmpXYZ").exists());
+        assert!(shard.join("keep.wav").exists());
+        assert!(blobs.root().join("README").exists());
     }
 }

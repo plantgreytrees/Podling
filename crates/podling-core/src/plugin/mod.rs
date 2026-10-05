@@ -12,7 +12,10 @@ pub mod llm;
 pub mod nli;
 pub mod openai;
 pub mod openai_embeddings;
+pub mod sidecar;
+pub mod sidecar_tts;
 pub mod source;
+pub mod tts;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -34,7 +37,13 @@ pub use llm::{
 pub use nli::{FakeNli, NliPair, NliProvider, NliScores, score_checked};
 pub use openai::OpenAiCompat;
 pub use openai_embeddings::OpenAiEmbeddings;
+pub use sidecar::{Sidecar, SidecarProfile, default_profiles_path, load_profile};
+pub use sidecar_tts::SidecarTts;
 pub use source::{LocalFilesConnector, SourceConnector};
+pub use tts::{
+    ChunkAudio, ChunkContext, ChunkRequest, FakeTts, SpokenTurn, TtsCapabilities, TtsProvider,
+    synthesize_checked,
+};
 
 /// Builds the LLM provider. Fallible because a real provider reads its
 /// configuration (a key from the environment, a URL) at construction.
@@ -100,6 +109,20 @@ pub fn check_audio(spec: &EpisodeSpec) -> Result<()> {
             Err(config("[tts] takes must be at least 1"))
         }
         (Some(_), Some(_)) => Ok(()),
+    }
+}
+
+/// Builds the TTS provider. A sidecar profile is read from `profiles` (the
+/// user-level `sidecars.toml`, never the episode file) and its worker is
+/// started here, so call this just before synthesis and drop the provider
+/// right after: dropping it stops the worker and frees the GPU.
+pub fn build_tts(config: &TtsConfig, profiles: &Path) -> Result<Box<dyn TtsProvider>> {
+    match config {
+        TtsConfig::Fake {} => Ok(Box::new(FakeTts::default())),
+        TtsConfig::Sidecar { sidecar, .. } => {
+            let profile = load_profile(profiles, sidecar)?;
+            Ok(Box::new(SidecarTts::start(sidecar, &profile, profiles)?))
+        }
     }
 }
 
@@ -254,6 +277,27 @@ mod tests {
              asr = {{ kind = \"fake\" }}\n{CAST}"
         ));
         assert!(message.contains("takes"), "{message}");
+    }
+
+    #[test]
+    fn builds_the_tts_provider_from_an_episode() {
+        let full = format!("tts = {{ kind = \"fake\" }}\nasr = {{ kind = \"fake\" }}\n{CAST}");
+        let spec = episode(&full);
+        let profiles = Path::new("/no/sidecars.toml");
+        let tts = build_tts(spec.tts.as_ref().unwrap(), profiles).unwrap();
+        assert_eq!(tts.id(), "fake");
+        assert!(tts.capabilities().native_sample_rate > 0);
+
+        // A sidecar profile comes from the profiles file, which must exist.
+        let sidecar = TtsConfig::Sidecar {
+            sidecar: "qwen".into(),
+            takes: 2,
+            max_retries: 2,
+        };
+        let Err(CoreError::Config { message }) = build_tts(&sidecar, profiles) else {
+            panic!("a missing profiles file must be a Config error");
+        };
+        assert!(message.contains("/no/sidecars.toml"), "{message}");
     }
 
     #[test]

@@ -130,9 +130,11 @@ pub fn cache_stats(cache_dir: &Path) -> Result<()> {
         .stats()
         .with_context(|| format!("reading cache {}", cache_dir.display()))?;
     println!(
-        "{} entries, {} bytes in {}",
+        "{} entries, {} bytes; {} audio blobs, {} bytes; in {}",
         stats.entries,
         stats.bytes,
+        stats.blobs,
+        stats.blob_bytes,
         cache_dir.display()
     );
     Ok(())

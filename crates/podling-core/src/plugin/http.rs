@@ -117,6 +117,17 @@ impl Transport {
     /// `POST {base_url}{path}` with a JSON body, retrying a 429 or 5xx. Runs
     /// inside the caller's span, so its log lines say which request it was.
     pub fn post_json(&self, path: &str, payload: &[u8]) -> Result<Posted> {
+        self.request(path, Some(payload))
+    }
+
+    /// `GET {base_url}{path}`, with the same retries, size cap and redaction
+    /// as [`Transport::post_json`].
+    pub fn get_json(&self, path: &str) -> Result<Posted> {
+        self.request(path, None)
+    }
+
+    /// A POST when there is a payload, a GET otherwise.
+    fn request(&self, path: &str, payload: Option<&[u8]>) -> Result<Posted> {
         let endpoint = format!("{}{path}", self.base_url);
         let started = Instant::now();
         let mut attempt = 0;
@@ -148,14 +159,30 @@ impl Transport {
     }
 
     /// One HTTP exchange. `Ok` is the raw 2xx body.
-    fn send_once(&self, endpoint: &str, payload: &[u8]) -> std::result::Result<String, Failure> {
-        let mut req = self.agent.post(endpoint).content_type("application/json");
-        if let Some(key) = &self.api_key {
-            req = req.header("Authorization", format!("Bearer {}", key.0));
-        }
-        let mut response = req
-            .send(payload)
-            .map_err(|err| Failure::fatal(self.describe_transport_error(&err)))?;
+    fn send_once(
+        &self,
+        endpoint: &str,
+        payload: Option<&[u8]>,
+    ) -> std::result::Result<String, Failure> {
+        let bearer = self.api_key.as_ref().map(|key| format!("Bearer {}", key.0));
+        let sent = match payload {
+            Some(payload) => {
+                let mut req = self.agent.post(endpoint).content_type("application/json");
+                if let Some(bearer) = &bearer {
+                    req = req.header("Authorization", bearer);
+                }
+                req.send(payload)
+            }
+            None => {
+                let mut req = self.agent.get(endpoint);
+                if let Some(bearer) = &bearer {
+                    req = req.header("Authorization", bearer);
+                }
+                req.call()
+            }
+        };
+        let mut response =
+            sent.map_err(|err| Failure::fatal(self.describe_transport_error(&err)))?;
 
         let status = response.status().as_u16();
         if (200..300).contains(&status) {
