@@ -35,6 +35,14 @@ candle-transformers = "0.11"
 # Only what loading a `tokenizer.json` needs: no progress bars, no training.
 tokenizers = { version = "0.22", default-features = false }
 
+# Audio (Phase 5): WAV read/write, and resampling the TTS model's native
+# rate to the episode's 48 kHz. Both pure Rust, MIT OR Apache-2.0.
+hound = "3.5"
+rubato = "5"
+# Safe wrappers for signals: the TTS sidecar gets SIGTERM first, so a wrapper
+# such as `uv run` can pass it on. Already in the tree through tempfile.
+rustix = { version = "1", features = ["process"] }
+
 tempfile = "3.27"
 assert_cmd = "2.2"
 predicates = "3"

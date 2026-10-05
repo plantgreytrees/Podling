@@ -1,5 +1,6 @@
 //! Podling pipeline, content cache, and plugin contracts.
 
+pub mod audio;
 pub mod cache;
 pub mod error;
 pub mod pipeline;
