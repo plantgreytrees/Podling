@@ -25,8 +25,9 @@ pipeline looped on clean audio and inflated WER.
 cd scripts/tts_bakeoff
 # Dia2's packaging omits its subpackages, so it is installed editable from the
 # reviewed commit unpacked here (vendor/ is gitignored).
-mkdir -p vendor/dia2 && curl -sL https://github.com/nari-labs/dia2/archive/8687268f4ed3ed20704638fd353b51491de3b476.tar.gz \
-  | tar -xz --strip-components=1 -C vendor/dia2
+curl -sL -o dia2.tar.gz https://github.com/nari-labs/dia2/archive/8687268f4ed3ed20704638fd353b51491de3b476.tar.gz
+echo "1097ef058d0a91a0e6e508732eebae2e2f329b2096d533e3c06133a56275871b  dia2.tar.gz" | sha256sum -c
+mkdir -p vendor/dia2 && tar -xzf dia2.tar.gz --strip-components=1 -C vendor/dia2 && rm dia2.tar.gz
 uv sync --extra dia2                       # one backend's environment at a time
 uv run --extra dia2 python bakeoff.py --fetch-voices
 # Free the GPU first: the script refuses to start while Ollama has a model on it.
