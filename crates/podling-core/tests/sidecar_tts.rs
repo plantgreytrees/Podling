@@ -89,11 +89,7 @@ fn alive(pid: u32) -> bool {
 }
 
 fn turn(speaker: &str, text: &str, emotion: Emotion) -> SpokenTurn {
-    SpokenTurn {
-        speaker: SpeakerId(speaker.into()),
-        text: text.into(),
-        emotion,
-    }
+    SpokenTurn::plain(SpeakerId(speaker.into()), text, emotion)
 }
 
 /// Voice clips for `ada` and `bo`, written into `dir`.

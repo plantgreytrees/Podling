@@ -1,21 +1,22 @@
 //! Speaks the script, one chunk at a time, each chunk cached on its own.
 //!
-//! A chunk is one turn for now (the beat-aware planner comes later). Each
-//! chunk runs through [`cached`] as a [`SynthesizeChunk`] stage, so a
-//! 60-minute episode is many small cache entries: editing one turn
-//! re-synthesises one chunk, and a crash loses only the chunk in flight. The
-//! audio itself goes in the [`BlobStore`]; the cache entry names it by hash,
-//! and an entry whose blob has gone is a miss.
+//! [`plan_chunks`] decides the chunks: whole beats for a dialogue model, one
+//! turn for a per-turn model. Each chunk runs through [`cached`] as a
+//! [`SynthesizeChunk`] stage, so a 60-minute episode is many small cache
+//! entries: editing one turn re-synthesises its chunk (and, for a model that
+//! listens to context, the chunk after it), and a crash loses only the chunk
+//! in flight. The audio itself goes in the [`BlobStore`]; the cache entry
+//! names it by hash, and an entry whose blob has gone is a miss.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use podling_types::{
-    CastMember, ChunkRecord, ContentHash, PerMille, Script, SpeakerId, TurnRange, VoiceCredit,
+    CastMember, ChunkRecord, ContentHash, NonverbalAt, PerMille, Script, SpeakerId, VoiceCredit,
     VoiceRef,
 };
 use serde::{Deserialize, Serialize};
@@ -24,8 +25,9 @@ use serde_json::{Value, json};
 use crate::audio::{Pcm, WavFormat};
 use crate::cache::{BlobStore, DiskCache};
 use crate::error::{CoreError, Result};
-use crate::plugin::{ChunkRequest, SpokenTurn, TtsProvider, synthesize_checked};
+use crate::plugin::{ChunkContext, ChunkRequest, SpokenTurn, TtsProvider, synthesize_checked};
 use crate::stage::{RunReport, Stage, cached};
+use crate::stages::plan_chunks::{Piece, PlannedChunk, plan_chunks};
 
 /// The cast's voices: clips resolved against the episode directory, and the
 /// hash of each clip's bytes, which is what a chunk's cache key holds.
@@ -87,15 +89,56 @@ impl Voices {
     pub fn credits(&self) -> &[VoiceCredit] {
         &self.credits
     }
+
+    /// The keys of everyone who speaks or makes a sound in `turns`.
+    fn keys_for<'t>(
+        &self,
+        turns: impl IntoIterator<Item = &'t SpokenTurn>,
+    ) -> Result<BTreeMap<SpeakerId, VoiceKey>> {
+        let mut keys = BTreeMap::new();
+        for turn in turns {
+            let sounds = turn.nonverbal.iter().map(|n| &n.by);
+            for speaker in std::iter::once(&turn.speaker).chain(sounds) {
+                let key = self.keys.get(speaker).ok_or_else(|| CoreError::Config {
+                    message: format!(
+                        "speaker {:?} has no voice: add it to [[cast]] with a reference clip",
+                        speaker.0
+                    ),
+                })?;
+                keys.insert(speaker.clone(), key.clone());
+            }
+        }
+        Ok(keys)
+    }
 }
 
 /// What a chunk's audio depends on, apart from the take: the chunk id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChunkSpec {
     pub turns: Vec<SpokenTurn>,
-    /// Only the voices of the speakers in `turns`, so changing someone
-    /// else's voice leaves this chunk alone.
+    /// Only the voices of the speakers in `turns` and `context`, so changing
+    /// someone else's voice leaves this chunk alone.
     pub voices: BTreeMap<SpeakerId, VoiceKey>,
+    /// What the model hears first; `None` for a model that doesn't listen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextSpec>,
+}
+
+/// A chunk's context, keyed by what was *said*, not by its audio.
+///
+/// The context's audio is the output of earlier chunks. Keying on it would
+/// chain every chunk to the one before: one edit would change a chunk's
+/// audio, so the next chunk's key, so its audio, and so on to the end of the
+/// episode. Keyed on the words, an edit re-synthesises at most the edited
+/// chunk and the one after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContextSpec {
+    /// The end of the previous chunk: its last beat, or the part of that
+    /// beat in it.
+    pub turns: Vec<SpokenTurn>,
+    /// Earlier turns that a turn in this chunk calls back to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callbacks: Vec<SpokenTurn>,
 }
 
 impl ChunkSpec {
@@ -110,6 +153,27 @@ pub struct ChunkInput {
     pub chunk: ChunkSpec,
     /// Which attempt, from 0. Each take gets its own seed.
     pub take: u8,
+    /// Where the context's audio is. `#[serde(skip)]` leaves it out of the
+    /// cache key: [`ContextSpec`] says why, and paths never belong in one.
+    #[serde(skip)]
+    pub context_audio: ContextAudio,
+}
+
+/// Where the audio of a chunk's [`ContextSpec`] is.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContextAudio {
+    pub previous: Option<Clip>,
+    pub callbacks: Vec<Clip>,
+}
+
+/// Some or all of an earlier chunk's audio. Only cut out and written to a
+/// file when the chunk is actually synthesised, so a cache hit costs nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Clip {
+    /// The earlier chunk's audio in the blob store.
+    pub blob: ContentHash,
+    /// Which of its samples; `None` for all of them.
+    pub samples: Option<Range<usize>>,
 }
 
 impl ChunkInput {
@@ -156,11 +220,28 @@ impl<'a> SynthesizeChunk<'a> {
             blobs,
         }
     }
+
+    /// A WAV file holding `clip`: the earlier chunk's own blob when the clip
+    /// is all of it, otherwise the cut-out samples, stored as a blob too.
+    fn file_of(&self, clip: &Clip) -> Result<PathBuf> {
+        let Some(samples) = &clip.samples else {
+            return Ok(self.blobs.path_for(&clip.blob));
+        };
+        let gone = || CoreError::InvalidProviderOutput {
+            stage: Self::ID,
+            message: format!("context audio {} vanished during the run", clip.blob),
+        };
+        let pcm = Pcm::from_wav(&self.blobs.get(&clip.blob)?.ok_or_else(gone)?)?;
+        let cut = pcm.samples.get(samples.clone()).ok_or_else(gone)?;
+        let wav = Pcm::new(pcm.rate, cut.to_vec()).to_wav(WavFormat::Float32)?;
+        Ok(self.blobs.path_for(&self.blobs.put(&wav)?))
+    }
 }
 
 impl Stage for SynthesizeChunk<'_> {
     const ID: &'static str = "synthesize_chunk";
-    const VERSION: u32 = 1;
+    /// 2: a chunk is a planned run of pieces with context, not one turn.
+    const VERSION: u32 = 2;
     type Input = ChunkInput;
     type Output = ChunkResult;
 
@@ -170,10 +251,26 @@ impl Stage for SynthesizeChunk<'_> {
 
     fn run(&self, input: &ChunkInput) -> Result<ChunkResult> {
         let seed = input.seed()?;
+        let audio = &input.context_audio;
+        let previous = audio
+            .previous
+            .as_ref()
+            .map(|c| self.file_of(c))
+            .transpose()?;
+        let callbacks = audio
+            .callbacks
+            .iter()
+            .map(|c| self.file_of(c))
+            .collect::<Result<Vec<_>>>()?;
+        let callbacks: Vec<&Path> = callbacks.iter().map(PathBuf::as_path).collect();
         let request = ChunkRequest {
             turns: &input.chunk.turns,
             voices: self.voices,
-            context: None,
+            context: input.chunk.context.as_ref().map(|context| ChunkContext {
+                turns: &context.turns,
+                audio: previous.as_deref(),
+                callbacks: &callbacks,
+            }),
             seed,
         };
         let started = Instant::now();
@@ -208,9 +305,27 @@ impl Stage for SynthesizeChunk<'_> {
 pub struct SynthesizedChunk {
     pub record: ChunkRecord,
     pub pcm: Pcm,
+    /// Where each of the chunk's pieces is in `pcm`, when the backend said.
+    pub turn_spans: Option<Vec<Range<usize>>>,
 }
 
-/// Synthesises `script`, one chunk per turn, in order.
+impl SynthesizedChunk {
+    /// The audio of pieces `pieces` (indices into the chunk's pieces); all
+    /// of the chunk when that is what they are, or when the backend gave no
+    /// spans to cut by.
+    fn clip(&self, pieces: Range<usize>) -> Clip {
+        let samples = self.turn_spans.as_ref().and_then(|spans| {
+            let all = pieces == (0..spans.len());
+            (!all).then(|| spans[pieces.start].start..spans[pieces.end - 1].end)
+        });
+        Clip {
+            blob: self.record.blob.clone(),
+            samples,
+        }
+    }
+}
+
+/// Synthesises `script` chunk by chunk, as [`plan_chunks`] cuts it for `tts`.
 pub fn synthesize_script(
     script: &Script,
     voices: &Voices,
@@ -219,29 +334,31 @@ pub fn synthesize_script(
     cache: Option<&DiskCache>,
     report: &mut RunReport,
 ) -> Result<Vec<SynthesizedChunk>> {
+    let capabilities = tts.capabilities().clone();
+    let plan = plan_chunks(script, &capabilities);
+    tracing::info!(
+        chunks = plan.len(),
+        multi_speaker = capabilities.multi_speaker,
+        "chunks planned"
+    );
     let stage = SynthesizeChunk::new(tts, voices, blobs);
-    let mut chunks = Vec::with_capacity(script.turns().len());
-    for (i, turn) in script.turns().iter().enumerate() {
-        let spoken = SpokenTurn {
-            speaker: turn.speaker.clone(),
-            text: turn.text.clone(),
-            emotion: turn.emotion,
+    let mut chunks: Vec<SynthesizedChunk> = Vec::with_capacity(plan.len());
+    for planned in &plan {
+        let turns = spoken(script, &planned.pieces);
+        let (context, context_audio) = if capabilities.context {
+            context_for(script, planned, &plan, &chunks)
+        } else {
+            (None, ContextAudio::default())
         };
-        let key = voices
-            .keys
-            .get(&turn.speaker)
-            .ok_or_else(|| CoreError::Config {
-                message: format!(
-                    "speaker {:?} has no voice: add it to [[cast]] with a reference clip",
-                    turn.speaker.0
-                ),
-            })?;
+        let context_turns = context.iter().flat_map(|c| &c.turns);
         let input = ChunkInput {
             chunk: ChunkSpec {
-                turns: vec![spoken],
-                voices: BTreeMap::from([(turn.speaker.clone(), key.clone())]),
+                voices: voices.keys_for(turns.iter().chain(context_turns))?,
+                turns,
+                context,
             },
             take: 0,
+            context_audio,
         };
         let result = cached(&stage, &input, cache, report)?;
         let bytes = blobs
@@ -253,7 +370,7 @@ pub fn synthesize_script(
         chunks.push(SynthesizedChunk {
             record: ChunkRecord {
                 id: input.chunk.id()?,
-                turns: TurnRange::new(i, i + 1).expect("i < i + 1"),
+                turns: planned.turns(),
                 blob: result.blob,
                 seed: result.seed,
                 take: input.take,
@@ -264,14 +381,103 @@ pub fn synthesize_script(
                 verified: false,
             },
             pcm: Pcm::from_wav(&bytes)?,
+            turn_spans: result.turn_spans,
         });
     }
     Ok(chunks)
 }
 
+/// `pieces` as the TTS will speak them. A sound the speaker makes before
+/// their words goes with the piece that starts the turn, one after with the
+/// piece that ends it; sounds over the turn, or by someone else, are left to
+/// the assembler.
+fn spoken(script: &Script, pieces: &[Piece]) -> Vec<SpokenTurn> {
+    pieces
+        .iter()
+        .map(|piece| {
+            let turn = &script.turns()[piece.turn];
+            let in_line = |at: NonverbalAt| match at {
+                NonverbalAt::Before => piece.starts_turn(),
+                NonverbalAt::After => piece.ends_turn(script),
+                NonverbalAt::Over => false,
+            };
+            SpokenTurn {
+                speaker: turn.speaker.clone(),
+                text: piece.text(script).to_owned(),
+                emotion: turn.emotion,
+                nonverbal: turn
+                    .nonverbal
+                    .iter()
+                    .filter(|n| n.by == turn.speaker && in_line(n.at))
+                    .cloned()
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
+/// The context of `planned`: the last beat of the chunk before it, and the
+/// earlier turns its turns call back to, with where their audio is in the
+/// chunks already made.
+fn context_for(
+    script: &Script,
+    planned: &PlannedChunk,
+    plan: &[PlannedChunk],
+    done: &[SynthesizedChunk],
+) -> (Option<ContextSpec>, ContextAudio) {
+    let previous = done.len().checked_sub(1).and_then(|i| plan.get(i));
+    let (Some(previous), Some(made)) = (previous, done.last()) else {
+        return (None, ContextAudio::default());
+    };
+    let last_beat = previous.pieces.last().expect("a chunk is never empty").beat;
+    let from = previous
+        .pieces
+        .iter()
+        .rposition(|p| p.beat != last_beat)
+        .map_or(0, |i| i + 1);
+    let mut spec = ContextSpec {
+        turns: spoken(script, &previous.pieces[from..]),
+        callbacks: Vec::new(),
+    };
+    let mut audio = ContextAudio {
+        previous: Some(made.clip(from..previous.pieces.len())),
+        callbacks: Vec::new(),
+    };
+
+    // A turn in this chunk, or already in the context, needs no clip.
+    let heard = |t: usize| {
+        planned.turns().contains(t) || previous.pieces[from..].iter().any(|p| p.turn == t)
+    };
+    let mut targets: Vec<usize> = planned
+        .pieces
+        .iter()
+        .filter_map(|p| script.turns()[p.turn].callback_to)
+        .filter(|&t| !heard(t))
+        .collect();
+    targets.sort_unstable();
+    targets.dedup();
+    for target in targets {
+        // The first chunk with any of the turn: its pieces there.
+        let Some(c) = plan[..done.len()]
+            .iter()
+            .position(|chunk| chunk.pieces.iter().any(|p| p.turn == target))
+        else {
+            continue;
+        };
+        let pieces = &plan[c].pieces;
+        let first = pieces.iter().position(|p| p.turn == target).expect("found");
+        let last = pieces
+            .iter()
+            .rposition(|p| p.turn == target)
+            .expect("found");
+        spec.callbacks.extend(spoken(script, &pieces[first..=last]));
+        audio.callbacks.push(done[c].clip(first..last + 1));
+    }
+    (Some(spec), audio)
+}
 #[cfg(test)]
 mod tests {
-    use podling_types::{Emotion, Pace, Speaker, Turn};
+    use podling_types::{Emotion, Pace, Speaker, Turn, TurnRange};
 
     use super::*;
     use crate::plugin::FakeTts;
@@ -424,17 +630,19 @@ mod tests {
     fn seeds_differ_per_take_and_per_chunk() {
         let f = fixture();
         let spec = |text: &str| ChunkSpec {
-            turns: vec![SpokenTurn {
-                speaker: SpeakerId("ada".into()),
-                text: text.into(),
-                emotion: Emotion::Neutral,
-            }],
+            turns: vec![SpokenTurn::plain(
+                SpeakerId("ada".into()),
+                text,
+                Emotion::Neutral,
+            )],
             voices: f.voices.keys.clone(),
+            context: None,
         };
         let seed = |text, take| {
             ChunkInput {
                 chunk: spec(text),
                 take,
+                context_audio: ContextAudio::default(),
             }
             .seed()
             .unwrap()
@@ -461,5 +669,220 @@ mod tests {
             message.contains("\"ada\"") && message.contains("nowhere.wav"),
             "{message}"
         );
+    }
+
+    /// `n` distinct words, `w0 w1 …`, ten to a sentence.
+    fn words(prefix: &str, n: usize) -> String {
+        let words: Vec<String> = (0..n)
+            .map(|i| {
+                let end = if i % 10 == 9 || i + 1 == n { "." } else { "" };
+                format!("{prefix}{i}{end}")
+            })
+            .collect();
+        words.join(" ")
+    }
+
+    /// What a provider was asked, per call.
+    #[derive(Debug, Default)]
+    struct Asked {
+        context_turns: Vec<String>,
+        callbacks: usize,
+        heard_audio: bool,
+    }
+
+    /// FakeTts that notes each request's context, and checks the context
+    /// files exist when it is called.
+    struct Recording {
+        inner: FakeTts,
+        asked: Vec<Asked>,
+    }
+
+    impl TtsProvider for Recording {
+        fn id(&self) -> &str {
+            "recording"
+        }
+        fn fingerprint(&self) -> Value {
+            self.inner.fingerprint()
+        }
+        fn capabilities(&self) -> &crate::plugin::TtsCapabilities {
+            self.inner.capabilities()
+        }
+        fn synthesize(&mut self, request: &ChunkRequest<'_>) -> Result<crate::plugin::ChunkAudio> {
+            let mut asked = Asked::default();
+            if let Some(context) = request.context {
+                asked.context_turns = context.turns.iter().map(|t| t.text.clone()).collect();
+                asked.callbacks = context.callbacks.len();
+                asked.heard_audio = context.audio.is_some_and(Path::is_file);
+                assert!(context.callbacks.iter().all(|p| p.is_file()));
+            }
+            self.asked.push(asked);
+            self.inner.synthesize(request)
+        }
+    }
+
+    fn run(
+        f: &Fixture,
+        script: &Script,
+        tts: &mut dyn TtsProvider,
+    ) -> (Vec<SynthesizedChunk>, Vec<bool>) {
+        let mut report = RunReport::default();
+        let chunks = synthesize_script(
+            script,
+            &f.voices,
+            tts,
+            &f.blobs,
+            Some(&f.cache),
+            &mut report,
+        )
+        .unwrap();
+        (chunks, report.stages.iter().map(|s| s.cache_hit).collect())
+    }
+
+    /// Four turns of a minute each: a dialogue model gets a chunk per turn.
+    fn four_minutes(edit: Option<usize>) -> Script {
+        let texts: Vec<(String, String)> = (0..4)
+            .map(|t| {
+                let edited = if edit == Some(t) { "x" } else { "" };
+                let who = if t % 2 == 0 { "ada" } else { "ben" };
+                (who.to_owned(), words(&format!("t{t}{edited}w"), 150))
+            })
+            .collect();
+        let borrowed: Vec<(&str, &str)> = texts
+            .iter()
+            .map(|(s, t)| (s.as_str(), t.as_str()))
+            .collect();
+        script(&borrowed)
+    }
+
+    #[test]
+    fn context_changes_the_key_but_is_never_in_the_audio() {
+        let f = fixture();
+        let script = four_minutes(None);
+        let mut recording = Recording {
+            inner: FakeTts::dialogue(),
+            asked: Vec::new(),
+        };
+        let (chunks, _) = run(&f, &script, &mut recording);
+        assert_eq!(chunks.len(), 4);
+
+        // The first chunk has nothing before it; each later one hears the
+        // chunk before, text and audio.
+        assert!(recording.asked[0].context_turns.is_empty());
+        assert!(!recording.asked[0].heard_audio);
+        for (i, asked) in recording.asked.iter().enumerate().skip(1) {
+            assert_eq!(asked.context_turns, [script.turns()[i - 1].text.clone()]);
+            assert!(asked.heard_audio, "chunk {i}");
+        }
+        // 150 words at a quarter second each: the context adds no samples.
+        for chunk in &chunks {
+            assert_eq!(chunk.pcm.len(), 150 * 6_000);
+        }
+
+        // The same turn with and without context is a different chunk.
+        let (per_turn, _) = run(&f, &script, &mut FakeTts::default());
+        assert_eq!(
+            per_turn[0].record.id, chunks[0].record.id,
+            "no context either way"
+        );
+        assert_ne!(per_turn[1].record.id, chunks[1].record.id);
+        assert_eq!(
+            per_turn[1].pcm.len(),
+            chunks[1].pcm.len(),
+            "same words, same length"
+        );
+    }
+
+    #[test]
+    fn editing_one_turn_redoes_its_chunk_and_the_next_only_if_it_listens() {
+        let f = fixture();
+        let (_, cold) = run(&f, &four_minutes(None), &mut FakeTts::dialogue());
+        assert_eq!(cold, [false; 4]);
+        let (_, edited) = run(&f, &four_minutes(Some(1)), &mut FakeTts::dialogue());
+        assert_eq!(edited, [true, false, false, true], "chunk 2 heard turn 1");
+
+        let f = fixture();
+        run(&f, &four_minutes(None), &mut FakeTts::default());
+        let (_, edited) = run(&f, &four_minutes(Some(1)), &mut FakeTts::default());
+        assert_eq!(
+            edited,
+            [true, false, true, true],
+            "a per-turn model hears nothing"
+        );
+    }
+
+    #[test]
+    fn a_callback_brings_the_earlier_turns_audio() {
+        let f = fixture();
+        let mut script = four_minutes(None);
+        let mut turns = script.turns().to_vec();
+        turns[3].callback_to = Some(0);
+        script = Script::new(script.cast().to_vec(), turns).unwrap();
+        let mut recording = Recording {
+            inner: FakeTts::dialogue(),
+            asked: Vec::new(),
+        };
+        run(&f, &script, &mut recording);
+        let callbacks: Vec<usize> = recording.asked.iter().map(|a| a.callbacks).collect();
+        assert_eq!(callbacks, [0, 0, 0, 1]);
+
+        // Calling back to the turn just before is already in the context;
+        // only a turn in an earlier chunk adds a clip.
+        let mut turns = script.turns().to_vec();
+        turns[3].callback_to = Some(2);
+        let near = Script::new(script.cast().to_vec(), turns).unwrap();
+        let mut recording = Recording {
+            inner: FakeTts::dialogue(),
+            asked: Vec::new(),
+        };
+        run(&f, &near, &mut recording);
+        let callbacks: Vec<usize> = recording.asked.iter().map(|a| a.callbacks).collect();
+        assert_eq!(callbacks, [0], "only chunk 3 changed, and it added no clip");
+    }
+
+    #[test]
+    fn only_the_speakers_own_sounds_before_or_after_go_to_the_tts() {
+        let ada = SpeakerId("ada".into());
+        let ben = SpeakerId("ben".into());
+        let sound = |kind, by: &SpeakerId, at| podling_types::Nonverbal {
+            kind,
+            by: by.clone(),
+            at,
+        };
+        let mut turn = script(&[("ada", "Hi."), ("ben", "Hey.")]).turns()[0].clone();
+        turn.text = words("w", 400);
+        turn.nonverbal = vec![
+            sound(
+                podling_types::NonverbalKind::Laugh {},
+                &ada,
+                NonverbalAt::Before,
+            ),
+            sound(
+                podling_types::NonverbalKind::Sigh {},
+                &ada,
+                NonverbalAt::After,
+            ),
+            sound(
+                podling_types::NonverbalKind::Chuckle {},
+                &ben,
+                NonverbalAt::Before,
+            ),
+            sound(
+                podling_types::NonverbalKind::Backchannel {
+                    text: "Mm-hm.".into(),
+                },
+                &ben,
+                NonverbalAt::Over,
+            ),
+        ];
+        let cast = script(&[("ada", "Hi."), ("ben", "Hey.")]).cast().to_vec();
+        let script = Script::new(cast, vec![turn]).unwrap();
+        let plan = plan_chunks(&script, FakeTts::default().capabilities());
+        assert_eq!(plan.len(), 2, "400 words is cut in two");
+        let first = spoken(&script, &plan[0].pieces);
+        let last = spoken(&script, &plan[1].pieces);
+        let kinds =
+            |t: &SpokenTurn| -> Vec<NonverbalAt> { t.nonverbal.iter().map(|n| n.at).collect() };
+        assert_eq!(kinds(&first[0]), [NonverbalAt::Before]);
+        assert_eq!(kinds(&last[0]), [NonverbalAt::After]);
     }
 }
