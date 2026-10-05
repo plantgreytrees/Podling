@@ -5,7 +5,8 @@
 licence, which Podling copies into `audio.json`. Only CC0 or CC-BY clips go
 here: many voice datasets are non-commercial (Kyutai's Expresso and EARS
 voices, for example, are CC-BY-NC), and a cloned voice carries its clip's
-terms.
+terms. Podling enforces this: an episode whose clip licence is not exactly
+`CC0-1.0`, `CC-BY-3.0` or `CC-BY-4.0` is refused when it is read.
 
 | File | Speaker | Clip | Licence | Source |
 |---|---|---|---|---|

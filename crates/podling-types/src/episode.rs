@@ -202,10 +202,21 @@ struct RawVoiceRef {
     licence: String,
 }
 
+/// The SPDX ids a voice clip may carry: public domain or attribution only, so
+/// a cloned voice never brings non-commercial or share-alike terms into an
+/// episode. Matched exactly, so the error can name the id to write.
+pub const VOICE_LICENCES: [&str; 3] = ["CC0-1.0", "CC-BY-3.0", "CC-BY-4.0"];
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VoiceRefError {
     #[error("voice {0:?} has no licence: name the clip's licence, e.g. \"CC0-1.0\"")]
     MissingLicence(PathBuf),
+    #[error(
+        "voice {reference:?} has licence {licence:?}, which is not allowed: \
+         use a clip under one of {VOICE_LICENCES:?} (non-commercial and unknown \
+         licences are refused)"
+    )]
+    LicenceNotAllowed { reference: PathBuf, licence: String },
     #[error("voice {0:?} has no transcript of its reference clip")]
     MissingTranscript(PathBuf),
 }
@@ -220,6 +231,9 @@ impl VoiceRef {
             (reference.into(), transcript.into(), licence.into());
         if licence.trim().is_empty() {
             return Err(VoiceRefError::MissingLicence(reference));
+        }
+        if !VOICE_LICENCES.contains(&licence.trim()) {
+            return Err(VoiceRefError::LicenceNotAllowed { reference, licence });
         }
         if transcript.trim().is_empty() {
             return Err(VoiceRefError::MissingTranscript(reference));

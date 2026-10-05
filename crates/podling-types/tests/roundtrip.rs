@@ -229,6 +229,33 @@ fn a_voice_needs_a_licence_and_a_transcript() {
 }
 
 #[test]
+fn a_voice_clip_must_be_cc0_or_cc_by() {
+    for allowed in podling_types::episode::VOICE_LICENCES {
+        assert!(VoiceRef::new("v.wav", "Hi.", allowed).is_ok(), "{allowed}");
+    }
+    for refused in ["CC-BY-NC-4.0", "CC-BY-SA-4.0", "proprietary", "cc0"] {
+        assert_eq!(
+            VoiceRef::new("v.wav", "Hi.", refused),
+            Err(VoiceRefError::LicenceNotAllowed {
+                reference: "v.wav".into(),
+                licence: refused.into(),
+            }),
+        );
+    }
+
+    let nc = AUDIO.replace("licence = \"CC0-1.0\"", "licence = \"CC-BY-NC-4.0\"");
+    let err = toml::from_str::<EpisodeSpec>(&format!("{EPISODE}{nc}"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("\"CC-BY-NC-4.0\"")
+            && err.contains("CC-BY-4.0")
+            && err.contains("not allowed"),
+        "{err}"
+    );
+}
+
+#[test]
 fn max_wer_is_a_per_mille_score() {
     let over = AUDIO.replace(
         "model_dir = \"models/whisper-base.en\"",
