@@ -66,8 +66,12 @@ ollama stop <model>      # or let Podling do it: unload_after = true in [llm]/[e
 Every route lives under `/v1/podling`, and every body is JSON. A request with an unknown field,
 a wrong type or a missing field gets HTTP 400, with the reason in `{"error": ...}`.
 
-- **`GET /health`** returns `{protocol, backend, model, weights, loaded, capabilities}`.
-  - `weights` is the model snapshot's commit, so Podling's cache key changes when the weights do.
+- **`GET /health`** returns `{protocol, backend, model, weights, adapter, loaded, capabilities}`.
+  - `weights` names the exact weights, so Podling's cache key changes when they do. For a hub
+    snapshot it is the snapshot's commit. For `--model-dir` it is `sha256:<hex>` over the
+    directory's `*.safetensors` and `*.json` files, computed once at startup.
+  - `adapter` is the backend adapter's version (`ADAPTER_VERSION`). It is bumped when the adapter
+    changes what the model is asked to say, so cached audio from the old adapter is not reused.
   - `capabilities` is `{multi_speaker, max_chunk_secs, max_speakers, native_sample_rate, context}`.
     `context` says whether the model listens to a request's `context`. When it is false (or missing),
     Podling sends no context and keys no chunk on it, so editing a turn re-synthesises only its chunk.

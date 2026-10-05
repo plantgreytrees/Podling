@@ -125,7 +125,7 @@ fn synthesises_through_the_stub_and_stops_it_on_drop() {
     assert_eq!(
         tts.fingerprint(),
         json!({ "id": "sidecar", "protocol": 1, "backend": "stub",
-                "model": "stub-model", "weights": "abc123" })
+                "model": "stub-model", "weights": "abc123", "adapter": 1 })
     );
     assert!(!tts.capabilities().multi_speaker);
 

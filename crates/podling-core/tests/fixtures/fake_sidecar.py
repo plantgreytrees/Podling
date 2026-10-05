@@ -83,6 +83,7 @@ class Handler(BaseHTTPRequestHandler):
                 "backend": "stub",
                 "model": "stub-model",
                 "weights": "abc123",
+                "adapter": 1,
                 "loaded": False,
                 "capabilities": {
                     "multi_speaker": False,

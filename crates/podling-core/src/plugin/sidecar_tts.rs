@@ -34,6 +34,10 @@ struct Health {
     backend: String,
     model: String,
     weights: String,
+    /// The worker adapter's version: how it turns a request into model calls.
+    /// A worker from before the field existed reports none and reads as 0.
+    #[serde(default)]
+    adapter: u32,
     capabilities: WireCapabilities,
 }
 
@@ -175,6 +179,7 @@ impl SidecarTts {
             backend = %health.backend,
             model = %health.model,
             weights = %health.weights,
+            adapter = health.adapter,
             "TTS sidecar healthy"
         );
         Ok(Self {
@@ -291,16 +296,8 @@ impl TtsProvider for SidecarTts {
         "sidecar"
     }
 
-    /// Protocol, backend, model and weights snapshot, all from `/health`.
-    /// The profile name is left out: renaming a profile changes no audio.
     fn fingerprint(&self) -> Value {
-        json!({
-            "id": "sidecar",
-            "protocol": self.health.protocol,
-            "backend": self.health.backend,
-            "model": self.health.model,
-            "weights": self.health.weights,
-        })
+        fingerprint(&self.health)
     }
 
     fn capabilities(&self) -> &TtsCapabilities {
@@ -422,6 +419,19 @@ fn missing_voice(speaker: &SpeakerId) -> CoreError {
     }
 }
 
+/// Protocol, backend, model, weights snapshot and adapter version, all from
+/// `/health`. The profile name is left out: renaming a profile changes no audio.
+fn fingerprint(health: &Health) -> Value {
+    json!({
+        "id": "sidecar",
+        "protocol": health.protocol,
+        "backend": health.backend,
+        "model": health.model,
+        "weights": health.weights,
+        "adapter": health.adapter,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +444,20 @@ mod tests {
                               "max_speakers": 8, "native_sample_rate": rate },
         })
         .to_string()
+    }
+
+    #[test]
+    fn the_adapter_version_is_part_of_the_fingerprint() {
+        let mut health: Value = serde_json::from_str(&health(1, 24_000)).unwrap();
+        let old = fingerprint(&parse_health(&health.to_string()).unwrap());
+        assert_eq!(
+            old["adapter"], 0,
+            "a worker that reports no adapter reads as 0"
+        );
+        health["adapter"] = json!(1);
+        let new = fingerprint(&parse_health(&health.to_string()).unwrap());
+        assert_eq!(new["adapter"], 1);
+        assert_ne!(old, new);
     }
 
     #[test]
