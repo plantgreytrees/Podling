@@ -33,6 +33,8 @@ units:
         - scripts/tts_bakeoff/bakeoff.py
         - scripts/tts_bakeoff/README.md
         - scripts/tts_bakeoff/.gitignore
+        - scripts/tts_bakeoff/uv.lock              # scope correction: `uv sync` writes it
+        - scripts/tts_bakeoff/fixtures/            # scope correction: the 96-word example sources give a <1 min script
         - docs/plans/phase5-tts-audio.md
     tooling: { implementer: implementer, gates: [dependency-auditor], skills: [], guards: [], mcp: [] }
   - id: 2
@@ -337,7 +339,7 @@ model called with one turn, so one chunk-shaped request covers both:
 /// What a backend can do; the chunk planner reads it.
 pub struct TtsCapabilities {
     pub multi_speaker: bool,     // false → the planner sends one turn per chunk
-    pub max_chunk_secs: u32,     // e.g. Dia2 ≈ 120
+    pub max_chunk_secs: u32,     // e.g. Qwen3-TTS 120, Dia2 90 (see Spike results)
     pub max_speakers: u8,
     pub native_sample_rate: u32,
 }
@@ -385,8 +387,9 @@ so the whole audio path is testable offline.
   picks, waited on `/health` with a timeout, killed and reaped in `Drop`.
 - **Backends inside the worker** are adapters chosen by the spike (unit 1): the winner is
   implemented first, plus at most one fallback. Emotion and nonverbal events are mapped to each
-  model's own syntax (text tags for Dia2/MOSS-TTSD, a style instruction for Qwen3-TTS) **in the
-  adapter**, so the Rust side never learns model-specific tags.
+  model's own syntax (text tags for Dia2/MOSS-TTSD; Qwen3-TTS voice clones take no style
+  instruction, see Spike results) **in the adapter**, so the Rust side never learns model-specific
+  tags.
 
 ### Voices are pinned by the episode, not invented by the LLM
 
@@ -452,16 +455,75 @@ schema version. `synthesize` caches **per chunk take** (key: chunk text, voices'
 context hashes, seed, TTS fingerprint), not per stage, so a 60-minute episode is ~30 independent
 cache entries and a crash at minute 40 loses one chunk.
 
+## Spike results (unit 1, 2026-10-05)
+
+**Decision: Qwen3-TTS 1.7B Base is the default backend (per-turn), Dia2-1B the fallback (dialogue);
+Whisper `base.en` verifies.** MOSS-TTSD does not fit the card.
+
+Measured by `scripts/tts_bakeoff` on `fixtures/tunguska-10min.json` (51 turns, two hosts, 8 quotes),
+RTX 5060 8 GB, voices LibriTTS-R 4446/1089 (CC-BY-4.0). Ollama had no model on the GPU in any run
+(`ollama_at_start`/`_end` in each `results.json`). The CPU was shared with another job (load
+average 18–51), so CPU timings are pessimistic; GPU timings are not affected.
+
+| | Qwen3-TTS 1.7B Base | Dia2-1B | MOSS-TTSD v1.0 (8B, NF4) |
+|---|---|---|---|
+| Fits 8 GB | yes | yes | **no**: ~5 GB resident + a 1.2 GiB bf16 matrix mid-load exceeds what the desktop (~1.2 GB) leaves; its 1.77B fp32 audio tokenizer (~7 GB) has to run on the CPU |
+| Peak VRAM, own process (device incl. desktop) | 5,824 MiB (7,417) | 5,768 MiB (7,278) | — |
+| RTF (synth s / audio s) | **0.63** | 1.28 | — |
+| WER `base.en` / `small.en` (mean) | **0.009** / 0.027 | 0.032 / 0.024 | — |
+| Quotes heard `base.en` / `small.en` | 7/8 / 7/8 | 7/7 / 6/7 | — |
+| Speaker similarity (ECAPA) mean / min | **0.76 / 0.43** | 0.54 / 0.06 | — |
+| CPU RTF of Whisper `base.en` / `small.en` (loaded CPU) | 1.0 / 2.0 | 1.6 / 3.5 | — |
+| Chunks (cap) | 5 (120 s) | 6 (90 s) | 0 |
+| Licences | weights + tokenizer Apache-2.0; `qwen-tts` Apache-2.0 | weights Apache-2.0, Mimi CC-BY-4.0 | Apache-2.0 |
+
+Every remaining quote miss is a Whisper deletion, not a speech error: the other Whisper size heard
+the same audio correctly in each case.
+
+**Why Qwen.** It is twice as fast, has the lowest WER and the best voice match, and it synthesises one
+turn per call, so turn spans are exact and the two voices cannot be swapped. Dia2 swapped them for a
+whole chunk: in chunk 4 every turn matched the *other* host (e.g. 0.05 vs 0.50). What Qwen gives up
+is cross-turn prosody, nonverbal tags, and style control: `generate_voice_clone` takes no
+instruction, so emotion comes from the wording alone. Whether per-turn banter sounds natural is the
+open question for the listening pass (1.4).
+
+**Why `base.en`.** After the scorer fix below, it is as accurate as `small.en` (0.009–0.032 vs
+0.024–0.027 mean WER) at half the CPU time.
+
+**Design changes, and the units that follow them:**
+1. **Per-turn default.** `qwen` reports `multi_speaker: false`, `max_chunk_secs: 120`. The planner
+   sends one turn per chunk (7.1 already says so), so turn spans are exact and 8.4's ASR spans apply
+   only to the fallback. Unit 3.4 implements the Qwen adapter. The Dia2 adapter is the documented
+   fallback, built only if the listening pass rejects per-turn banter.
+2. **Emotion and nonverbals under Qwen.** The adapter renders `Backchannel { text }` as its own short
+   call (for 9.3's second track). It drops `Laugh`/`Chuckle`/`Sigh` and emotion, which it cannot
+   express, and lists them in its response so the manifest can say so. There is no style instruction
+   (this corrects "a style instruction for Qwen3-TTS" above).
+3. **Dia2, if built.** Its chunk cap is 90 s, not 120, because the 2-minute context also holds both
+   voice prefixes. Mimi decodes on the CPU: a GPU decode beside the generation cache overflowed 8 GB.
+   Prefix word timings are computed once per voice and stored, never with `whisper-timestamped`
+   (AGPL-3.0). Each turn is checked against both reference voices to catch a swap, and a swapped
+   chunk is regenerated.
+4. **Whisper must guard against loops (8.2).** The transformers *chunked* long-form pipeline looped
+   on clean audio ("The size of the graphs." ×5), scoring good chunks at WER 0.33–0.89. Sequential
+   30 s windows with Whisper's temperature fallback fixed it (0.885 → 0.005). That fallback retries a
+   window that is too repetitive (compression ratio > 1.35) or too unlikely (mean log-prob < −1.0),
+   with no previous-text prompt. `CandleWhisper` must do the same, or a verifier would regenerate
+   good chunks.
+5. **"Peak VRAM ≤ 7.0 GB" means the Podling-owned processes** (sidecar), measured per process. The
+   desktop holds ~1.2 GB of the 7.6 GB card, which is why MOSS fails. 4.4's OOM hint should also
+   mention the desktop.
+
 ## Scope Steps (executable core)
 
 ### Step 1 — tts-bakeoff (., python, normal)
 Tooling: implementer · gates dependency-auditor
 Depends on: none
-- [ ] 1.1 Write `scripts/tts_bakeoff/pyproject.toml` (uv; Python 3.11) with only commercial-safe deps; record each dep's licence in README → accept: `uv sync` succeeds; README table lists every direct dep + licence; none is AGPL/NC.
-- [ ] 1.2 Write `scripts/tts_bakeoff/bakeoff.py`: reads a Podling `script.json`, packs turns into ≤120 s chunks, runs one backend per process (MOSS-TTSD NF4, Dia2-1B, Qwen3-TTS-1.7B), pinned reference clips, writes chunk WAVs + `results.json` → accept: `python bakeoff.py --backend <b> --script <path>` writes ≥5 chunk WAVs for each backend on the Tunguska script.
-- [ ] 1.3 Measure per backend: peak VRAM (`torch.cuda.max_memory_allocated` and `nvidia-smi` polling), RTF, speaker similarity of each chunk to its reference (ECAPA cosine, Apache-2.0 model), WER and quote hits with Whisper `base.en` and `small.en` on CPU (incl. CPU RTF) → accept: `results.json` has every metric for every backend; Ollama model unloaded during runs (recorded).
-- [ ] 1.4 Listening pass: rate seams (1–5) and banter timing on chunks 1, 3, 5; confirm weight licences on the model cards → accept: notes recorded per backend.
-- [ ] 1.5 Record "Spike results" in this plan: the default backend (must fit ≤ 7.0 GB peak, RTF ≤ 2.0, licence clean), a fallback, Whisper size, and any change to the design above → accept: section exists with numbers and a one-line decision; downstream units' text updated if the decision changes them.
+- [x] 1.1 Write `scripts/tts_bakeoff/pyproject.toml` (uv; Python 3.11) with only commercial-safe deps; record each dep's licence in README → accept: `uv sync` succeeds; README table lists every direct dep + licence; none is AGPL/NC.
+- [x] 1.2 Write `scripts/tts_bakeoff/bakeoff.py`: reads a Podling `script.json`, packs turns into ≤120 s chunks, runs one backend per process (MOSS-TTSD NF4, Dia2-1B, Qwen3-TTS-1.7B), pinned reference clips, writes chunk WAVs + `results.json` → accept: `python bakeoff.py --backend <b> --script <path>` writes ≥5 chunk WAVs for each backend on the Tunguska script. *Done for Qwen (5) and Dia2 (6). MOSS-TTSD cannot load on the 8 GB card after four fixes; that failure is its recorded result (Spike results). The script is the hand-written `fixtures/tunguska-10min.json`, because the example sources are too short for a 10-minute grounded script.*
+- [x] 1.3 Measure per backend: peak VRAM (`torch.cuda.max_memory_allocated` and `nvidia-smi` polling), RTF, speaker similarity of each chunk to its reference (ECAPA cosine, Apache-2.0 model), WER and quote hits with Whisper `base.en` and `small.en` on CPU (incl. CPU RTF) → accept: `results.json` has every metric for every backend; Ollama model unloaded during runs (recorded). *Every backend that produced audio; Ollama's GPU usage was 0 throughout (`ollama_at_start`/`_end`).*
+- [ ] 1.4 Listening pass: rate seams (1–5) and banter timing on chunks 1, 3, 5; confirm weight licences on the model cards → accept: notes recorded per backend. *Licences confirmed (README table). The listening needs a human: `scripts/tts_bakeoff/out/{qwen,dia2}/chunk_00{1,3}.wav` plus `qwen/chunk_004.wav` and `dia2/chunk_005.wav`. In particular, does per-turn Qwen banter sound natural? If not, the Dia2 fallback (change 3) gets built.*
+- [x] 1.5 Record "Spike results" in this plan: the default backend (must fit ≤ 7.0 GB peak, RTF ≤ 2.0, licence clean), a fallback, Whisper size, and any change to the design above → accept: section exists with numbers and a one-line decision; downstream units' text updated if the decision changes them.
 
 ### Step 2 — audio-contracts (., rust, normal)
 Tooling: implementer · gates code-reviewer, api-reviewer, idiom-reviewer · skills language-aware-planning · guards cargo fmt/clippy/test
@@ -479,7 +541,7 @@ Depends on: tts-bakeoff, audio-contracts
 - [ ] 3.1 Create `sidecars/tts` (uv project, `podling_tts` package) with a stdlib-or-minimal HTTP server → accept: `uv run podling-tts --port 0 --backend fake` answers `/health`.
 - [ ] 3.2 Implement protocol v1 in `protocol.py` (`/health`, `/synthesize`, `/unload`), request validated with explicit types; protocol version in `/health` → accept: malformed request → 400 with a reason; unknown field → 400.
 - [ ] 3.3 Bind to `127.0.0.1` only; refuse `out_path`/reference paths outside the `--run-dir` given at start (resolve symlinks first) → accept: test with `../` and a symlink escape both → 400.
-- [ ] 3.4 Implement the spike winner's adapter in `backends/` (emotion + nonverbal → model syntax, pinned references, context conditioning, seed, turn spans when available) and a `fake` backend; free VRAM check at load with a readable error → accept: `pytest` passes for `fake`; a live call with the winner writes a WAV.
+- [ ] 3.4 Implement the spike winner's adapter in `backends/`: Qwen3-TTS 1.7B Base, per turn (`multi_speaker: false`, `max_chunk_secs: 120`). It needs pinned references, a seed and an exact turn span; renders `Backchannel` as its own call; and drops `Laugh`/`Chuckle`/`Sigh`/emotion, listing them in the response. Add a `fake` backend, and a free-VRAM check at load with a readable error (Spike results, changes 1–2) → accept: `pytest` passes for `fake`; a live call with the winner writes a WAV.
 - [ ] 3.5 Audit deps and weights licences → accept: README licence table; no AGPL/NC/revenue-capped entries.
 - [ ] 3.6 Write `sidecars/tts/README.md`: install, model download, the `sidecars.toml` profile snippet → accept: steps reproduce a running sidecar on a fresh clone.
 
@@ -530,7 +592,7 @@ Depends on: audio-e2e, script-beats
 Tooling: implementer · gates code-reviewer, dependency-auditor, performance-reviewer, idiom-reviewer · skills language-aware-planning · guards cargo fmt/clippy/test
 Depends on: audio-e2e
 - [ ] 8.1 Add `plugin/asr.rs`: `AsrProvider`, `Transcript`, `transcribe_checked`, `FakeAsr` (returns the request's text, or a scripted miss for tests) → accept: unit tests.
-- [ ] 8.2 Add `plugin/whisper.rs`: `CandleWhisper` (candle-transformers Whisper, CPU, safetensors only, weights BLAKE3 in fingerprint, loaded on first use) → accept: parity test against a reference transcript fixture, gated like `cross_encoder_parity.rs`.
+- [ ] 8.2 Add `plugin/whisper.rs`: `CandleWhisper` (candle-transformers Whisper `base.en` by default, CPU, safetensors only, weights BLAKE3 in fingerprint, loaded on first use). For audio over 30 s it decodes sequential windows with temperature fallback: it retries a window whose compression ratio is > 1.35 or whose mean log-prob is < −1.0, at temperatures 0.2…1.0, with no previous-text prompt (Spike results, change 4) → accept: parity test against a reference transcript fixture, gated like `cross_encoder_parity.rs`; a unit test shows a repetitive window triggers the fallback.
 - [ ] 8.3 Add `stages/verify_audio.rs` text normalisation (case, punctuation, numbers ↔ words) and WER → accept: unit tests incl. "1908" vs "nineteen oh eight".
 - [ ] 8.4 Verify each chunk right after synthesis; fill missing `turn_spans` from segment timestamps snapped to silence → accept: dialogue-backend fake without spans gets spans.
 - [ ] 8.5 Regenerate failures with a new seed up to `max_retries`; banter beats get `takes`, best passing take wins; log WER, misses, retries, take; still failing → `Error` finding + `verified: false` → accept: tests for pass, retry-then-pass, give-up.
@@ -553,7 +615,7 @@ Depends on: beat-chunker, asr-verify
 Tooling: implementer · gates docs-curator · guards cargo test
 Depends on: full-assembler
 - [ ] 10.1 Add `examples/tunguska/episode-tts.toml` (Ollama + sidecar profile + CC0 voices) and `voices/README.md` with the download commands and licences (clips gitignored) → accept: file parses; README lists each clip's licence.
-- [ ] 10.2 Live run: 10-minute Tunguska episode, cold cache → accept: `episode.wav` plays; all chunks verified; peak VRAM ≤ 7.0 GB; numbers recorded under "Live results".
+- [ ] 10.2 Live run: 10-minute Tunguska episode, cold cache → accept: `episode.wav` plays; all chunks verified; peak VRAM of the sidecar process ≤ 7.0 GB (device total recorded beside it); numbers recorded under "Live results".
 - [ ] 10.3 Live run: 30-minute episode, then edit one turn and rerun → accept: one chunk re-synthesised; listening notes on seams and banter recorded.
 - [ ] 10.4 Update `docs/architecture.md`: pipeline, TTS/ASR rows in the plugin table, sidecar protocol and lifecycle, blob cache, bump rule for the TTS fingerprint, remove "TTS and ASR provider traits" from Deferred → accept: docs-curator passes.
 - [ ] 10.5 Update README config table (`[[cast]]`, `[tts]`, `[asr]`, `sidecars.toml`) → accept: every new key documented.

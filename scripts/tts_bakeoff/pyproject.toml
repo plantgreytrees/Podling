@@ -1,0 +1,68 @@
+# Phase 5 TTS bake-off: a throwaway measuring script, not part of Podling.
+#
+# Each backend is an extra, and the extras conflict (their transformers pins
+# disagree), so uv builds one environment per backend:
+#
+#   uv sync --extra dia2     # or moss, or qwen
+#   uv run --extra dia2 python bakeoff.py --backend dia2 --script <script.json>
+#
+# Licences of every direct dependency are listed in README.md.
+
+[project]
+name = "podling-tts-bakeoff"
+version = "0.1.0"
+description = "Measure candidate TTS models for Podling on an 8 GB GPU"
+requires-python = ">=3.11,<3.12"
+license = "Apache-2.0"
+dependencies = [
+  "torch>=2.8.0",
+  "torchaudio>=2.8.0",
+  "numpy>=2.1,<3",
+  "soundfile>=0.12.1",
+  "scipy>=1.13",
+  "huggingface-hub>=0.24.7",
+  "speechbrain>=1.0.3",
+  "nvidia-ml-py>=12.560",
+]
+
+[project.optional-dependencies]
+dia2 = [
+  # Dia2 is not on PyPI, and its packaging lists only the top-level package, so
+  # a built wheel lacks dia2.core: it works only as an editable install of the
+  # reviewed commit unpacked into vendor/dia2 (see README).
+  "dia2",
+  "transformers>=4.55.3,<5",
+]
+moss = [
+  # MOSS-TTSD's model and processor code come from the Hugging Face repo
+  # (trust_remote_code); results.json records the revision used. These are the
+  # runtime dependencies MOSS-TTS lists for that code.
+  "transformers==5.0.0",
+  "accelerate>=1.10.1",
+  "bitsandbytes>=0.46",
+  "einops>=0.8.1",
+  "librosa>=0.11",
+  "tiktoken>=0.12",
+  "torchcodec>=0.8",
+]
+qwen = [
+  "qwen-tts==0.1.1",
+]
+
+[tool.uv]
+package = false
+conflicts = [[{ extra = "dia2" }, { extra = "moss" }, { extra = "qwen" }]]
+# Dia2 depends on whisper-timestamped (AGPL-3.0) only to time the words of a
+# voice-prefix clip. The bake-off supplies those timings itself, so the AGPL
+# package is never installed.
+override-dependencies = ["whisper-timestamped ; sys_platform == 'never'"]
+
+[tool.uv.sources]
+dia2 = { path = "vendor/dia2", editable = true }
+torch = [{ index = "pytorch-cu128" }]
+torchaudio = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
