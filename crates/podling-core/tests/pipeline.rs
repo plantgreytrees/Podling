@@ -116,6 +116,30 @@ fn no_nli_config_writes_todays_artifacts() {
     }
 }
 
+/// Phase 5's half of the golden test above: without `[tts]` no audio stage
+/// runs and nothing but the text artifacts is written.
+#[test]
+fn without_tts_no_audio_is_made() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let report = pipeline::run(&spec(&fixtures()), &fixtures(), Some(&cache), &out).unwrap();
+
+    assert_eq!(report.audio, None);
+    assert_eq!(hits(&report), STAGES.map(|id| (id, false)).to_vec());
+    let mut written: Vec<String> = fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    written.sort();
+    let mut expected: Vec<String> = text_artifacts()
+        .map(|kind| format!("{}.json", kind.as_str()))
+        .collect();
+    expected.sort();
+    assert_eq!(written, expected);
+    assert_eq!(cache.stats().unwrap().blobs, 0);
+}
+
 fn read_body<T: serde::de::DeserializeOwned>(out: &Path, kind: &str) -> T {
     let json: Value =
         serde_json::from_str(&fs::read_to_string(out.join(format!("{kind}.json"))).unwrap())
@@ -574,7 +598,9 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
 /// The cache keys of the episode without `[embedding]` and `[nli]`, recorded
 /// on `main` before `ground_claims` existed (commit f12b046). Adding NLI
 /// grounding must not move them. A deliberate bump of one of these stages
-/// (see "The five bump rules" in docs/architecture.md) updates its line here.
+/// (see "The five bump rules" in docs/architecture.md) updates its line here:
+/// Phase 5 bumped `PROMPT_VERSION` (4), the fake LLM (4) and `script` (8), so
+/// the two LLM stages moved; ledger and analyse, fed the same data, did not.
 const NO_NLI_KEYS: [(&str, &str); 6] = [
     (
         "ingest",
@@ -586,7 +612,7 @@ const NO_NLI_KEYS: [(&str, &str); 6] = [
     ),
     (
         "extract_claims",
-        "e8d7dc70e13faf8979ef7d1a7140cdd7a5b5dc5275f781538cb1b96c6b71867d",
+        "e9bcc4cbb081761e883600e3977d38b9bf58e29cf9cbf7beffa765c3afdcf436",
     ),
     (
         "ledger",
@@ -594,7 +620,7 @@ const NO_NLI_KEYS: [(&str, &str); 6] = [
     ),
     (
         "script",
-        "3a6ed74ef9ca18f4d12460ec90d4200d9c31c23d0c6225bf36fd67a4f2388664",
+        "d150efc41e6c6039af4c556bb7ed9a3e7f4b5f5d7ab540abe062caf1b61ba7f1",
     ),
     (
         "analyse",

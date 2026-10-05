@@ -15,7 +15,8 @@ use crate::text::sentences;
 ///    instead of the quoted words.
 /// 3: the script request's ledger lists each claim's id, text and status
 ///    ([`LedgerClaim`]), without evidence.
-pub const PROMPT_VERSION: u32 = 3;
+/// 4: the script request may carry the episode's fixed `cast`.
+pub const PROMPT_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,7 +25,8 @@ pub enum LlmTask {
     /// an object, not a bare array, because JSON mode only guarantees objects.
     ExtractClaims,
     /// Input: `{ "topic", "target_minutes", "ledger": [LedgerClaim],
-    /// "sources": [SourceText] }`. Output: JSON `ScriptDraft`.
+    /// "sources": [SourceText], "cast"?: [Speaker] }`. Output: JSON
+    /// `ScriptDraft`. `cast` is present only when the episode fixes it.
     WriteScript,
 }
 
@@ -49,6 +51,13 @@ pub trait LlmProvider {
     fn fingerprint(&self) -> Value;
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion>;
+
+    /// Frees whatever the model holds on the GPU, when the run no longer
+    /// needs it. A *default method*: providers that hold nothing (most of
+    /// them) inherit this no-op and need not write one.
+    fn release(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The reply to [`LlmTask::ExtractClaims`].
@@ -203,20 +212,31 @@ impl FakeLlm {
         let sources: Vec<SourceText> = serde_json::from_value(input["sources"].clone())
             .map_err(|err| invalid_input(format!("sources: {err}")))?;
 
-        let host = SpeakerId("host".into());
-        let guest = SpeakerId("guest".into());
-        let cast = vec![
-            Speaker {
-                id: host.clone(),
-                name: "Ada".into(),
-                role: "host".into(),
-            },
-            Speaker {
-                id: guest.clone(),
-                name: "Ben".into(),
-                role: "co-host".into(),
-            },
-        ];
+        // A declared cast is used as given: the first speaker hosts, the
+        // second (or the first again, for a solo show) answers.
+        let declared: Vec<Speaker> = match input.get("cast") {
+            Some(cast) => serde_json::from_value(cast.clone())
+                .map_err(|err| invalid_input(format!("cast: {err}")))?,
+            None => Vec::new(),
+        };
+        let cast = if declared.is_empty() {
+            vec![
+                Speaker {
+                    id: SpeakerId("host".into()),
+                    name: "Ada".into(),
+                    role: "host".into(),
+                },
+                Speaker {
+                    id: SpeakerId("guest".into()),
+                    name: "Ben".into(),
+                    role: "co-host".into(),
+                },
+            ]
+        } else {
+            declared
+        };
+        let host = cast[0].id.clone();
+        let guest = cast.get(1).unwrap_or(&cast[0]).id.clone();
 
         let mut turns = vec![Self::opening(&host, topic, sources.first())];
         for (i, entry) in ledger.iter().enumerate() {
@@ -291,7 +311,8 @@ impl LlmProvider for FakeLlm {
     fn fingerprint(&self) -> Value {
         // Bump when the fake's behaviour changes.
         // 3: the opening turn says `{{quote:0}}` instead of typing the sentence.
-        json!({ "provider": "fake", "version": 3 })
+        // 4: a declared cast in the script request is used.
+        json!({ "provider": "fake", "version": 4 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {

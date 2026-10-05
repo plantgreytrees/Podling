@@ -6,6 +6,7 @@ Every request body is saved to `<run-dir>/last_request.json`.
 
 import argparse
 import json
+import math
 import os
 import signal
 import struct
@@ -34,7 +35,9 @@ if args.mode == "stubborn":
 
 
 def wav(samples: int, rate: int) -> bytes:
-    data = struct.pack(f"<{samples}f", *([0.1] * samples))
+    # A quiet 220 Hz tone: loudness meters filter out a constant (DC) signal.
+    tone = [0.1 * math.sin(2 * math.pi * 220 * i / rate) for i in range(samples)]
+    data = struct.pack(f"<{samples}f", *tone)
     fmt = struct.pack("<HHIIHH", 3, 1, rate, rate * 4, 4, 32)
     return (
         b"RIFF"

@@ -253,7 +253,7 @@ fn episode_rejects_unknown_keys() {
 fn open_ai_compat_episode_parses_and_roundtrips() {
     let full = EPISODE.replace(
         "kind = \"fake\"",
-        "kind = \"open_ai_compat\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"llama3.1:8b\"\napi_key_env = \"OPENAI_API_KEY\"\ntemperature = 0.5\ntimeout_secs = 120\nmax_output_tokens = 2048",
+        "kind = \"open_ai_compat\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"llama3.1:8b\"\napi_key_env = \"OPENAI_API_KEY\"\ntemperature = 0.5\ntimeout_secs = 120\nmax_output_tokens = 2048\nunload_after = true",
     );
     let spec: EpisodeSpec = toml::from_str(&full).unwrap();
     assert_eq!(
@@ -265,6 +265,7 @@ fn open_ai_compat_episode_parses_and_roundtrips() {
             temperature: Some(0.5),
             timeout_secs: Some(120),
             max_output_tokens: Some(2048),
+            unload_after: true,
         }
     );
     roundtrip(&spec);
@@ -279,6 +280,7 @@ fn open_ai_compat_episode_parses_and_roundtrips() {
         spec.llm,
         LlmConfig::OpenAiCompat {
             api_key_env: None,
+            unload_after: false,
             ..
         }
     ));
@@ -319,6 +321,7 @@ fn embedding_and_nli_sections_parse_and_roundtrip() {
             model: "nomic-embed-text".into(),
             api_key_env: None,
             timeout_secs: None,
+            unload_after: false,
         })
     );
     assert_eq!(

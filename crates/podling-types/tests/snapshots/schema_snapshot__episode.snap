@@ -233,6 +233,10 @@ expression: schema
               ],
               "format": "uint64",
               "minimum": 0
+            },
+            "unload_after": {
+              "description": "Ask Ollama to unload the model once grounding is done, so the GPU\nis free for the next model. Ollama only: `base_url` must end in\n`/v1`.",
+              "type": "boolean"
             }
           },
           "additionalProperties": false,
@@ -308,6 +312,10 @@ expression: schema
               ],
               "format": "uint64",
               "minimum": 0
+            },
+            "unload_after": {
+              "description": "Ask Ollama to unload the model once the script is written, so the\nGPU is free for text-to-speech. Ollama only: `base_url` must end\nin `/v1`.",
+              "type": "boolean"
             }
           },
           "additionalProperties": false,
