@@ -34,7 +34,7 @@
 | [phase3-nli-ledger](./phase3-nli-ledger.md) | 6 | live-and-docs | examples/tunguska, docs | rust | normal | MERGED | 2026-10-01 |
 | [scrutinise-phase3-nli-ledger](./scrutinise-phase3-nli-ledger.md) | 1 | script-prompt-version | crates/podling-core | rust | normal | MERGED | 2026-10-01 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 1 | tts-bakeoff | scripts/tts_bakeoff | python | normal | MERGED | 2026-10-05 |
-| [phase5-tts-audio](./phase5-tts-audio.md) | 2 | audio-contracts | crates/podling-types | rust | normal | PENDING | 2026-10-04 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 2 | audio-contracts | crates/podling-types | rust | normal | MERGED | 2026-10-05 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 3 | tts-sidecar | sidecars/tts | python | high | PENDING | 2026-10-04 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 4 | tts-provider | crates/podling-core/src/plugin | rust | high | PENDING | 2026-10-04 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 5 | audio-e2e | crates/podling-core/src/stages | rust | normal | PENDING | 2026-10-04 |
