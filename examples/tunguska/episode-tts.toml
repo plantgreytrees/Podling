@@ -1,0 +1,89 @@
+# The Tunguska episode as audio: a local model writes the script, a local TTS
+# model speaks it in two cloned voices, Whisper checks every chunk against
+# the script, and the run ends with `episode.wav` (and `episode.opus`) beside
+# the artifacts. Everything runs on one machine; an 8 GB card is enough,
+# because only one model is on it at a time.
+#
+# Before the first run:
+#
+# 1. The language models, in Ollama:
+#      ollama pull llama3.1:8b && ollama pull nomic-embed-text
+# 2. The NLI and Whisper weights (both Apache-2.0), next to this file:
+#      hf download cross-encoder/nli-deberta-v3-base \
+#        --local-dir examples/tunguska/models/nli-deberta-v3-base
+#      hf download openai/whisper-base.en \
+#        --local-dir examples/tunguska/models/whisper-base.en
+# 3. The two voice clips: see voices/README.md (CC-BY-4.0, credited in
+#    audio.json).
+# 4. The TTS worker and its profile: see sidecars/tts/README.md. The profile
+#    named below must be in ~/.config/podling/sidecars.toml (or pass
+#    --sidecars); this file can name a profile but never a program.
+# 5. ffmpeg on PATH, for the Opus copy (or remove [mix] encode).
+#
+#   cargo run --release -p podling-cli -- run --episode examples/tunguska/episode-tts.toml
+
+title = "The Tunguska event"
+topic = "the 1908 Tunguska explosion"
+target_minutes = 10
+sources = [
+  { kind = "local_files", root = "sources/eyewitness", independence_group = "eyewitness" },
+  { kind = "local_files", root = "sources/expedition", independence_group = "expedition" },
+]
+analysers = [{ kind = "quote_verifier" }, { kind = "uncited_figures" }]
+
+[llm]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "llama3.1:8b"
+temperature = 0.2
+# A 10-minute script takes a local 8B model several minutes.
+timeout_secs = 1800
+# Ollama keeps a model on the GPU for five minutes after its last request;
+# this unloads it as soon as the script is written, so the TTS model fits.
+unload_after = true
+
+[embedding]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+unload_after = true
+
+[nli]
+kind = "cross_encoder"
+model_dir = "models/nli-deberta-v3-base"
+
+# The speakers, each pinned to a reference clip and what is said in it. The
+# clip's licence is required and is copied into audio.json.
+[[cast]]
+id = "host"
+name = "Mara"
+role = "host"
+voice = { reference = "voices/host.wav", transcript = "He rose and pushed the chair behind him and began to walk miserably about the room, seeming to find it too small for him.", licence = "CC-BY-4.0" }
+
+[[cast]]
+id = "guest"
+name = "Tomas"
+role = "co-host"
+voice = { reference = "voices/guest.wav", transcript = "A full hour had passed since his father had gone in with Dan Crosby, the tutor, to find out for him something about the university.", licence = "CC-BY-4.0" }
+
+# Qwen3-TTS 1.7B (Apache-2.0) through the worker profile "qwen". Banter
+# beats get two takes and keep the better one; a chunk Whisper mishears is
+# made again with a new seed, up to twice.
+[tts]
+kind = "sidecar"
+sidecar = "qwen"
+takes = 2
+max_retries = 2
+
+# Whisper base.en on the CPU. A chunk passes at 8% word error rate or less,
+# with every quote heard word for word.
+[asr]
+kind = "whisper"
+model_dir = "models/whisper-base.en"
+max_wer_pm = 80
+
+# The silences between turns keep their defaults (quick 120 ms, normal 300,
+# beat 600, long pause 1000, interrupt overlap 150); any of them can be set
+# here, e.g. gaps_ms = { beat = 700 }.
+[mix]
+encode = "opus"

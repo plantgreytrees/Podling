@@ -9,3 +9,6 @@ sidecars/tts/.venv/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+# Recorded voice clips are fetched, not committed (examples/*/voices/README.md).
+examples/*/voices/*.wav
+!examples/*/voices/tone-*.wav

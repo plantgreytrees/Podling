@@ -56,17 +56,31 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
 #[test]
 fn every_example_episode_parses() {
     let dir = example().parent().unwrap().to_owned();
-    for name in ["episode.toml", "episode-ollama.toml"] {
+    for name in ["episode.toml", "episode-ollama.toml", "episode-tts.toml"] {
         let text = fs::read_to_string(dir.join(name)).unwrap();
         let spec: podling_types::EpisodeSpec =
             toml::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}"));
-        // The Ollama episode shows the grounding stages; the offline one
-        // stays without them, so it needs no downloads.
+        // The local-model episodes show the grounding stages; the offline
+        // one stays without them, so it needs no downloads.
         assert_eq!(
             spec.embedding.is_some() && spec.nli.is_some(),
-            name == "episode-ollama.toml",
+            name != "episode.toml",
             "{name}"
         );
+        podling_core::plugin::check_audio(&spec).unwrap_or_else(|err| panic!("{name}: {err}"));
+        // Every voice is CC0 or CC-BY, and the voices README credits each
+        // recorded clip.
+        let credits = fs::read_to_string(dir.join("voices/README.md")).unwrap();
+        for member in &spec.cast {
+            let voice = &member.voice;
+            assert!(
+                ["CC0-1.0", "CC-BY-4.0"].contains(&voice.licence()),
+                "{name}: {}",
+                voice.licence()
+            );
+            let file = voice.reference().file_name().unwrap().to_str().unwrap();
+            assert!(credits.contains(&format!("`{file}`")), "{name}: {file}");
+        }
     }
 }
 
