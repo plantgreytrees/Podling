@@ -259,6 +259,28 @@ fn a_worker_that_ignores_sigterm_is_killed() {
     );
 }
 
+#[test]
+fn a_child_of_the_worker_that_ignores_sigterm_is_killed_too() {
+    if !python_ok() {
+        return;
+    }
+    let tts = start(&stub("orphan", "orphan")).unwrap();
+    let pid = tts.pid();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while running("orphan").len() < 2 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(running("orphan").len(), 2, "the worker and its child run");
+
+    drop(tts);
+    assert!(!alive(pid));
+    assert!(
+        running("orphan").is_empty(),
+        "the worker's child is gone too: {:?}",
+        running("orphan")
+    );
+}
+
 fn synthesize_once(tts: &mut SidecarTts, dir: &Path) -> Result<(), CoreError> {
     let voices = voices(dir);
     let turns = [turn("ada", "Hello there.", Emotion::Neutral)];

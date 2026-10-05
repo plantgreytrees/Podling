@@ -32,6 +32,20 @@ if args.mode == "wrong-protocol":
     time.sleep(600)
 if args.mode == "stubborn":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if args.mode == "orphan":
+    # Like a model process behind `uv run`: a child of the worker that ignores
+    # SIGTERM. An ignored signal stays ignored across exec, so it is ignored
+    # from the child's first instruction, and its command line carries the tag.
+    import subprocess
+
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", args.tag],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
 
 def wav(samples: int, rate: int) -> bytes:
