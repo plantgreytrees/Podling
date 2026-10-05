@@ -21,7 +21,7 @@ const STAGES: [&str; 6] = [
 ];
 
 /// The stages that run only with `[embedding]` and `[nli]` configured.
-const GROUNDING_STAGES: [&str; 2] = ["cluster_claims", "score_stances"];
+const GROUNDING_STAGES: [&str; 3] = ["ground_claims", "cluster_claims", "score_stances"];
 
 fn example() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tunguska/episode.toml")
@@ -501,6 +501,7 @@ fn a_grounded_run_caches_the_new_stages_too() {
             "ingest",
             "chunk",
             "extract_claims",
+            "ground_claims",
             "cluster_claims",
             "score_stances",
             "ledger",
@@ -510,7 +511,7 @@ fn a_grounded_run_caches_the_new_stages_too() {
     );
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
     let second = run();
-    assert_eq!(second.len(), 8);
+    assert_eq!(second.len(), 9);
     assert!(second.iter().all(|(_, c)| c == "hit"), "{second:?}");
 }
 

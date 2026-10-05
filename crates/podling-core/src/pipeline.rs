@@ -1,5 +1,5 @@
 //! Runs an episode end to end: sources → documents → chunks → claims →
-//! (clusters and stances, when `[embedding]` and `[nli]` are set) → ledger →
+//! (grounding, clusters and stances, when `[embedding]` and `[nli]` are set) → ledger →
 //! script → analysis, writing each artifact to the output directory.
 
 use std::collections::BTreeMap;
@@ -12,10 +12,10 @@ use serde::Serialize;
 use crate::cache::DiskCache;
 use crate::error::{CoreError, Result};
 use crate::plugin::{LlmProvider, build_analysers, build_grounding, build_llm, build_sources};
-use crate::stage::{RunReport, cached};
+use crate::stage::{GroundingCounts, RunReport, cached};
 use crate::stages::{
     Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
-    Ingest, ScoreStances, ScriptInput, StanceInput, WriteScript,
+    GroundClaims, GroundInput, Ingest, ScoreStances, ScriptInput, StanceInput, WriteScript,
 };
 
 /// Runs `spec`. Relative source paths resolve against `base_dir` (normally
@@ -73,12 +73,40 @@ pub fn run_with_llm(
     };
     let mut claims = cached(&ExtractClaims { llm }, &claim_input, cache, &mut report)?;
     if let Some(grounding) = grounding {
+        let ground_input = GroundInput {
+            claims,
+            chunks: claim_input.chunks.clone(),
+            titles: claim_input.titles.clone(),
+        };
+        let grounded = cached(
+            &GroundClaims {
+                embedder: grounding.embedder.as_ref(),
+                nli: grounding.nli.as_ref(),
+            },
+            &ground_input,
+            cache,
+            &mut report,
+        )?;
+        // Logged here rather than in the stage, so a cache hit reports its
+        // rejections too.
+        for rejection in &grounded.rejected {
+            tracing::info!(
+                claim = %rejection.text,
+                chunk = %rejection.chunk,
+                entailment_pm = rejection.entailment_pm.get(),
+                "claim not entailed by its chunk; evidence dropped"
+            );
+        }
+        report.grounding = Some(GroundingCounts {
+            dropped_claims: grounded.dropped_claims(),
+            rejected_evidence: grounded.rejected.len(),
+        });
         let merged = cached(
             &ClusterClaims {
                 embedder: grounding.embedder.as_ref(),
                 nli: grounding.nli.as_ref(),
             },
-            &claims,
+            &grounded.claims,
             cache,
             &mut report,
         )?;

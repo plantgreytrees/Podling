@@ -36,6 +36,14 @@ pub fn run(episode: &Path, out: &Path, cache_dir: Option<&Path>) -> Result<()> {
         let cache = if stage.cache_hit { "hit" } else { "miss" };
         println!("{:<16} {:<5} {:>8}", stage.id, cache, stage.elapsed_ms);
     }
+    // `if let` runs the block only for `Some`, binding what's inside: no line
+    // at all for an episode without `[embedding]` and `[nli]`.
+    if let Some(grounding) = report.grounding {
+        println!(
+            "grounding: {} claim(s) dropped, {} evidence item(s) rejected (run with -v to see them)",
+            grounding.dropped_claims, grounding.rejected_evidence
+        );
+    }
     println!("artifacts written to {}", out.display());
 
     if report.error_findings > 0 {

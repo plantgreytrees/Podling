@@ -17,13 +17,16 @@ to end, either offline with a deterministic fake LLM or with any OpenAI-compatib
 model (Ollama, llama.cpp, vLLM, LM Studio, OpenAI):
 
 ```
-sources → documents → chunks → claims → [cluster → stances] → ledger → script → analysis
+sources → documents → chunks → claims → [ground → cluster → stances] → ledger → script → analysis
 ```
 
 With the optional `[embedding]` and `[nli]` sections, the same fact worded differently
 by two independent sources becomes one Corroborated claim, and a source that
-contradicts a claim makes it Contested. A local NLI model decides both, not exact text
-matching (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)).
+contradicts a claim makes it Contested. Before that, a claim is kept only where its
+own source passage entails it, so a distortion made from the passage's own words
+("Kulik led the expedition" when he joined it) is dropped and counted. A local NLI
+model decides all three, not exact text matching (see
+[Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)).
 
 Every stage is cached, and every artifact is a versioned JSON file with an exported JSON
 Schema. Text-to-speech, PDF ingestion, MCP source connectors and an LLM adjudicator for

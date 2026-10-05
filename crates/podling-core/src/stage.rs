@@ -43,6 +43,23 @@ pub struct RunReport {
     pub stages: Vec<StageRecord>,
     /// Number of `Error` findings in the analysis report.
     pub error_findings: usize,
+    /// What `ground_claims` dropped; `None` when it didn't run (no
+    /// `[embedding]` and `[nli]`). Filled in on a cache hit too.
+    ///
+    /// `#[serde(default)]` lets a report serialised before this field existed
+    /// still deserialise: a missing field becomes `None` instead of an error.
+    #[serde(default)]
+    pub grounding: Option<GroundingCounts>,
+}
+
+/// Counts from the `ground_claims` stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GroundingCounts {
+    /// Claims dropped because no chunk they came from entails them.
+    pub dropped_claims: usize,
+    /// Pieces of extraction evidence dropped, including those of claims that
+    /// kept other evidence.
+    pub rejected_evidence: usize,
 }
 
 /// Runs `stage`, reusing a cached output when one exists. With `cache` set to
