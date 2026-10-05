@@ -2,7 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use podling_types::{Chunk, ClaimId, Document, Ledger, Quote, Script, Speaker, TextSpan, Turn};
+use podling_types::{
+    Chunk, ClaimId, Document, Ledger, Pace, Quote, Script, Speaker, TextSpan, Turn,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -26,6 +28,16 @@ Rules:
 
 Reply with one JSON object: {\"cast\": [{\"id\": \"host\", \"name\": \"...\", \"role\": \"host\"}], \"turns\": [{\"speaker\": <cast id>, \"text\": \"...\", \"emotion\": <neutral|curious|excited|serious|amused|somber>, \"citations\": [<claim id>], \"quotes\": [{\"chunk\": <chunk id>, \"sentence\": <n>}]}]}.";
 
+/// Added to [`INSTRUCTIONS`] only when the script will be spoken, so a
+/// text-only episode is asked for exactly what it was before.
+const AUDIO_RULES: &str = "\
+This script will be spoken aloud by text-to-speech, so it also carries delivery directions.
+6. Group the turns into `beats`: runs of consecutive turns, in order, that together cover every turn exactly once. Each beat is {\"kind\": <narration|banter|quote_reading|transition>, \"turns\": {\"start\": <index of its first turn>, \"end\": <index of its last turn + 1>}}, with turn indices counting from 0. The first beat starts at 0, each next beat starts where the previous one ended, and the last ends at the number of turns.
+7. Banter is quick back-and-forth between the hosts that reacts to what was just said. Banter adds no new facts: a fact in a banter turn needs its citation like any other.
+8. A turn may set `pace`, the gap before it: quick, normal (the default), beat, long_pause, or interrupt (it cuts in on the turn before). It may list `nonverbal` sounds, used sparingly: {\"kind\": <laugh|chuckle|sigh|backchannel>, \"by\": <cast id>, \"at\": <before|after|over>}, where a backchannel also has \"text\" (e.g. \"Mm-hm.\") and `over` plays while the turn is spoken. A turn that refers back to an earlier turn may set `callback_to` to that turn's index.
+
+Add \"beats\": [...] to the reply object, and `pace`, `nonverbal` and `callback_to` to the turns that use them.";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ScriptInput {
     pub topic: String,
@@ -38,6 +50,11 @@ pub struct ScriptInput {
     /// Left out of the key when empty, like an unset section.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cast: Vec<Speaker>,
+    /// The script will be spoken (the episode has `[tts]`): ask for beats,
+    /// pace, nonverbal sounds and callbacks. Left out of the key when false.
+    /// `std::ops::Not::not` is `!` as a function, so false is skipped.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub audio: bool,
 }
 
 pub struct WriteScript<'a> {
@@ -58,7 +75,9 @@ impl Stage for WriteScript<'_> {
     //    evidence, whose chunk ids it mistook for claim ids.
     // 8: a declared `[[cast]]` is passed to the model, and a turn spoken by
     //    anyone else is rejected.
-    const VERSION: u32 = 8;
+    // 9: a script for audio carries beats, pace, nonverbal sounds and
+    //    callbacks, checked by `Script::with_beats`.
+    const VERSION: u32 = 9;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -66,14 +85,20 @@ impl Stage for WriteScript<'_> {
         json!({
             "llm": self.llm.fingerprint(),
             "instructions": INSTRUCTIONS,
+            "audio_rules": AUDIO_RULES,
             "prompt_version": PROMPT_VERSION,
         })
     }
 
     fn run(&self, input: &ScriptInput) -> Result<Script> {
+        let instructions = if input.audio {
+            format!("{INSTRUCTIONS}\n\n{AUDIO_RULES}")
+        } else {
+            INSTRUCTIONS.to_owned()
+        };
         let mut request = CompletionRequest {
             task: LlmTask::WriteScript,
-            instructions: INSTRUCTIONS.to_owned(),
+            instructions,
             input: json!({
                 "topic": input.topic,
                 "target_minutes": input.target_minutes,
@@ -83,6 +108,9 @@ impl Stage for WriteScript<'_> {
         };
         if !input.cast.is_empty() {
             request.input["cast"] = json!(input.cast);
+        }
+        if input.audio {
+            request.input["audio"] = json!(true);
         }
         if let Some(bytes) = large_input_bytes(&request.input) {
             // Sizes only, never the text.
@@ -138,7 +166,17 @@ fn source_texts(chunks: &[Chunk], documents: &[Document]) -> Vec<SourceText> {
 /// must be in the ledger, quotes must resolve to real source text, and each
 /// turn's `{{quote:N}}` placeholders are filled in from those quotes.
 fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, String> {
-    let draft: ScriptDraft = serde_json::from_str(text).map_err(|err| err.to_string())?;
+    let mut draft: ScriptDraft = serde_json::from_str(text).map_err(|err| err.to_string())?;
+    if !input.audio {
+        // Not asked for, so not kept: a text-only script keeps its old shape
+        // whatever the model volunteers.
+        draft.beats.clear();
+        for turn in &mut draft.turns {
+            turn.pace = Pace::Normal;
+            turn.nonverbal.clear();
+            turn.callback_to = None;
+        }
+    }
 
     let known: BTreeSet<&ClaimId> = input
         .ledger
@@ -170,6 +208,9 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
             emotion: turn.emotion,
             citations: turn.citations,
             quotes,
+            pace: turn.pace,
+            nonverbal: turn.nonverbal,
+            callback_to: turn.callback_to,
         });
     }
     let cast = if input.cast.is_empty() {
@@ -178,7 +219,7 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
         check_declared_cast(&turns, &input.cast)?;
         input.cast.clone()
     };
-    Script::new(cast, turns).map_err(|err| err.to_string())
+    Script::with_beats(cast, turns, draft.beats).map_err(|err| err.to_string())
 }
 
 /// Every turn must be spoken by a declared speaker: only they have a voice.
@@ -441,7 +482,108 @@ mod tests {
             chunks,
             documents,
             cast: vec![],
+            audio: false,
         }
+    }
+
+    #[test]
+    fn a_script_for_audio_asks_for_beats_and_the_fake_writes_them() {
+        let (doc, chunk) = doc_and_chunk();
+        let mut claim = Claim::new("The sky split in two.");
+        claim.add_evidence(Evidence {
+            chunk: chunk.id().clone(),
+            source: doc.source().id(),
+            independence_group: doc.source().independence_group.clone(),
+            stance: Stance::Supports,
+            basis: None,
+        });
+        let input = ScriptInput {
+            ledger: Ledger::from_claims([claim]),
+            audio: true,
+            ..empty_input(vec![doc], vec![chunk])
+        };
+        let llm = Recording::default();
+        let script = WriteScript { llm: &llm }.run(&input).unwrap();
+
+        let request = llm.0.borrow().clone().unwrap();
+        assert!(request.instructions.ends_with(AUDIO_RULES));
+        assert!(AUDIO_RULES.contains("Banter adds no new facts"));
+        assert_eq!(request.input["audio"], true);
+
+        use podling_types::{BeatKind, Pace};
+        let kinds: Vec<BeatKind> = script.beats().iter().map(|b| b.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                BeatKind::QuoteReading,
+                BeatKind::Banter,
+                BeatKind::Transition
+            ]
+        );
+        let turns = script.turns();
+        assert_eq!(turns[1].pace, Pace::Quick);
+        assert_eq!(turns[1].nonverbal.len(), 1);
+        assert_eq!(turns[2].callback_to, Some(0));
+    }
+
+    #[test]
+    fn a_text_only_script_is_asked_for_nothing_new() {
+        let (doc, chunk) = doc_and_chunk();
+        let llm = Recording::default();
+        let script = WriteScript { llm: &llm }
+            .run(&empty_input(vec![doc], vec![chunk]))
+            .unwrap();
+        let request = llm.0.borrow().clone().unwrap();
+        assert_eq!(request.instructions, INSTRUCTIONS);
+        assert!(request.input.get("audio").is_none());
+        let written = serde_json::to_value(&script).unwrap();
+        assert!(written.get("beats").is_none(), "{written}");
+    }
+
+    /// Answers with beats that skip a turn.
+    struct Gappy;
+
+    impl LlmProvider for Gappy {
+        fn id(&self) -> &str {
+            "gappy"
+        }
+        fn fingerprint(&self) -> Value {
+            Value::Null
+        }
+        fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+            let text = json!({
+                "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
+                "turns": [{ "speaker": "host", "text": "One." },
+                          { "speaker": "host", "text": "Two." }],
+                "beats": [{ "kind": "narration", "turns": { "start": 1, "end": 2 } }],
+            });
+            Ok(Completion {
+                text: text.to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn directions_a_text_only_script_did_not_ask_for_are_dropped() {
+        // Gappy's beats are even invalid; unasked for, they are not checked.
+        let script = WriteScript { llm: &Gappy }
+            .run(&empty_input(vec![], vec![]))
+            .unwrap();
+        let written = serde_json::to_value(&script).unwrap();
+        assert!(written.get("beats").is_none(), "{written}");
+    }
+
+    #[test]
+    fn beats_that_leave_a_turn_out_are_rejected_with_the_reason() {
+        let input = ScriptInput {
+            audio: true,
+            ..empty_input(vec![], vec![])
+        };
+        let err = WriteScript { llm: &Gappy }.run(&input).unwrap_err();
+        assert!(
+            reason(&err).contains("beat 0 starts at turn 1, so turns 0..1 are in no beat"),
+            "{err}"
+        );
     }
 
     fn speaker(id: &str, name: &str) -> Speaker {

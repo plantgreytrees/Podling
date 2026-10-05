@@ -27,7 +27,7 @@ use podling_types::{
 
 use crate::error::{CoreError, Result};
 
-pub use analyser::{Analyser, QuoteVerifier};
+pub use analyser::{Analyser, QuoteVerifier, UncitedFigures};
 pub use cross_encoder::CrossEncoderNli;
 pub use embedding::{EmbeddingProvider, FakeEmbedding, cosine, embed_checked};
 pub use llm::{
@@ -175,6 +175,7 @@ pub fn build_analysers(configs: &[AnalyserConfig]) -> Vec<Box<dyn Analyser>> {
         .map(|config| -> Box<dyn Analyser> {
             match config {
                 AnalyserConfig::QuoteVerifier {} => Box::new(QuoteVerifier),
+                AnalyserConfig::UncitedFigures {} => Box::new(UncitedFigures),
             }
         })
         .collect()
@@ -194,7 +195,7 @@ mod tests {
             target_minutes = 5
             llm = { kind = "fake" }
             sources = [{ kind = "local_files", root = "src", independence_group = "g" }]
-            analysers = [{ kind = "quote_verifier" }]
+            analysers = [{ kind = "quote_verifier" }, { kind = "uncited_figures" }]
             "#,
         )
         .unwrap();
@@ -204,6 +205,7 @@ mod tests {
         assert_eq!(sources[0].id(), "local_files");
         let analysers = build_analysers(&spec.analysers);
         assert_eq!(analysers[0].id(), "quote_verifier");
+        assert_eq!(analysers[1].id(), "uncited_figures");
         assert!(
             build_grounding(&spec, Path::new("/episodes"))
                 .unwrap()

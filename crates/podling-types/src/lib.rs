@@ -28,4 +28,7 @@ pub use episode::{
 pub use ids::{ChunkId, ClaimId, ContentHash, DocumentId, SourceId, SpeakerId};
 pub use ledger::{ClaimStatus, Ledger, LedgerEntry, classify};
 pub use quote::{Quote, QuoteError};
-pub use script::{Emotion, Script, ScriptError, Speaker, Turn};
+pub use script::{
+    Beat, BeatKind, Emotion, Nonverbal, NonverbalAt, NonverbalKind, Pace, Script, ScriptError,
+    Speaker, Turn,
+};

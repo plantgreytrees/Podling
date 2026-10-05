@@ -599,8 +599,9 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
 /// on `main` before `ground_claims` existed (commit f12b046). Adding NLI
 /// grounding must not move them. A deliberate bump of one of these stages
 /// (see "The five bump rules" in docs/architecture.md) updates its line here:
-/// Phase 5 bumped `PROMPT_VERSION` (4), the fake LLM (4) and `script` (8), so
-/// the two LLM stages moved; ledger and analyse, fed the same data, did not.
+/// Phase 5 bumped `PROMPT_VERSION` (4, then 5), the fake LLM (4, then 5) and
+/// `script` (8, then 9), so the two LLM stages moved; ledger and analyse, fed
+/// the same data, did not.
 const NO_NLI_KEYS: [(&str, &str); 6] = [
     (
         "ingest",
@@ -612,7 +613,7 @@ const NO_NLI_KEYS: [(&str, &str); 6] = [
     ),
     (
         "extract_claims",
-        "e9bcc4cbb081761e883600e3977d38b9bf58e29cf9cbf7beffa765c3afdcf436",
+        "c5c4ce4e41358f88283bb13d86dde32895b99803eb0f883bb479a2835533b379",
     ),
     (
         "ledger",
@@ -620,7 +621,7 @@ const NO_NLI_KEYS: [(&str, &str); 6] = [
     ),
     (
         "script",
-        "d150efc41e6c6039af4c556bb7ed9a3e7f4b5f5d7ab540abe062caf1b61ba7f1",
+        "0ae6b12a0d356d10af0ab265698d5627c2488ee1330a22ee711cc3c2f6712858",
     ),
     (
         "analyse",

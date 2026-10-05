@@ -188,6 +188,7 @@ fn run_inner(
                 role: member.role.clone(),
             })
             .collect(),
+        audio: spec.tts.is_some(),
     };
     let script = cached(&WriteScript { llm }, &script_input, cache, &mut report)?;
     // The LLM's last stage: free its GPU memory for the TTS model.

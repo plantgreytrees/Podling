@@ -43,7 +43,7 @@ impl Stage for Analyse<'_> {
 mod tests {
     use super::*;
     use crate::plugin::QuoteVerifier;
-    use podling_types::{Emotion, Quote, SourceRef, Speaker, SpeakerId, TextSpan, Turn};
+    use podling_types::{Emotion, Pace, Quote, SourceRef, Speaker, SpeakerId, TextSpan, Turn};
 
     #[test]
     fn a_paraphrased_quote_counts_as_one_error() {
@@ -67,6 +67,9 @@ mod tests {
                 emotion: Emotion::Neutral,
                 citations: vec![],
                 quotes: vec![quote],
+                pace: Pace::Normal,
+                nonverbal: vec![],
+                callback_to: None,
             }],
         )
         .unwrap();
