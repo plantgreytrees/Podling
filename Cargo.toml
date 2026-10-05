@@ -34,6 +34,9 @@ candle-nn = "0.11"
 candle-transformers = "0.11"
 # Only what loading a `tokenizer.json` needs: no progress bars, no training.
 tokenizers = { version = "0.22", default-features = false }
+# zlib compression, only to measure how repetitive a Whisper window is (its
+# loop guard). Pure Rust, MIT OR Zlib OR Apache-2.0.
+miniz_oxide = "0.8"
 
 # Audio (Phase 5): WAV read/write, and resampling the TTS model's native
 # rate to the episode's 48 kHz. Both pure Rust, MIT OR Apache-2.0.

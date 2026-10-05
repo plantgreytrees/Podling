@@ -7,6 +7,9 @@
 //! listens to context, the chunk after it), and a crash loses only the chunk
 //! in flight. The audio itself goes in the [`BlobStore`]; the cache entry
 //! names it by hash, and an entry whose blob has gone is a miss.
+//!
+//! Each take is then transcribed ([`TranscribeChunk`], cached the same way)
+//! and checked against the script; a take that fails is made again.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -16,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use podling_types::{
-    CastMember, ChunkRecord, ContentHash, NonverbalAt, PerMille, Script, SpeakerId, VoiceCredit,
-    VoiceRef,
+    BeatKind, CastMember, ChunkRecord, ContentHash, NonverbalAt, PerMille, Script, SpeakerId,
+    VoiceCredit, VoiceRef,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -25,9 +28,13 @@ use serde_json::{Value, json};
 use crate::audio::{Pcm, WavFormat};
 use crate::cache::{BlobStore, DiskCache};
 use crate::error::{CoreError, Result};
-use crate::plugin::{ChunkContext, ChunkRequest, SpokenTurn, TtsProvider, synthesize_checked};
+use crate::plugin::{
+    AsrProvider, ChunkContext, ChunkRequest, SpokenTurn, Transcript, TtsProvider,
+    synthesize_checked,
+};
 use crate::stage::{RunReport, Stage, cached};
 use crate::stages::plan_chunks::{Piece, PlannedChunk, plan_chunks};
+use crate::stages::verify_audio::{Check, TranscribeChunk, TranscribeInput, spans_from};
 
 /// The cast's voices: clips resolved against the episode directory, and the
 /// hash of each clip's bytes, which is what a chunk's cache key holds.
@@ -325,11 +332,66 @@ impl SynthesizedChunk {
     }
 }
 
-/// Synthesises `script` chunk by chunk, as [`plan_chunks`] cuts it for `tts`.
+/// How hard to try for a chunk that passes its checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Takes {
+    /// Takes made of a chunk with banter in it; the best passing one wins.
+    /// Other chunks get one.
+    pub banter: u8,
+    /// Extra takes, one at a time, for a chunk none of whose takes passed.
+    pub max_retries: u8,
+    /// A take passes at this word error rate or below (and with every quote
+    /// heard).
+    pub max_wer_pm: PerMille,
+}
+
+/// The recogniser that checks each take, and how many takes to try.
+pub struct Verification<'a> {
+    pub asr: &'a mut dyn AsrProvider,
+    pub takes: Takes,
+}
+
+/// One take of a chunk, synthesised and checked.
+struct Take {
+    take: u8,
+    result: ChunkResult,
+    pcm: Pcm,
+    transcript: Transcript,
+    check: Check,
+    passed: bool,
+    /// Words a second.
+    rate: f64,
+}
+
+impl Take {
+    /// Passing beats failing, then a lower word error rate, then a speaking
+    /// rate closer to `median` (the speaker's so far). On a full tie the
+    /// earlier take stays.
+    fn better_than(&self, other: &Take, median: Option<f64>) -> bool {
+        if self.passed != other.passed {
+            return self.passed;
+        }
+        let (mine, theirs) = (self.check.wer_pm.get(), other.check.wer_pm.get());
+        if mine != theirs {
+            return mine < theirs;
+        }
+        median.is_some_and(|m| (self.rate - m).abs() < (other.rate - m).abs())
+    }
+}
+
+/// Synthesises `script` chunk by chunk, as [`plan_chunks`] cuts it for `tts`,
+/// and checks each take with speech recognition.
+///
+/// A take that fails is made again with a new seed, up to
+/// [`Takes::max_retries`] more times; a chunk with banter gets
+/// [`Takes::banter`] takes from the start and keeps the best. A chunk that
+/// never passes keeps its best take and is marked unverified. Both stages
+/// are cached per take, so a rerun makes no TTS or ASR calls at all.
 pub fn synthesize_script(
     script: &Script,
     voices: &Voices,
     tts: &mut dyn TtsProvider,
+    verification: Verification<'_>,
     blobs: &BlobStore,
     cache: Option<&DiskCache>,
     report: &mut RunReport,
@@ -341,7 +403,12 @@ pub fn synthesize_script(
         multi_speaker = capabilities.multi_speaker,
         "chunks planned"
     );
-    let stage = SynthesizeChunk::new(tts, voices, blobs);
+    let Verification { asr, takes } = verification;
+    let synthesize = SynthesizeChunk::new(tts, voices, blobs);
+    let transcribe = TranscribeChunk::new(asr, blobs);
+    let beats = script.beats();
+    // Each speaker's speaking rate in the takes kept so far.
+    let mut rates: BTreeMap<SpeakerId, Vec<f64>> = BTreeMap::new();
     let mut chunks: Vec<SynthesizedChunk> = Vec::with_capacity(plan.len());
     for planned in &plan {
         let turns = spoken(script, &planned.pieces);
@@ -351,40 +418,133 @@ pub fn synthesize_script(
             (None, ContextAudio::default())
         };
         let context_turns = context.iter().flat_map(|c| &c.turns);
-        let input = ChunkInput {
-            chunk: ChunkSpec {
-                voices: voices.keys_for(turns.iter().chain(context_turns))?,
-                turns,
-                context,
-            },
-            take: 0,
-            context_audio,
+        let chunk = ChunkSpec {
+            voices: voices.keys_for(turns.iter().chain(context_turns))?,
+            turns,
+            context,
         };
-        let result = cached(&stage, &input, cache, report)?;
-        let bytes = blobs
-            .get(&result.blob)?
-            .ok_or_else(|| CoreError::InvalidProviderOutput {
-                stage: SynthesizeChunk::ID,
-                message: format!("audio blob {} vanished during the run", result.blob),
-            })?;
+        let expected: Vec<String> = chunk.turns.iter().map(|t| t.text.clone()).collect();
+        let words: usize = expected.iter().map(|t| t.split_whitespace().count()).sum();
+        let quotes = quotes_in(script, &planned.pieces);
+        let banter = planned
+            .pieces
+            .iter()
+            .any(|p| beats[p.beat].kind == BeatKind::Banter);
+        let first = if banter { takes.banter.max(1) } else { 1 };
+        let speaker = single_speaker(&chunk.turns);
+        let median = speaker.and_then(|s| median(rates.get(s)?));
+
+        let mut best: Option<Take> = None;
+        for take in 0..first.saturating_add(takes.max_retries) {
+            if take >= first && best.as_ref().is_some_and(|b| b.passed) {
+                break;
+            }
+            let input = ChunkInput {
+                chunk: chunk.clone(),
+                take,
+                context_audio: context_audio.clone(),
+            };
+            let result = cached(&synthesize, &input, cache, report)?;
+            let bytes =
+                blobs
+                    .get(&result.blob)?
+                    .ok_or_else(|| CoreError::InvalidProviderOutput {
+                        stage: SynthesizeChunk::ID,
+                        message: format!("audio blob {} vanished during the run", result.blob),
+                    })?;
+            let pcm = Pcm::from_wav(&bytes)?;
+            let heard = TranscribeInput {
+                blob: result.blob.clone(),
+                expected: expected.clone(),
+            };
+            let transcript = cached(&transcribe, &heard, cache, report)?;
+            let check = Check::new(&expected, &quotes, &transcript);
+            let passed = check.passes(takes.max_wer_pm);
+            tracing::info!(
+                turns = ?planned.turns().indices(),
+                take,
+                wer_pm = check.wer_pm.get(),
+                quote_misses = check.quote_misses.len(),
+                passed,
+                "chunk checked"
+            );
+            let candidate = Take {
+                take,
+                rate: words as f64 / pcm.seconds().max(f64::EPSILON),
+                result,
+                pcm,
+                transcript,
+                check,
+                passed,
+            };
+            if best
+                .as_ref()
+                .is_none_or(|b| candidate.better_than(b, median))
+            {
+                best = Some(candidate);
+            }
+        }
+        let best = best.expect("every chunk gets at least one take");
+        if !best.passed {
+            tracing::warn!(
+                turns = ?planned.turns().indices(),
+                takes = first.saturating_add(takes.max_retries),
+                wer_pm = best.check.wer_pm.get(),
+                quote_misses = ?best.check.quote_misses,
+                "chunk failed speech recognition on every take; keeping its best"
+            );
+        }
+        if let Some(speaker) = speaker {
+            rates.entry(speaker.clone()).or_default().push(best.rate);
+        }
+        // A backend that gave no turn spans gets them from the transcript.
+        let turn_spans = best
+            .result
+            .turn_spans
+            .clone()
+            .or_else(|| spans_from(&best.transcript, &expected, &best.pcm));
         chunks.push(SynthesizedChunk {
             record: ChunkRecord {
-                id: input.chunk.id()?,
+                id: chunk.id()?,
                 turns: planned.turns(),
-                blob: result.blob,
-                seed: result.seed,
-                take: input.take,
-                // Not checked yet: speech-recognition verification fills
-                // these in. Until then a chunk counts as unverified.
-                wer_pm: PerMille::new(1000).expect("1000 is within range"),
-                quote_misses: Vec::new(),
-                verified: false,
+                blob: best.result.blob,
+                seed: best.result.seed,
+                take: best.take,
+                wer_pm: best.check.wer_pm,
+                quote_misses: best.check.quote_misses,
+                verified: best.passed,
             },
-            pcm: Pcm::from_wav(&bytes)?,
-            turn_spans: result.turn_spans,
+            pcm: best.pcm,
+            turn_spans,
         });
     }
     Ok(chunks)
+}
+
+/// The speaker of every turn in `turns`, when there is only one.
+fn single_speaker(turns: &[SpokenTurn]) -> Option<&SpeakerId> {
+    let first = &turns.first()?.speaker;
+    turns.iter().all(|t| &t.speaker == first).then_some(first)
+}
+
+fn median(values: &[f64]) -> Option<f64> {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    sorted.get(sorted.len() / 2).copied()
+}
+
+/// The quotes spoken in `pieces`, verbatim, each once.
+fn quotes_in(script: &Script, pieces: &[Piece]) -> Vec<String> {
+    let mut quotes: Vec<String> = Vec::new();
+    for piece in pieces {
+        let text = piece.text(script);
+        for quote in &script.turns()[piece.turn].quotes {
+            if text.contains(quote.text()) && !quotes.iter().any(|q| q == quote.text()) {
+                quotes.push(quote.text().to_owned());
+            }
+        }
+    }
+    quotes
 }
 
 /// `pieces` as the TTS will speak them. A sound the speaker makes before
@@ -477,10 +637,10 @@ fn context_for(
 }
 #[cfg(test)]
 mod tests {
-    use podling_types::{Emotion, Pace, Speaker, Turn, TurnRange};
+    use podling_types::{Beat, Emotion, Pace, Speaker, Turn, TurnRange};
 
     use super::*;
-    use crate::plugin::FakeTts;
+    use crate::plugin::{FakeAsr, FakeTts};
 
     fn cast_member(dir: &Path, id: &str, clip: &[u8]) -> CastMember {
         fs::write(dir.join(format!("{id}.wav")), clip).unwrap();
@@ -544,8 +704,34 @@ mod tests {
         }
     }
 
+    /// Whether each TTS call was a cache hit, in order.
+    fn synth_hits(report: &RunReport) -> Vec<bool> {
+        report
+            .stages
+            .iter()
+            .filter(|s| s.id == SynthesizeChunk::ID)
+            .map(|s| s.cache_hit)
+            .collect()
+    }
+
     fn misses(report: &RunReport) -> usize {
         report.stages.iter().filter(|s| !s.cache_hit).count()
+    }
+
+    fn takes() -> Takes {
+        Takes {
+            banter: 2,
+            max_retries: 2,
+            max_wer_pm: PerMille::new(80).unwrap(),
+        }
+    }
+
+    /// Checked by `asr` with the default takes.
+    fn checked(asr: &mut dyn AsrProvider) -> Verification<'_> {
+        Verification {
+            asr,
+            takes: takes(),
+        }
     }
 
     #[test]
@@ -561,6 +747,7 @@ mod tests {
                 &script,
                 &f.voices,
                 &mut FakeTts::default(),
+                checked(&mut FakeAsr::default()),
                 &f.blobs,
                 Some(&f.cache),
                 report,
@@ -570,18 +757,24 @@ mod tests {
 
         let mut cold = RunReport::default();
         let first = run(&mut cold);
-        assert_eq!((first.len(), misses(&cold)), (3, 3));
+        // A TTS call and an ASR call per chunk.
+        assert_eq!((first.len(), misses(&cold)), (3, 6));
 
         let mut warm = RunReport::default();
         let second = run(&mut warm);
-        assert_eq!(misses(&warm), 0, "a warm cache makes no TTS calls");
+        assert_eq!(misses(&warm), 0, "a warm cache makes no TTS or ASR calls");
         assert_eq!(first, second);
 
         fs::remove_file(f.blobs.path_for(&first[1].record.blob)).unwrap();
         let mut lost = RunReport::default();
         let third = run(&mut lost);
-        let hits: Vec<bool> = lost.stages.iter().map(|s| s.cache_hit).collect();
+        let hits = synth_hits(&lost);
         assert_eq!(hits, [true, false, true], "only the lost chunk runs again");
+        assert_eq!(
+            misses(&lost),
+            1,
+            "and the same audio needs no new transcript"
+        );
         assert_eq!(third, first, "and comes back the same: the seed is derived");
     }
 
@@ -594,6 +787,7 @@ mod tests {
             &script,
             &f.voices,
             &mut FakeTts::default(),
+            checked(&mut FakeAsr::default()),
             &f.blobs,
             None,
             &mut report,
@@ -603,7 +797,9 @@ mod tests {
         assert_eq!(chunks[1].record.turns, TurnRange::new(1, 2).unwrap());
         // FakeTts speaks a quarter-second per word at 24 kHz.
         assert_eq!(chunks[0].pcm.len(), 4 * 6_000);
-        assert!(!chunks[0].record.verified);
+        let record = &chunks[0].record;
+        assert!(record.verified);
+        assert_eq!((record.take, record.wer_pm.get()), (0, 0));
         assert!(f.blobs.get(&chunks[1].record.blob).unwrap().is_some());
     }
 
@@ -730,12 +926,13 @@ mod tests {
             script,
             &f.voices,
             tts,
+            checked(&mut FakeAsr::default()),
             &f.blobs,
             Some(&f.cache),
             &mut report,
         )
         .unwrap();
-        (chunks, report.stages.iter().map(|s| s.cache_hit).collect())
+        (chunks, synth_hits(&report))
     }
 
     /// Four turns of a minute each: a dialogue model gets a chunk per turn.
@@ -884,5 +1081,192 @@ mod tests {
             |t: &SpokenTurn| -> Vec<NonverbalAt> { t.nonverbal.iter().map(|n| n.at).collect() };
         assert_eq!(kinds(&first[0]), [NonverbalAt::Before]);
         assert_eq!(kinds(&last[0]), [NonverbalAt::After]);
+    }
+
+    /// Runs `script` through `tts`, checked by `asr`; the chunks and the
+    /// number of TTS calls.
+    fn verified(
+        f: &Fixture,
+        script: &Script,
+        tts: &mut dyn TtsProvider,
+        asr: &mut dyn AsrProvider,
+    ) -> (Vec<SynthesizedChunk>, usize) {
+        let mut report = RunReport::default();
+        let chunks = synthesize_script(
+            script,
+            &f.voices,
+            tts,
+            checked(asr),
+            &f.blobs,
+            None,
+            &mut report,
+        )
+        .unwrap();
+        (chunks, synth_hits(&report).len())
+    }
+
+    #[test]
+    fn a_misheard_take_is_made_again_and_the_passing_one_kept() {
+        let f = fixture();
+        let script = script(&[("ada", "One two three."), ("ben", "Four five.")]);
+        let (chunks, calls) = verified(
+            &f,
+            &script,
+            &mut FakeTts::default(),
+            &mut FakeAsr::mishearing_first(1),
+        );
+        assert_eq!(calls, 3, "one retry");
+        let first = &chunks[0].record;
+        assert_eq!(
+            (first.take, first.verified, first.wer_pm.get()),
+            (1, true, 0)
+        );
+        assert_ne!(first.seed, chunks[1].record.seed);
+        assert_eq!(
+            (chunks[1].record.take, chunks[1].record.verified),
+            (0, true)
+        );
+    }
+
+    #[test]
+    fn a_chunk_that_never_passes_keeps_its_best_take_unverified() {
+        let f = fixture();
+        let script = script(&[("ada", "One two three.")]);
+        let (chunks, calls) = verified(
+            &f,
+            &script,
+            &mut FakeTts::default(),
+            &mut FakeAsr::mishearing_first(u32::MAX),
+        );
+        assert_eq!(calls, 3, "the first take and two retries");
+        let record = &chunks[0].record;
+        assert!(!record.verified);
+        assert_eq!(
+            (record.take, record.wer_pm.get()),
+            (0, 1000),
+            "a tie keeps the first"
+        );
+        assert!(
+            f.blobs.get(&record.blob).unwrap().is_some(),
+            "its audio is kept"
+        );
+    }
+
+    #[test]
+    fn banter_gets_several_takes_even_when_the_first_passes() {
+        let f = fixture();
+        let plain = script(&[("ada", "Right."), ("ben", "Sure."), ("ada", "Then.")]);
+        let beats = vec![
+            Beat {
+                kind: BeatKind::Banter,
+                turns: TurnRange::new(0, 2).unwrap(),
+            },
+            Beat {
+                kind: BeatKind::Narration,
+                turns: TurnRange::new(2, 3).unwrap(),
+            },
+        ];
+        let script =
+            Script::with_beats(plain.cast().to_vec(), plain.turns().to_vec(), beats).unwrap();
+        let (chunks, calls) = verified(
+            &f,
+            &script,
+            &mut FakeTts::default(),
+            &mut FakeAsr::default(),
+        );
+        assert_eq!(
+            calls,
+            2 + 2 + 1,
+            "two takes per banter chunk, one otherwise"
+        );
+        assert!(chunks.iter().all(|c| c.record.verified));
+    }
+
+    fn take(passed: bool, wer: u16, rate: f64) -> Take {
+        Take {
+            take: 0,
+            result: ChunkResult {
+                blob: ContentHash::of_parts(&[b"t"]),
+                seed: 0,
+                turn_spans: None,
+            },
+            pcm: Pcm::new(24_000, vec![]),
+            transcript: Transcript::default(),
+            check: Check {
+                wer_pm: PerMille::new(wer).unwrap(),
+                quote_misses: vec![],
+            },
+            passed,
+            rate,
+        }
+    }
+
+    #[test]
+    fn the_best_take_passes_then_is_heard_best_then_keeps_the_speakers_pace() {
+        let median = Some(3.0);
+        assert!(take(true, 60, 9.0).better_than(&take(false, 0, 3.0), median));
+        assert!(take(true, 10, 9.0).better_than(&take(true, 20, 3.0), median));
+        assert!(take(true, 10, 3.2).better_than(&take(true, 10, 2.5), median));
+        assert!(!take(true, 10, 2.5).better_than(&take(true, 10, 3.2), median));
+        assert!(
+            !take(true, 10, 3.2).better_than(&take(true, 10, 2.5), None),
+            "no median: a tie"
+        );
+    }
+
+    /// A dialogue backend that says nothing about where each turn is.
+    struct Spanless(FakeTts);
+
+    impl TtsProvider for Spanless {
+        fn id(&self) -> &str {
+            "spanless"
+        }
+        fn fingerprint(&self) -> Value {
+            self.0.fingerprint()
+        }
+        fn capabilities(&self) -> &crate::plugin::TtsCapabilities {
+            self.0.capabilities()
+        }
+        fn synthesize(&mut self, request: &ChunkRequest<'_>) -> Result<crate::plugin::ChunkAudio> {
+            let mut audio = self.0.synthesize(request)?;
+            audio.turn_spans = None;
+            Ok(audio)
+        }
+    }
+
+    #[test]
+    fn a_backend_without_spans_gets_them_from_the_transcript() {
+        let f = fixture();
+        let script = script(&[
+            ("ada", "One two three."),
+            ("ben", "Four five."),
+            ("ada", "Six."),
+        ]);
+        let (with, _) = verified(
+            &f,
+            &script,
+            &mut FakeTts::dialogue(),
+            &mut FakeAsr::default(),
+        );
+        let (without, _) = verified(
+            &f,
+            &script,
+            &mut Spanless(FakeTts::dialogue()),
+            &mut FakeAsr::default(),
+        );
+        assert_eq!(without.len(), 1, "one dialogue chunk");
+        let told = with[0].turn_spans.clone().unwrap();
+        let heard = without[0]
+            .turn_spans
+            .clone()
+            .expect("spans from the transcript");
+        assert_eq!(heard.len(), told.len());
+        for (heard, told) in heard.iter().zip(&told) {
+            assert!(
+                heard.start.abs_diff(told.start) <= 1,
+                "{heard:?} vs {told:?}"
+            );
+            assert!(heard.end.abs_diff(told.end) <= 1, "{heard:?} vs {told:?}");
+        }
     }
 }

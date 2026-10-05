@@ -5,6 +5,7 @@
 //! enum variant in `podling-types` and one arm here.
 
 pub mod analyser;
+pub mod asr;
 pub mod cross_encoder;
 pub mod embedding;
 mod http;
@@ -17,17 +18,20 @@ pub mod sidecar;
 pub mod sidecar_tts;
 pub mod source;
 pub mod tts;
+pub mod whisper;
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use podling_types::{
-    AnalyserConfig, EmbeddingConfig, EpisodeSpec, LlmConfig, NliConfig, SourceSpec, TtsConfig,
+    AnalyserConfig, AsrConfig, EmbeddingConfig, EpisodeSpec, LlmConfig, NliConfig, SourceSpec,
+    TtsConfig,
 };
 
 use crate::error::{CoreError, Result};
 
 pub use analyser::{Analyser, QuoteVerifier, UncitedFigures};
+pub use asr::{AsrProvider, AsrRequest, FakeAsr, Segment, Transcript, transcribe_checked};
 pub use cross_encoder::CrossEncoderNli;
 pub use embedding::{EmbeddingProvider, FakeEmbedding, cosine, embed_checked};
 pub use llm::{
@@ -45,6 +49,7 @@ pub use tts::{
     ChunkAudio, ChunkContext, ChunkRequest, FakeTts, SpokenTurn, TtsCapabilities, TtsProvider,
     synthesize_checked,
 };
+pub use whisper::CandleWhisper;
 
 /// Builds the LLM provider. Fallible because a real provider reads its
 /// configuration (a key from the environment, a URL) at construction.
@@ -123,6 +128,18 @@ pub fn build_tts(config: &TtsConfig, profiles: &Path) -> Result<Box<dyn TtsProvi
         TtsConfig::Sidecar { sidecar, .. } => {
             let profile = load_profile(profiles, sidecar)?;
             Ok(Box::new(SidecarTts::start(sidecar, &profile, profiles)?))
+        }
+    }
+}
+
+/// Builds the speech recogniser. A relative `model_dir` resolves against
+/// `base_dir`. Whisper is only checked and fingerprinted here; it loads on
+/// its first transcript, on the CPU.
+pub fn build_asr(config: &AsrConfig, base_dir: &Path) -> Result<Box<dyn AsrProvider>> {
+    match config {
+        AsrConfig::Fake {} => Ok(Box::new(FakeAsr::default())),
+        AsrConfig::Whisper { model_dir, .. } => {
+            Ok(Box::new(CandleWhisper::new(&base_dir.join(model_dir))?))
         }
     }
 }

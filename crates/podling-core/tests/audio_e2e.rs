@@ -8,13 +8,13 @@ use std::process::Command;
 use std::time::Instant;
 
 use podling_core::audio::{Pcm, WavFormat};
-use podling_core::plugin::FakeTts;
+use podling_core::plugin::{FakeAsr, FakeLlm, FakeTts};
 use podling_core::stages::assemble::{TARGET_LUFS, measure};
-use podling_core::stages::{Voices, synthesize_script};
+use podling_core::stages::{Takes, Verification, Voices, synthesize_script};
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
 use podling_types::{
-    AudioManifest, Beat, BeatKind, CastMember, Emotion, Envelope, EpisodeSpec, NonverbalAt, Pace,
-    Script, Speaker, SpeakerId, Turn, TurnRange, VoiceRef,
+    AnalysisReport, AudioManifest, Beat, BeatKind, CastMember, Emotion, Envelope, EpisodeSpec,
+    NonverbalAt, Pace, PerMille, Script, Severity, Speaker, SpeakerId, Turn, TurnRange, VoiceRef,
 };
 use serde_json::Value;
 
@@ -61,13 +61,22 @@ fn audio_episode(dir: &Path, tts: &str) -> EpisodeSpec {
     toml::from_str(&format!("{base}{CAST}\n[tts]\n{tts}\n")).unwrap()
 }
 
-fn synth(report: &RunReport) -> Vec<bool> {
+/// Whether each run of stage `id` was a cache hit, in order.
+fn hits(report: &RunReport, id: &str) -> Vec<bool> {
     report
         .stages
         .iter()
-        .filter(|s| s.id == "synthesize_chunk")
+        .filter(|s| s.id == id)
         .map(|s| s.cache_hit)
         .collect()
+}
+
+fn synth(report: &RunReport) -> Vec<bool> {
+    hits(report, "synthesize_chunk")
+}
+
+fn transcribed(report: &RunReport) -> Vec<bool> {
+    hits(report, "transcribe_chunk")
 }
 
 fn manifest(out: &Path) -> AudioManifest {
@@ -183,6 +192,60 @@ fn a_warm_rerun_makes_no_tts_calls_and_a_lost_blob_redoes_one_chunk() {
         first,
         "the derived seed reproduces the lost take"
     );
+}
+
+/// A chunk the recogniser mishears once is regenerated, and its second take
+/// is the one kept.
+#[test]
+fn a_misheard_chunk_is_regenerated_and_its_second_take_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let spec = audio_episode(tmp.path(), "kind = \"fake\"");
+    let out = tmp.path().join("out");
+    let asr = Box::new(FakeAsr::mishearing_first(1));
+    let report = pipeline::run_with_asr(&spec, &FakeLlm, asr, tmp.path(), None, &out).unwrap();
+
+    let manifest = manifest(&out);
+    let chunks = manifest.chunks.len();
+    assert_eq!(synth(&report).len(), chunks + 1, "one regeneration");
+    assert_eq!(transcribed(&report).len(), chunks + 1);
+    let first = &manifest.chunks[0];
+    assert_eq!((first.take, first.verified), (1, true), "take 2 was kept");
+    assert!(
+        manifest.chunks[1..]
+            .iter()
+            .all(|c| c.take == 0 && c.verified)
+    );
+    assert_eq!(report.error_findings, 0);
+}
+
+/// A chunk that never passes is kept, so the run completes, and is reported
+/// as an `Error` finding naming its turns.
+#[test]
+fn a_chunk_that_never_passes_becomes_an_error_finding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let spec = audio_episode(tmp.path(), "kind = \"fake\"");
+    let out = tmp.path().join("out");
+    let asr = Box::new(FakeAsr::mishearing_first(u32::MAX));
+    let report = pipeline::run_with_asr(&spec, &FakeLlm, asr, tmp.path(), None, &out).unwrap();
+
+    let manifest = manifest(&out);
+    assert!(manifest.chunks.iter().all(|c| !c.verified));
+    assert!(out.join("episode.wav").is_file(), "the run still completes");
+    let text = fs::read_to_string(out.join("analysis.json")).unwrap();
+    let analysis: Envelope<AnalysisReport> = serde_json::from_str(&text).unwrap();
+    let unverified: Vec<_> = analysis
+        .body
+        .findings
+        .iter()
+        .filter(|f| f.analyser == "verify_audio")
+        .collect();
+    assert_eq!(unverified.len(), manifest.chunks.len());
+    assert!(unverified.iter().all(|f| f.severity == Severity::Error));
+    assert!(
+        unverified[0].message.contains("every take"),
+        "{unverified:?}"
+    );
+    assert_eq!(report.error_findings, analysis.body.error_count());
 }
 
 #[test]
@@ -332,22 +395,33 @@ fn a_thirty_minute_script_is_chunked_by_beat_and_cached_per_chunk() {
     let blobs = cache.blobs();
     let run = |script: &Script| {
         let mut report = RunReport::default();
+        // One take a chunk, so the counts below are chunks.
+        let verification = Verification {
+            asr: &mut FakeAsr::default(),
+            takes: Takes {
+                banter: 1,
+                max_retries: 2,
+                max_wer_pm: PerMille::new(80).unwrap(),
+            },
+        };
         let chunks = synthesize_script(
             script,
             &voices,
             &mut FakeTts::dialogue(),
+            verification,
             &blobs,
             Some(&cache),
             &mut report,
         )
         .unwrap();
-        let misses = synth(&report).iter().filter(|hit| !**hit).count();
-        (chunks, misses)
+        let count = |hits: Vec<bool>| hits.iter().filter(|hit| !**hit).count();
+        (chunks, (count(synth(&report)), count(transcribed(&report))))
     };
 
     let (chunks, misses) = run(&half_hour_script(None));
     // Three 20-second beats make a minute: 30 chunks, each ending on a beat.
-    assert_eq!((chunks.len(), misses), (30, 30));
+    assert_eq!((chunks.len(), misses), (30, (30, 30)));
+    assert!(chunks.iter().all(|c| c.record.verified));
     let mut next = 0;
     for chunk in &chunks {
         let turns = chunk.record.turns;
@@ -358,10 +432,11 @@ fn a_thirty_minute_script_is_chunked_by_beat_and_cached_per_chunk() {
     assert_eq!(next, 180);
 
     let (_, misses) = run(&half_hour_script(None));
-    assert_eq!(misses, 0, "a warm rerun makes no TTS calls");
+    assert_eq!(misses, (0, 0), "a warm rerun makes no TTS or ASR calls");
     let (_, misses) = run(&half_hour_script(Some(100)));
     assert_eq!(
-        misses, 2,
+        misses,
+        (2, 2),
         "the edited chunk, and the next one, which hears it"
     );
 

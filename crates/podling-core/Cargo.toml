@@ -13,6 +13,7 @@ candle-core.workspace = true
 candle-nn.workspace = true
 candle-transformers.workspace = true
 tokenizers.workspace = true
+miniz_oxide.workspace = true
 hound.workspace = true
 rubato.workspace = true
 ebur128.workspace = true
