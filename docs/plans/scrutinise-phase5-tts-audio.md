@@ -1,7 +1,7 @@
 ---
 slug: scrutinise-phase5-tts-audio
 goal: "Fix the four Warnings /scrutinise found in Phase 5 audio: backchannels pass speech-recognition, the TTS cache key follows the weights, voice clips must be CC0/CC-BY, and the TTS sidecar's whole process tree is stopped, even after the worker itself has died (round 2)."
-classification: in-scope   # /scrutinise phase5-tts-audio round 1 (range 773ee71..e234ed8) and round 2 (range e234ed8..4a75676); hard rules in docs/plans/phase5-tts-audio.md and .claude/CLAUDE.md "Licensing", "Hardware target"
+classification: in-scope   # /scrutinise phase5-tts-audio round 1 (range 773ee71..e234ed8) , round 2 (range e234ed8..4a75676) and round 3 (range 4a75676..ea75403: 0 Critical, 0 Warning, 4 Suggestions folded into unit 8); hard rules in docs/plans/phase5-tts-audio.md and .claude/CLAUDE.md "Licensing", "Hardware target"
 tracker_rows: [TRACKER#scrutinise-phase5-tts-audio/1, TRACKER#scrutinise-phase5-tts-audio/2, TRACKER#scrutinise-phase5-tts-audio/3, TRACKER#scrutinise-phase5-tts-audio/4, TRACKER#scrutinise-phase5-tts-audio/5, TRACKER#scrutinise-phase5-tts-audio/6, TRACKER#scrutinise-phase5-tts-audio/7, TRACKER#scrutinise-phase5-tts-audio/8]
 guards:
   blast_radius: done
@@ -161,9 +161,9 @@ units:
     language: rust, python
     security: normal
     scope:
-      read: [crates/podling-core/src/plugin/sidecar.rs, sidecars/tts/podling_tts/backends/qwen.py, sidecars/tts/podling_tts/server.py, sidecars/tts/podling_tts/backends/__init__.py, crates/podling-core/src/plugin/tts.rs, crates/podling-types/src/episode.rs]
+      read: [crates/podling-core/src/plugin/sidecar.rs, crates/podling-core/src/plugin/sidecar_tts.rs, crates/podling-core/tests/sidecar_tts.rs, crates/podling-core/tests/fixtures/fake_sidecar.py, sidecars/tts/podling_tts/backends/qwen.py, sidecars/tts/podling_tts/server.py, sidecars/tts/podling_tts/backends/__init__.py, crates/podling-core/src/plugin/tts.rs, crates/podling-types/src/episode.rs]
       docs: [docs/plans/scrutinise-phase5-tts-audio.md]
-      write: [crates/podling-core/src/plugin/sidecar.rs, sidecars/tts/podling_tts/backends/qwen.py, sidecars/tts/podling_tts/server.py, sidecars/tts/tests/test_server.py, crates/podling-core/src/plugin/tts.rs, crates/podling-types/src/episode.rs, crates/podling-types/tests/roundtrip.rs, crates/podling-types/tests/snapshots/schema_snapshot__episode.snap]
+      write: [crates/podling-core/src/plugin/sidecar.rs, crates/podling-core/src/plugin/sidecar_tts.rs, crates/podling-core/tests/sidecar_tts.rs, crates/podling-core/tests/fixtures/fake_sidecar.py, sidecars/tts/podling_tts/backends/qwen.py, sidecars/tts/podling_tts/server.py, sidecars/tts/tests/test_server.py, crates/podling-core/src/plugin/tts.rs, crates/podling-types/src/episode.rs, crates/podling-types/tests/roundtrip.rs, crates/podling-types/tests/snapshots/schema_snapshot__episode.snap]
     tooling: { implementer: implementer, gates: [code-reviewer], skills: [], guards: [cargo fmt, cargo clippy, cargo test, uv run pytest], mcp: [] }
 ---
 
@@ -243,6 +243,12 @@ Depends on: none
 - [ ] 8.5 S-R2-7: give `RawVoiceRef.licence` (`episode.rs:199-202`) a schema enum of `VOICE_LICENCES`, and refresh the episode schema snapshot. → accept: the snapshot lists the three ids.
 - [ ] 8.6 S-R2-9: a shared golden fixture (turns → spoken string) tested by both `SpokenTurn::said` (`crates/podling-core/src/plugin/tts.rs:68`) and `in_line` (`sidecars/tts/podling_tts/backends/__init__.py:116`). → accept: one JSON fixture read by a cargo test and a pytest.
 
+Round 3 (range 4a75676..ea75403) found no Critical or Warning. Its four Suggestions join this PENDING step:
+- [ ] 8.7 S-R3-1: when `SidecarTts::explain` finds the worker dead (`crates/podling-core/src/plugin/sidecar_tts.rs:236`, `exits_within`), stop the pinned tree right away instead of waiting for `Drop`. Make `Sidecar::stop` idempotent, or add a `reap_tree()` that `explain` calls. A provider kept alive after a failed request would otherwise hold VRAM until it is dropped. → accept: a test where the `orphan-exit` worker dies, a request fails, and the tagged child is gone *before* the provider is dropped.
+- [ ] 8.8 S-R3-2: log `poll` errors in `is_running` (`crates/podling-core/src/plugin/sidecar.rs:494-501`) at `tracing::debug!` rather than silently counting the process as gone. → accept: clippy is clean; the behaviour is unchanged.
+- [ ] 8.9 S-R3-3: cover `Descendants::extend` (`sidecar.rs:421-428`). Add a fixture mode whose worker starts the SIGTERM-ignoring child *after* ready (in the first GET, or on a timer), plus a drop test. → accept: the test fails if `stop()` skips the fresh scan.
+- [ ] 8.10 S-R3-4: replace the 1.0 s timer in `--mode orphan-exit` (`crates/podling-core/tests/fixtures/fake_sidecar.py:136-138`) with a sentinel file in `--run-dir` that the test writes after `start` returns. → accept: `a_child_left_behind_by_a_dead_worker_is_killed` has no timing dependence and passes 3/3.
+
 ## Sequencing
 Run the units in the order 3 → 1 → 4 → 2.
 - **3, licence:** first, because it is the hard rule.
@@ -253,6 +259,8 @@ Run the units in the order 3 → 1 → 4 → 2.
 Units 1, 3 and 4 touch separate files. Units 5–6 stay PENDING.
 
 Round 2 drives unit 7 alone. Unit 8 stays PENDING; it depends on 7 because both edit `sidecar.rs`.
+
+Round 3 drives nothing; it adds tasks 8.7–8.10 to the PENDING unit 8.
 
 ## Decomposition
 plan-strategist Option C: one unit per Warning, since each is a different failure mode (ASR accuracy, cache correctness, licence policy, process lifecycle). That keeps each review and revert separate. The only coupling is the shared test fixture, and ordering handles it.
@@ -284,6 +292,11 @@ Round 2 (Step 7):
 
 CONSUMERS (round 2):
 - `Sidecar` is owned only by `SidecarTts` (`crates/podling-core/src/plugin/sidecar_tts.rs`). The new field and the stop change are internal: no public type, wire format, cache key or artifact changes.
+
+Round 3 (tasks 8.7–8.10):
+- `explain` reaps only the worker on death — `crates/podling-core/src/plugin/sidecar_tts.rs:236-239`; the pinned tree is signalled only in `stop()` — `crates/podling-core/src/plugin/sidecar.rs:302`.
+- `is_running` — `sidecar.rs:494-501`; `Descendants::extend` — `sidecar.rs:421-428`; both fixture orphan modes start their child before ready — `crates/podling-core/tests/fixtures/fake_sidecar.py:36-50`; the timer — `:136-138`.
+- CONSUMERS: none new. `Sidecar` and `Descendants` stay private to `SidecarTts`.
 
 ## Risk & rollback
 - Unit 2 changes every sidecar TTS cache key once: cached audio is re-synthesised on the next run. This is intended and stated in the unit summary and the README.
