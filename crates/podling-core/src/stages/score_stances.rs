@@ -68,7 +68,9 @@ impl Stage for ScoreStances<'_> {
     // 4: only a premise naming the subject in a numberless sentence is
     // refused; a reworded subject keeps the model's call
     // (`number_is_about_the_subject`).
-    const VERSION: u32 = 4;
+    // 5: a numbered sentence opening with a pronoun also names the sentence
+    // before it, so a contradiction told by pronoun isn't refused.
+    const VERSION: u32 = 5;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -255,8 +257,11 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
 /// 1927 as a contradicting date, but it dates the expedition, not the
 /// explosion. A premise that shares no word with the claim at all ("The
 /// blast occurred in 1907.") is reworded, not off-subject, so the model's
-/// call stands. True when either text has no number, so the rule only judges
-/// number-against-number contradictions.
+/// call stands. A sentence opening with a pronoun ("He got there in 1931.")
+/// also names what the sentence before it names: word overlap can't tell
+/// which noun the pronoun means, so it keeps the model's call rather than
+/// drop a real contradiction. True when either text has no number, so the
+/// rule only judges number-against-number contradictions.
 fn number_is_about_the_subject(claim: &str, premise: &str) -> bool {
     if numbers(claim).is_empty() || numbers(premise).is_empty() {
         return true;
@@ -268,12 +273,33 @@ fn number_is_about_the_subject(claim: &str, premise: &str) -> bool {
             .collect()
     };
     let claim_subject = subject(claim);
-    let (with_number, without_number): (Vec<_>, Vec<_>) = sentences(premise)
-        .into_iter()
-        .map(|range| &premise[range])
-        .partition(|sentence| !numbers(sentence).is_empty());
-    let names_subject = |sentence: &&str| !subject(sentence).is_disjoint(&claim_subject);
-    with_number.iter().any(names_subject) || !without_number.iter().any(names_subject)
+    let mut previous = BTreeSet::new();
+    let mut named_without_number = false;
+    for range in sentences(premise) {
+        let sentence = &premise[range];
+        let mut named = subject(sentence);
+        if opens_with_pronoun(sentence) {
+            named.extend(previous);
+        }
+        let names_subject = !named.is_disjoint(&claim_subject);
+        if numbers(sentence).is_empty() {
+            named_without_number |= names_subject;
+        } else if names_subject {
+            return true;
+        }
+        previous = named;
+    }
+    !named_without_number
+}
+
+/// Whether `sentence` starts with a pronoun that refers back to an earlier
+/// sentence.
+fn opens_with_pronoun(sentence: &str) -> bool {
+    const PRONOUNS: &[&str] = &["he", "she", "it", "they", "this", "these"];
+    sentence
+        .split(|c: char| !c.is_alphanumeric())
+        .find(|w| !w.is_empty())
+        .is_some_and(|w| PRONOUNS.contains(&w.to_lowercase().as_str()))
 }
 
 impl Judged {
@@ -537,6 +563,42 @@ mod tests {
         let evidence = StanceEvidence {
             claim: "No impact crater was found at the site.",
             premise: "The explosion was heard far away. Kulik reached the site in 1927.",
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        assert_eq!(decide(&evidence), Some(Stance::Contradicts));
+    }
+
+    #[test]
+    fn a_pronoun_carries_the_subject_into_the_numbered_sentence() {
+        let evidence = |premise| StanceEvidence {
+            claim: "Kulik reached the site in 1927.",
+            premise,
+            similarity: PerMille::from_probability(0.8),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        let pronoun = "Leonid Kulik led the first expedition to the site. He got there in 1931.";
+        assert_eq!(decide(&evidence(pronoun)), Some(Stance::Contradicts));
+        // The pronoun may mean another noun of that sentence; word overlap
+        // can't tell, so this one is left to the model too.
+        let elsewhere = "Kulik studied meteorites in Petrograd. It became Leningrad in 1924.";
+        assert_eq!(decide(&evidence(elsewhere)), Some(Stance::Contradicts));
+        // Without a pronoun the numbered sentence is about something else.
+        let no_pronoun =
+            "Leonid Kulik led the first expedition. Petrograd became Leningrad in 1924.";
+        assert_eq!(decide(&evidence(no_pronoun)), None);
+    }
+
+    #[test]
+    fn one_shared_word_keeps_the_models_call() {
+        // Trade-off: any shared word, even an incidental month, counts as
+        // naming the subject, so a number about another event can still
+        // contradict when the model over-calls it.
+        let evidence = StanceEvidence {
+            claim: "The explosion happened in June 1908.",
+            premise: "Kulik's expedition reached the site in June 1927.",
             similarity: PerMille::from_probability(0.7),
             entailment: PerMille::from_probability(0.0),
             contradiction: PerMille::from_probability(0.99),

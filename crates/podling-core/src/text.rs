@@ -7,8 +7,11 @@ use std::ops::Range;
 /// Byte ranges of the sentences in `text`, trimmed of surrounding whitespace.
 ///
 /// A sentence ends at `.`, `!` or `?` followed by whitespace or the end of the
-/// text. Deliberately simple: good enough for the fake provider and tests;
-/// real claim extraction is the language model's job.
+/// text. Deliberately simple: real claim extraction is the language model's
+/// job. Besides the fake provider and tests, the stance gate
+/// (`score_stances::number_is_about_the_subject`) reads it, so its known
+/// limit matters there: an abbreviation ends a sentence ("Dr. Kulik" splits
+/// after "Dr.").
 pub fn sentences(text: &str) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = 0;
