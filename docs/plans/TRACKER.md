@@ -80,6 +80,11 @@
 | [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 6 (audio-dedupe) | crates/podling-core/src/plugin | PENDING | — | 2026-10-05 |
 | [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 7 (sidecar-orphan-after-exit) | crates/podling-core/src/plugin/sidecar.rs | COMPLETE | all 1 acceptance criteria ticked; merge ea75403 (f5f9442) into worktree-phase5-… | 2026-10-05 |
 | [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 8 (sidecar-hardening) | crates/podling-core/src/plugin/sidecar.rs, sidecars/tts | PENDING | — | 2026-10-05 |
+| [scrutinise-stance-precision](./scrutinise-stance-precision.md) | 1 (stance-subject) | crates/podling-core stance gate + eval | COMPLETE | all 6 acceptance criteria ticked; b6e753b (merge a35bc90 into worktree-stance-p… | 2026-10-06 |
+| [scrutinise-stance-precision](./scrutinise-stance-precision.md) | 2 (stance-pronoun) | podling-core stance gate pronoun windows | COMPLETE | all 7 acceptance criteria ticked; 6347534 (merge 5ef59fa into worktree-stance-p… | 2026-10-06 |
+| [scrutinise-stance-precision](./scrutinise-stance-precision.md) | 3 (stance-pronoun-anywhere) | podling-core stance gate | PENDING | — | 2026-10-06 |
+| [stance-precision](./stance-precision.md) | 1 (stance-eval) | stance evaluation set + report | COMPLETE | all 5 acceptance criteria ticked; 6af56e6 (merged into worktree-stance-precisio… | 2026-10-06 |
+| [stance-precision](./stance-precision.md) | 2 (stance-rule) | stance decision rule | COMPLETE | all 4 acceptance criteria ticked; 8251831 (merge b3632c1 into worktree-stance-p… | 2026-10-06 |
 | [phase5-tts-audio](../../phase5-tts-audio) | 5 | — | COMPLETE | all 2 acceptance criteria ticked; merge a90c25f into worktree-phase5-tts-plan; … | 2026-10-05 |
 
 <!-- craftsman:ledger:end -->
