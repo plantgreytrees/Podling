@@ -27,6 +27,7 @@ use crate::plugin::{
     EmbeddingProvider, NliPair, NliProvider, cosine, embed_checked, score_checked,
 };
 use crate::stage::Stage;
+use crate::text::{content_words, is_number, numbers, sentences};
 
 /// Premise windows retrieved per claim (the cost bound).
 pub const RETRIEVE_K: usize = 4;
@@ -62,7 +63,16 @@ pub struct ScoreStances<'a> {
 
 impl Stage for ScoreStances<'_> {
     const ID: &'static str = "score_stances";
-    const VERSION: u32 = 2;
+    // 3: a number-against-number contradiction needs the premise's number to
+    // share the claim's subject.
+    // 4: only a premise naming the subject in a numberless sentence is
+    // refused; a reworded subject keeps the model's call
+    // (`number_is_about_the_subject`).
+    // 5: a numbered sentence opening with a pronoun also names the sentence
+    // before it, so a contradiction told by pronoun isn't refused.
+    // 6: the pronoun may sit anywhere in the sentence ("In 1931 he got
+    // there.", "His arrival came in 1931."), not only first.
+    const VERSION: u32 = 6;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -145,7 +155,8 @@ impl Stage for ScoreStances<'_> {
                 entailment: PerMille::from_probability(score.entailment),
                 contradiction: PerMille::from_probability(score.contradiction),
             };
-            let Some(stance) = judged.stance() else {
+            let premise = windows[candidate.window].text;
+            let Some(stance) = judged.stance(input.claims[candidate.claim].text(), premise) else {
                 continue;
             };
             let key = (candidate.claim, windows[candidate.window].chunk);
@@ -211,19 +222,100 @@ struct Judged {
     contradiction: PerMille,
 }
 
-impl Judged {
-    /// The stance this judgement establishes, if any. Compared on the rounded
-    /// scores, so the stored numbers are the ones that decided.
-    fn stance(&self) -> Option<Stance> {
-        if self.entailment.get() >= SUPPORT_ENTAIL_PM {
-            Some(Stance::Supports)
-        } else if self.contradiction.get() >= CONTRADICT_PM
-            && self.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
-        {
-            Some(Stance::Contradicts)
-        } else {
-            None
+/// Everything one premise window's stance on a claim is decided from: the two
+/// texts and the scores the models gave them. Public so the stance rule can
+/// be measured on a labelled pair set (`tests/stance_precision.rs`) without
+/// running the whole stage.
+#[derive(Debug, Clone, Copy)]
+pub struct StanceEvidence<'a> {
+    pub claim: &'a str,
+    pub premise: &'a str,
+    /// Embedding cosine of the claim and the premise.
+    pub similarity: PerMille,
+    pub entailment: PerMille,
+    pub contradiction: PerMille,
+}
+
+/// The stance a premise establishes on a claim, if any. Compared on the
+/// rounded scores, so the stored numbers are the ones that decided.
+pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
+    if evidence.entailment.get() >= SUPPORT_ENTAIL_PM {
+        Some(Stance::Supports)
+    } else if evidence.contradiction.get() >= CONTRADICT_PM
+        && evidence.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
+        && number_is_about_the_subject(evidence.claim, evidence.premise)
+    {
+        Some(Stance::Contradicts)
+    } else {
+        None
+    }
+}
+
+/// When the claim and the premise both state a number, false if the premise
+/// names the claim's subject (shares a word that isn't a number) only in
+/// sentences without a number: its number is then about something else. In
+/// "The explosion was heard far away. Kulik's expedition reached the site in
+/// 1927." against "The explosion happened in June 1908.", the model reads
+/// 1927 as a contradicting date, but it dates the expedition, not the
+/// explosion. A premise that shares no word with the claim at all ("The
+/// blast occurred in 1907.") is reworded, not off-subject, so the model's
+/// call stands. A sentence holding a pronoun or possessive anywhere ("He got
+/// there in 1931.", "In 1931 he got there.", "His arrival came in 1931.")
+/// also names what the sentence before it names: word overlap can't tell
+/// which noun the pronoun means, so it keeps the model's call rather than
+/// drop a real contradiction. True when either text has no number, so the
+/// rule only judges number-against-number contradictions.
+fn number_is_about_the_subject(claim: &str, premise: &str) -> bool {
+    if numbers(claim).is_empty() || numbers(premise).is_empty() {
+        return true;
+    }
+    let subject = |text: &str| -> BTreeSet<String> {
+        content_words(text)
+            .into_iter()
+            .filter(|w| !is_number(w))
+            .collect()
+    };
+    let claim_subject = subject(claim);
+    let mut previous = BTreeSet::new();
+    let mut named_without_number = false;
+    for range in sentences(premise) {
+        let sentence = &premise[range];
+        let mut named = subject(sentence);
+        if refers_back(sentence) {
+            named.extend(previous);
         }
+        let names_subject = !named.is_disjoint(&claim_subject);
+        if numbers(sentence).is_empty() {
+            named_without_number |= names_subject;
+        } else if names_subject {
+            return true;
+        }
+        previous = named;
+    }
+    !named_without_number
+}
+
+/// Whether `sentence` holds a pronoun or possessive that may refer back to an
+/// earlier sentence, wherever it sits ("In 1931 he got there.").
+fn refers_back(sentence: &str) -> bool {
+    const PRONOUNS: &[&str] = &[
+        "he", "she", "it", "they", "this", "these", "his", "her", "its", "their", "him", "them",
+    ];
+    sentence
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| PRONOUNS.contains(&w.to_lowercase().as_str()))
+}
+
+impl Judged {
+    /// The stance this judgement of `premise` against `claim` establishes.
+    fn stance(&self, claim: &str, premise: &str) -> Option<Stance> {
+        decide(&StanceEvidence {
+            claim,
+            premise,
+            similarity: self.similarity,
+            entailment: self.entailment,
+            contradiction: self.contradiction,
+        })
     }
 }
 
@@ -444,6 +536,135 @@ mod tests {
             .filter(|e| e.independence_group == "b")
             .count();
         assert_eq!(from_b, 1);
+    }
+
+    #[test]
+    fn a_number_about_something_else_does_not_contradict() {
+        let evidence = |premise| StanceEvidence {
+            claim: "The explosion happened in June 1908.",
+            premise,
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        // The window's only year dates the expedition, not the explosion.
+        let other_subject =
+            "The explosion was heard far away. Kulik's expedition reached the site in 1927.";
+        assert_eq!(decide(&evidence(other_subject)), None);
+        // The same year beside the claim's subject does contradict it.
+        let same_subject = "The explosion was heard far away. The explosion happened in 1927.";
+        assert_eq!(decide(&evidence(same_subject)), Some(Stance::Contradicts));
+        // Without a number in the premise the gate doesn't apply.
+        let no_number = "Kulik's expedition found no crater.";
+        assert_eq!(decide(&evidence(no_number)), Some(Stance::Contradicts));
+        // A reworded subject shares no word at all: the model's call stands.
+        let reworded = "Witnesses heard thunder. The blast occurred in 1907.";
+        assert_eq!(decide(&evidence(reworded)), Some(Stance::Contradicts));
+    }
+
+    #[test]
+    fn a_claim_without_a_number_skips_the_subject_rule() {
+        let evidence = StanceEvidence {
+            claim: "No impact crater was found at the site.",
+            premise: "The explosion was heard far away. Kulik reached the site in 1927.",
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        assert_eq!(decide(&evidence), Some(Stance::Contradicts));
+    }
+
+    #[test]
+    fn a_pronoun_carries_the_subject_into_the_numbered_sentence() {
+        let evidence = |premise| StanceEvidence {
+            claim: "Kulik reached the site in 1927.",
+            premise,
+            similarity: PerMille::from_probability(0.8),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        let pronoun = "Leonid Kulik led the first expedition to the site. He got there in 1931.";
+        assert_eq!(decide(&evidence(pronoun)), Some(Stance::Contradicts));
+        // The pronoun needn't open the sentence, and a possessive counts.
+        let fronted = "Leonid Kulik led the first expedition to the site. In 1931 he got there.";
+        assert_eq!(decide(&evidence(fronted)), Some(Stance::Contradicts));
+        let possessive =
+            "Leonid Kulik led the first expedition to the site. His arrival came in 1931.";
+        assert_eq!(decide(&evidence(possessive)), Some(Stance::Contradicts));
+        // The pronoun may mean another noun of that sentence; word overlap
+        // can't tell, so this one is left to the model too.
+        let elsewhere = "Kulik studied meteorites in Petrograd. It became Leningrad in 1924.";
+        assert_eq!(decide(&evidence(elsewhere)), Some(Stance::Contradicts));
+        // Without a pronoun the numbered sentence is about something else.
+        let no_pronoun =
+            "Leonid Kulik led the first expedition. Petrograd became Leningrad in 1924.";
+        assert_eq!(decide(&evidence(no_pronoun)), None);
+    }
+
+    #[test]
+    fn one_shared_word_keeps_the_models_call() {
+        // Trade-off: any shared word, even an incidental month, counts as
+        // naming the subject, so a number about another event can still
+        // contradict when the model over-calls it.
+        let evidence = StanceEvidence {
+            claim: "The explosion happened in June 1908.",
+            premise: "Kulik's expedition reached the site in June 1927.",
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        assert_eq!(decide(&evidence), Some(Stance::Contradicts));
+    }
+
+    #[test]
+    fn the_stage_refuses_a_number_about_something_else() {
+        /// Calls every premise holding a number a contradiction.
+        struct NumbersContradict;
+        impl NliProvider for NumbersContradict {
+            fn id(&self) -> &str {
+                "numbers-contradict"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+                Ok(pairs
+                    .iter()
+                    .map(|p| {
+                        let c = if numbers(p.premise).is_empty() {
+                            0.0
+                        } else {
+                            1.0
+                        };
+                        NliScores {
+                            entailment: 0.0,
+                            neutral: 1.0 - c,
+                            contradiction: c,
+                        }
+                    })
+                    .collect())
+            }
+        }
+        let claim = "The great explosion happened in 1908.";
+        let contradicted = |window: &str| {
+            let input = input(&[("a", claim), ("b", window)]);
+            let claims = run(&NumbersContradict, &input);
+            matches!(status_of(&claims, claim).0, ClaimStatus::Contested { .. })
+        };
+        // The two-sentence window is similar enough to be judged, so only the
+        // subject rule stops it: its year dates Kulik's arrival, not the
+        // explosion.
+        let off_subject = "The great explosion happened. Kulik arrived in 1927.";
+        let v = FakeEmbedding.embed(&[claim, off_subject]).unwrap();
+        let similarity = PerMille::from_probability(cosine(&v[0], &v[1]));
+        assert!(
+            similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM,
+            "{similarity:?}"
+        );
+        assert!(!contradicted(off_subject));
+        assert!(contradicted(
+            "The great explosion happened. The explosion happened in 1927."
+        ));
     }
 
     #[test]

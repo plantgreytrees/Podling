@@ -9,7 +9,9 @@
 > (episode audio: TTS, speech-recognition checks, assembly) with its
 > `/scrutinise` fixes (backchannel-aware speech checks, a weights- and
 > adapter-aware TTS cache key, a voice licence allow-list, and stopping the
-> sidecar's whole process tree). Phase 5 was built before Phase 4.
+> sidecar's whole process tree). Phase 5 was built before Phase 4. It also
+> covers stance precision (the number-subject rule in `score_stances`, VERSION 6,
+> measured on a labelled pair set).
 
 This document describes the state after Phases 4 and 5. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -378,10 +380,33 @@ at most 120 words, well under DeBERTa's 512 tokens. For each claim, only windows
 evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are scored:
 - entailment ≥ 0.800: `Supports`;
 - else contradiction ≥ 0.950 **and** cosine ≥ 0.60: `Contradicts`. NLI models over-call
-  contradiction between sentences that merely share a topic (0.903 for "Kulik reached
-  the site in 1927" against "No impact crater was found"), hence the high bar and the
-  same-subject requirement;
+  contradiction between sentences that merely share a topic (0.991 for the 1927
+  expedition window below), hence the high bar and the same-subject requirement. When claim and premise both hold a number, a premise that
+  names the claim's subject (shares a non-number content word with it) only in
+  sentences without a number is refused: in a window "The explosion was heard far away.
+  Kulik's expedition reached the site in 1927.", the 1927 dates the expedition, so it
+  doesn't contradict "The explosion happened in June 1908." (0.991 from the model). A
+  premise sharing no word with the claim ("The blast occurred in 1907.") is reworded,
+  not off-subject, and keeps the model's call. A sentence holding a pronoun or possessive
+  anywhere ("He got there in 1931.", "In 1931 he got there.", "His arrival came in
+  1931.") also names what the sentence before it names: word overlap can't tell
+  which noun the pronoun means, so such a window keeps the model's call even when the
+  pronoun means another noun ("Kulik studied meteorites in Petrograd. It became Leningrad
+  in 1924."), trading those false contradictions for not dropping real ones;
 - else nothing.
+
+**Measured precision.** `tests/stance_precision.rs` runs the rule on 82 hand-labelled
+pairs scored once by the real models (`tests/fixtures/stance_pairs/`); the test fails if
+the rule's precision or recall falls below the VERSION 2 rule's on that set, and
+`cargo test -p podling-core --test stance_precision -- --nocapture report` prints the
+before/after table. With the number-subject rule (VERSION 6): supports precision 100% /
+recall 74%, contradicts 87% / 100% (four false positives, all pronouns meaning another
+noun); without it (VERSION 2), contradicts precision is 81% (six window false
+positives). VERSION 3's stricter rule (the number's own sentence must share a word) cost
+contradicts recall 81% on reworded subjects, VERSION 4 (no pronoun carry-over) 92% on
+pronoun windows, and VERSION 5 (only a sentence-opening pronoun) 92% on fronted-date and
+possessive windows. A set this small shows the rule fits it, not that it generalises; see
+[the plan's reports](plans/scrutinise-stance-precision.md#report-round-3).
 
 A chunk gives a claim at most one piece of evidence, from its most decisive window, and
 entailment wins over contradiction, so a chunk is never both for and against.
