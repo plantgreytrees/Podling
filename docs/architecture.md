@@ -562,7 +562,11 @@ them worse. It has two uses, kept apart:
   worker, its backends and `ADAPTER_VERSION` are unchanged. A turn with no name
   in it has `say_as = None`, which is left out of its cache key, so an empty
   lexicon changes no key. Editing one respelling re-synthesises only the chunks
-  that name it. Each chunk's respelt names are logged at `debug`.
+  that name it, plus, for a backend that listens to context, the chunk after
+  each of them, since the context turns carry `say_as` too (`context_for`). No
+  shipped backend uses context (`uses_context = False` in
+  [`backends/__init__.py`](../sidecars/tts/podling_tts/backends/__init__.py)).
+  Each chunk's respelt names are logged at `debug`.
 - *Heard variants, for the check only.* `heard` lists what Whisper may write
   for a name. `HeardVariants` reads those words in the transcript as the name,
   so a correctly spoken name is not a word error. It never touches what the
