@@ -1,13 +1,13 @@
 ---
 slug: natural-episode-speech
-status: pursue-with-changes
+status: architected
 verdict: pursue-with-changes
 confidence: medium
 depth: standard
 isolation: isolated
 created: 2026-10-06
 updated: 2026-10-06
-related: [docs/plans/phase5-tts-audio.md, docs/plans/scrutinise-phase5-tts-audio.md, docs/architecture.md]
+related: [docs/architecture/speech.rules.md, docs/architecture/speech.md, docs/plans/phase5-tts-audio.md, docs/plans/scrutinise-phase5-tts-audio.md, docs/architecture.md]
 touches:
   - crates/podling-types/src/episode.rs                 # [tts] pronunciation list; schema snapshot
   - crates/podling-types/tests/snapshots/schema_snapshot__episode.snap
@@ -112,7 +112,7 @@ Leave out text normalisation (it does not touch an already spelled-out word) and
 - **Strongest case against.** The evidence is one listener, one named word, and under 3 minutes of live audio. Part of the flatness may come from the script: llama3.1:8b's repetitive "That's a … But what about …?" banter is something no TTS change fixes.
 - **Hidden assumptions, each with a cheap test:**
   - *Qwen mispronounces "kilometres" specifically.* Synthesise "kilometres", "kilometers" and a respelling in isolation and listen.
-  - *Respelling changes Qwen's output.* Compare "Kulik" with "Koolik".
+  - *Respelling changes Qwen's output.* Compare "Kulik" with "Koolik". **Confirmed** by the word test below, for the guest voice.
   - *A designed clip's liveliness survives cloning.* Blind A/B on the same three turns against the LibriTTS-R clip.
   - *How Whisper base.en spells "kilometres".* Run it once on an existing chunk.
 - **Failure modes:**
@@ -132,29 +132,59 @@ Leave out text normalisation (it does not touch an already spelled-out word) and
   - **Pick a clip per emotion.** One designed clip per speaker and emotion, chosen by `turn.emotion`. Only after a single designed clip proves livelier.
   - **A new cloning model that takes instructions.** The highest cost, and it re-runs the bake-off.
 
+## Word test (step 0, 2026-10-06)
+`scripts/tts_bakeoff/word_test.py`: 8 sentences × 2 bake-off voices, seed 1234, Qwen3-TTS 1.7B Base (peak 4,386 MiB), then Whisper base.en on the CPU. The clips are in `~/podling-listening/word-test/` (outside the repository), with `whisper.json`.
+
+| Test | Host heard | Guest heard |
+|---|---|---|
+| "kilometres" / "kilometers" / "kill-oh-meeters" / "60 km" | "60 kilometers" for all, except "kilo meters" for the respelling | "60 kilometers" for all four |
+| "Kulik" → "Koolick" | Kulik → Kulik | **Koolik → Kulik** |
+| "Tunguska" → "Toon-goose-kah" | Tunguska → **Tungus Ka** | Tunguska → **Tungus Ka** |
+
+What it shows:
+- **Respelling changes Qwen's output.** The guest's "Kulik" moved from "Koolik" to "Kulik". So the deciding fact holds, and the pronunciation list stays in scope.
+- **Hyphenated respellings split the word** ("Tungus Ka"). Respellings should be single unhyphenated words.
+- **Qwen expands "60 km" itself**, which confirms text normalisation is not needed.
+- **Whisper cannot judge the "kilometres" fault.** It hears every variant as "kilometers", so only a listener can say which variant sounds right.
+- **Whisper writes American spellings** ("kilometers", "center"). A script with "kilometres" and "centre" therefore scores false WER errors today. The scorer needs British/American folding, independently of the pronunciation list.
+
+**The user's ears (2026-10-06):** clips 01, 02 and 04 sound fine in both voices; the respelt 03 sounds *worse*. So:
+- Qwen does not systematically mispronounce "kilometres". The bake-off's bad "kilometres" was most likely a one-off in that take, which Whisper cannot detect, because it normalises the sound to the word.
+- Respelling a common word can make it worse. The pronunciation list is only for names the model gets wrong repeatedly ("Kulik" for the guest voice), never for ordinary words.
+- The fix for one-off slips is not a lexicon. Today there is no automatic check that catches them, so they need a listener, or another take of that chunk.
+
 ## Disputed
 - *"'kilometres' appears nowhere in the recorded notes, so the named example is not in evidence."* **Softened.** The user named it in conversation after the notes were written (2026-10-06). It is in neither live script (0 matches in `~/podling-listening/{ten,thirty}-minute/script.json`), so it was heard in the bake-off clips, whose fixture spells it out (`scripts/tts_bakeoff/fixtures/tunguska-10min.json:10`). It is direct evidence, but it should be added to the plan's "Live results", as recommendation 1 says.
 
 ## Recommendations
-1. **Step 0, before planning.** Log each mispronounced word, with its clip and time. Run the isolated test of "kilometres", "kilometers", a respelling, and "Kulik" vs "Koolik". Record the results in `phase5-tts-audio.md` "Live results".
+1. **Step 0, before planning (done 2026-10-06, see "Word test").** Log each mispronounced word, with its clip and time. Run the isolated test of "kilometres", "kilometers", a respelling, and "Kulik" vs "Koolik". Record the results in `phase5-tts-audio.md` "Live results".
 2. **Drop text normalisation** from scope until a script contains a misread digit, unit or abbreviation.
-3. **Apply the pronunciation list in Rust.**
+3. **First, fold British and American spellings in the WER scorer** (`crates/podling-core/src/stages/verify_audio.rs:29`): "kilometres"/"kilometers", "centre"/"center" and similar. Whisper writes American spellings, so British script text scores false errors today (word test). This is the smallest proven fix.
+4. **Apply the pronunciation list in Rust, for names only.** The word test showed respelling a common word makes it worse.
    - Add a model-facing text to `SpokenTurn`, and keep `said()` on the original words.
    - Give the WER scorer the respellings, and British/American spellings, as accepted variants. This also covers the existing "Koolik" finding.
    - Update the `said()`/`in_line()` mirror note.
    - Bump `ADAPTER_VERSION` only if the adapter changes.
-4. **Build design-then-clone as an offline tool** in `scripts/tts_bakeoff/`, with a written licence policy for self-generated clips before any is committed (open question 1).
-5. **Acceptance:**
+5. **Build design-then-clone as an offline tool** in `scripts/tts_bakeoff/`, with a written licence policy for self-generated clips before any is committed (open question 1).
+6. **Acceptance:**
    - an episode without `[tts]` is unchanged;
    - editing the list invalidates only the affected chunks;
    - a blind A/B listening pass;
    - WER and retry rate no worse.
-6. **Afterwards, test the script half separately:** a prompt change against repeated banter openers, with a `PROMPT_VERSION` bump.
-7. **Defer the model swap** (Chatterbox or Zonos) to its own spike, with a VRAM gate of ≤ 7.0 GB for its own process.
+7. **Afterwards, test the script half separately:** a prompt change against repeated banter openers, with a `PROMPT_VERSION` bump.
+8. **Defer the model swap** (Chatterbox or Zonos) to its own spike, with a VRAM gate of ≤ 7.0 GB for its own process.
 
 ## Open questions
 1. **Licence for self-generated voice clips.** May VoiceDesign clips be declared CC0-1.0, with the user as author? *Answer (2026-10-06): not yet decided.* The user plans a voice marketplace, where people upload their own recordings and sell their use for other users' podcasts. That needs its own `/idea`, and will reshape the licence rule. Until then, designed clips stay local and uncommitted.
-2. **Scope of the first slice.** *Answer (2026-10-06): both halves, smallest version* (recommendations 1–4).
+2. **Scope of the first slice.** *Answer (2026-10-06): both halves, smallest version* (recommendations 1–5).
 
 ## Next step
 `/architect natural-episode-speech`, after recommendation 1's word log and isolated tests. Separately, `/idea` for the voice marketplace.
+
+## Architected (2026-10-06)
+
+Decided in [speech.rules.md](../architecture/speech.rules.md) (ARCH-SPEECH-01..17):
+- **Lexicon:** names are respelt through a user-level `~/.config/podling/pronounce.toml` plus the episode's `[tts.pronounce]`; the episode wins per name.
+- **Model text:** the respelling travels as `SpokenTurn.say_as` and is swapped in on the wire only, so the worker protocol and `ADAPTER_VERSION` are unchanged.
+- **Speech check:** gains optional per-name `heard` variants and a built-in British/American word-pair table.
+- **Open question 1 resolved:** self-designed clips use `LicenseRef-Podling-Generated` with a required provenance file, made by an offline `scripts/voice_design/` tool.
