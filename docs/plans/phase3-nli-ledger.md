@@ -1,5 +1,6 @@
 ---
 slug: phase3-nli-ledger
+craftsman_version: 2.1.0
 goal: The same fact worded differently by two independent sources becomes one Corroborated claim, and a source that contradicts a claim makes it Contested; both statuses come from a local NLI model, not from exact text matching.
 classification: in-scope   # .claude/CLAUDE.md "Grounding" (claims clustered, NLI-scored, deterministic status); docs/architecture.md "Known limit" and "Deferred to later phases" name the NLI provider as the fix
 tracker_rows: [TRACKER#phase3-nli-ledger/1, TRACKER#phase3-nli-ledger/2, TRACKER#phase3-nli-ledger/3, TRACKER#phase3-nli-ledger/4, TRACKER#phase3-nli-ledger/5, TRACKER#phase3-nli-ledger/6]

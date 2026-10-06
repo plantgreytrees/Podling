@@ -1,5 +1,6 @@
 ---
 slug: scrutinise-quote-placeholders
+craftsman_version: 2.1.0
 goal: A model can't slip an invented quotation past the script stage with a stray quotation mark, and naming the episode's topic no longer makes an invented claim look grounded.
 classification: in-scope   # /scrutinise of quote-placeholders (range c549c54..8fcf3b5), findings F1–F3; F4 logged as risk
 tracker_rows: [TRACKER#scrutinise-quote-placeholders/1, TRACKER#scrutinise-quote-placeholders/2, TRACKER#scrutinise-quote-placeholders/3]

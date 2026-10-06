@@ -1,5 +1,6 @@
 ---
 slug: phase5-tts-audio
+craftsman_version: 2.1.0
 goal: "`podling run` turns the script into one listenable, broadcast-loud episode file (30–60 min) with consistent voices, natural banter timing and every verbatim quote checked by ear-equivalent ASR, on an 8 GB GPU with one model loaded at a time."
 classification: in-scope   # .claude/CLAUDE.md "Modularity" (TTS + ASR providers), "Hardware target"; docs/architecture.md "Deferred to later phases: TTS and ASR provider traits"
 tracker_rows: [TRACKER#phase5-tts-audio/1, TRACKER#phase5-tts-audio/2, TRACKER#phase5-tts-audio/3, TRACKER#phase5-tts-audio/4, TRACKER#phase5-tts-audio/5, TRACKER#phase5-tts-audio/6, TRACKER#phase5-tts-audio/7, TRACKER#phase5-tts-audio/8, TRACKER#phase5-tts-audio/9, TRACKER#phase5-tts-audio/10]

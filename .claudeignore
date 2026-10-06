@@ -29,4 +29,11 @@ temp/
 *.pyc
 __pycache__/
 **/__pycache__/**
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+htmlcov/
+target/
 # End Craftsman managed .claudeignore

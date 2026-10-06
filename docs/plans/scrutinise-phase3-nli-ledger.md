@@ -1,5 +1,6 @@
 ---
 slug: scrutinise-phase3-nli-ledger
+craftsman_version: 2.1.0
 goal: The script stage's new compact ledger view is versioned as the bump rules require, and a test keeps claim evidence out of the script request.
 classification: in-scope   # /scrutinise of phase3-nli-ledger (range 9d791cd..99b8f80), findings F1–F2
 tracker_rows: [TRACKER#scrutinise-phase3-nli-ledger/1]

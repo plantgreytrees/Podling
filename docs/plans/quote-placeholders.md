@@ -1,5 +1,6 @@
 ---
 slug: quote-placeholders
+craftsman_version: 2.1.0
 goal: A real local model (llama3.1:8b on Ollama) turns the Tunguska example into a passing episode, because the model marks where a quote goes with `{{quote:N}}` instead of retyping it, and claim grounding accepts names taken from the title or headings.
 classification: in-scope   # docs/handoff.md "Fixes" 1 and 2; .claude/CLAUDE.md "an LLM may select a quote but never write one"
 tracker_rows: [TRACKER#quote-placeholders/1, TRACKER#quote-placeholders/2, TRACKER#quote-placeholders/3]

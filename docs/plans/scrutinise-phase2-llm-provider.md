@@ -1,5 +1,6 @@
 ---
 slug: scrutinise-phase2-llm-provider
+craftsman_version: 2.1.0
 goal: A model can no longer smuggle an invented quotation or an ungrounded claim into an episode unnoticed, and the live-model test and oversized-input failures say plainly what to do.
 classification: in-scope   # findings on merged Phase 2 range 162204c..2a621f8; F5 deferred (PENDING follow-up)
 tracker_rows: [TRACKER#scrutinise-phase2-llm-provider/1, TRACKER#scrutinise-phase2-llm-provider/2, TRACKER#scrutinise-phase2-llm-provider/3, TRACKER#scrutinise-phase2-llm-provider/4, TRACKER#scrutinise-phase2-llm-provider/5]
