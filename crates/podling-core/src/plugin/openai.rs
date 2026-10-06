@@ -123,15 +123,56 @@ impl OpenAiCompat {
         if let Some(t) = self.temperature {
             body["temperature"] = json!(t);
         }
-        // The lower of the episode's cap and the request's, whichever are set.
-        let cap = [self.max_output_tokens, request.max_tokens]
-            .into_iter()
-            .flatten()
-            .min();
-        if let Some(n) = cap {
-            body["max_tokens"] = json!(n);
+        if let Some(cap) = self.output_cap(request) {
+            body["max_tokens"] = json!(cap.tokens());
         }
         body
+    }
+
+    /// The lower of the episode's cap and the request's, whichever are set.
+    /// On a tie the stage's cap is the one named: raising the episode's would
+    /// change nothing.
+    fn output_cap(&self, request: &CompletionRequest) -> Option<OutputCap> {
+        match (self.max_output_tokens, request.max_tokens) {
+            (Some(episode), Some(stage)) if episode < stage => Some(OutputCap::Episode(episode)),
+            (_, Some(stage)) => Some(OutputCap::Stage(stage)),
+            (Some(episode), None) => Some(OutputCap::Episode(episode)),
+            (None, None) => None,
+        }
+    }
+}
+
+/// Which setting limited a reply's length, so a cut-off reply can name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputCap {
+    /// `llm.max_output_tokens` in the episode.
+    Episode(u32),
+    /// The stage's own `CompletionRequest::max_tokens`, which no setting raises.
+    Stage(u32),
+}
+
+impl OutputCap {
+    fn tokens(self) -> u32 {
+        match self {
+            Self::Episode(n) | Self::Stage(n) => n,
+        }
+    }
+}
+
+/// The message for a reply that stopped at the token limit.
+fn cut_off_message(cap: Option<OutputCap>, completion_tokens: Option<u64>) -> String {
+    let used = completion_tokens.map_or("?".into(), |n| n.to_string());
+    match cap {
+        Some(OutputCap::Stage(n)) => format!(
+            "the model's output was cut off at this stage's cap of {n} tokens ({used} generated)"
+        ),
+        Some(OutputCap::Episode(n)) => format!(
+            "the model's output was cut off at llm.max_output_tokens = {n} ({used} generated); \
+             raise it if replies need more room"
+        ),
+        None => {
+            format!("the model's output was cut off at the server's token limit ({used} tokens)")
+        }
     }
 }
 
@@ -167,15 +208,16 @@ impl LlmProvider for OpenAiCompat {
         let reply = parse_reply(&posted.body)
             .map_err(|message| self.transport.error(ProviderFailure::Other, message))?;
         if reply.cut_off {
+            tracing::warn!(
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                attempts = posted.attempts,
+                prompt_tokens = reply.prompt_tokens,
+                completion_tokens = reply.completion_tokens,
+                "llm reply cut off at the token limit"
+            );
             return Err(self.transport.error(
                 ProviderFailure::CutOff,
-                format!(
-                    "the model's output was cut off at the token limit ({} tokens); \
-                     if llm.max_output_tokens is set, it may be too low",
-                    reply
-                        .completion_tokens
-                        .map_or("?".into(), |n| n.to_string())
-                ),
+                cut_off_message(self.output_cap(request), reply.completion_tokens),
             ));
         }
         tracing::info!(
@@ -376,6 +418,29 @@ mod tests {
         assert_eq!(sent(None, Some(512)), json!(512));
         assert_eq!(sent(Some(4096), None), json!(4096));
         assert_eq!(sent(None, None), Value::Null);
+
+        let named = |episode, req| with_cap(episode).output_cap(&request(req));
+        assert_eq!(named(Some(4096), Some(512)), Some(OutputCap::Stage(512)));
+        assert_eq!(named(Some(256), Some(512)), Some(OutputCap::Episode(256)));
+        assert_eq!(named(Some(512), Some(512)), Some(OutputCap::Stage(512)));
+        assert_eq!(named(Some(4096), None), Some(OutputCap::Episode(4096)));
+    }
+
+    #[test]
+    fn a_cut_off_names_the_cap_that_cut_it() {
+        let stage = cut_off_message(Some(OutputCap::Stage(512)), Some(512));
+        assert!(stage.contains("this stage's cap of 512 tokens"), "{stage}");
+        assert!(!stage.contains("max_output_tokens"), "{stage}");
+
+        let episode = cut_off_message(Some(OutputCap::Episode(256)), Some(256));
+        assert!(episode.contains("llm.max_output_tokens = 256"), "{episode}");
+        assert!(episode.contains("raise it"), "{episode}");
+
+        let server = cut_off_message(None, None);
+        assert!(
+            server.contains("server's token limit (? tokens)"),
+            "{server}"
+        );
     }
 
     #[test]
