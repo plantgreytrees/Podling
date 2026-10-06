@@ -1,0 +1,228 @@
+---
+source: crates/podling-types/tests/schema_snapshot.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envelope",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "#/$defs/AudioManifest"
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "body"
+  ],
+  "$defs": {
+    "ArtifactKind": {
+      "type": "string",
+      "enum": [
+        "episode",
+        "documents",
+        "chunks",
+        "claims",
+        "ledger",
+        "verdicts",
+        "script",
+        "analysis",
+        "audio"
+      ]
+    },
+    "AudioManifest": {
+      "description": "The `audio.json` artifact.\n\nNot `Eq`: loudness is measured as `f64`, which has no total equality\n(`NaN`). The manifest is a stage output, never a cache key, so floats are\nsafe here.",
+      "type": "object",
+      "properties": {
+        "chunks": {
+          "description": "In playback order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChunkRecord"
+          }
+        },
+        "episode": {
+          "$ref": "#/$defs/EpisodeAudio"
+        },
+        "sample_rate": {
+          "description": "Sample rate of the episode file, in Hz.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "voices": {
+          "description": "Where each voice came from, and under which licence.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VoiceCredit"
+          }
+        }
+      },
+      "required": [
+        "sample_rate",
+        "chunks",
+        "episode",
+        "voices"
+      ]
+    },
+    "ChunkRecord": {
+      "description": "One synthesised chunk: the take that was kept, and how it was checked.",
+      "type": "object",
+      "properties": {
+        "blob": {
+          "description": "The audio in the blob store.",
+          "$ref": "#/$defs/ContentHash"
+        },
+        "id": {
+          "description": "Cache key of the chunk: its text, voices and context.",
+          "$ref": "#/$defs/ContentHash"
+        },
+        "quote_misses": {
+          "description": "Quotes missing from the transcript, verbatim from the script.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "seed": {
+          "description": "Derived from `id` and the attempt, so a rerun reproduces the take.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "take": {
+          "description": "Which attempt this is, from 0.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "turns": {
+          "$ref": "#/$defs/TurnRange"
+        },
+        "verified": {
+          "description": "Passed speech-recognition checks. A chunk that never passed is kept\n(the run completes) and reported as an `Error` finding.",
+          "type": "boolean"
+        },
+        "wer_pm": {
+          "description": "Word error rate of the transcript against the chunk text.",
+          "$ref": "#/$defs/PerMille"
+        }
+      },
+      "required": [
+        "id",
+        "turns",
+        "blob",
+        "seed",
+        "take",
+        "wer_pm",
+        "verified"
+      ]
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "EpisodeAudio": {
+      "description": "The finished episode file.",
+      "type": "object",
+      "properties": {
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "encoded": {
+          "description": "The compressed copy asked for by `[mix] encode`, relative to the\noutput directory, e.g. `episode.opus`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "integrated_lufs": {
+          "description": "EBU R128 integrated loudness, in LUFS (target −16).",
+          "type": "number",
+          "format": "double"
+        },
+        "path": {
+          "description": "Relative to the output directory, e.g. `episode.wav`.",
+          "type": "string"
+        },
+        "true_peak_dbtp": {
+          "description": "True peak in dBTP (at most −1).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "path",
+        "duration_ms",
+        "integrated_lufs",
+        "true_peak_dbtp"
+      ]
+    },
+    "PerMille": {
+      "description": "A score from 0 to 1 in thousandths.",
+      "type": "integer",
+      "maximum": 1000,
+      "minimum": 0
+    },
+    "SpeakerId": {
+      "description": "A human-readable speaker handle such as `host` or `guest`.",
+      "type": "string"
+    },
+    "TurnRange": {
+      "description": "A non-empty run of script turns, `start..end` (end exclusive).\n\nNot a `std::ops::Range`: a range may be empty or backwards, and serde\nwould accept either. Deserialisation runs the same check as\n[`TurnRange::new`], so an empty range can't be built at all.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "One past the index of the last turn.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "start": {
+          "description": "Index of the first turn.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "VoiceCredit": {
+      "description": "Credit for one voice: the clip it was cloned from and its licence.",
+      "type": "object",
+      "properties": {
+        "licence": {
+          "description": "SPDX identifier, copied from the episode's `[[cast]]`.",
+          "type": "string"
+        },
+        "reference": {
+          "type": "string"
+        },
+        "speaker": {
+          "$ref": "#/$defs/SpeakerId"
+        }
+      },
+      "required": [
+        "speaker",
+        "reference",
+        "licence"
+      ]
+    }
+  }
+}

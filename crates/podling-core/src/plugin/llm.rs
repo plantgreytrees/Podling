@@ -1,12 +1,15 @@
 //! Text-generation providers and the output shapes they must produce.
 
 use podling_types::{
-    ChunkId, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Speaker, SpeakerId, Stance, Verdicts,
+    BeatKind, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Nonverbal, NonverbalAt,
+    NonverbalKind, Pace, Speaker, SpeakerId, Stance, Verdicts,
 };
+use std::num::NonZeroUsize;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ProviderFailure, Result};
 use crate::text::sentences;
 
 /// Version of the stage prompts and the input shapes they describe. Part of
@@ -17,9 +20,18 @@ use crate::text::sentences;
 ///    instead of the quoted words.
 /// 3: the script request's ledger lists each claim's id, text and status
 ///    ([`LedgerClaim`]), without evidence.
-/// 4: a Contested claim's ledger entry carries the adjudicator's verdict
+/// 4: the script request may carry the episode's fixed `cast`.
+/// 5: a script for audio (`"audio": true`) adds beats, pace, nonverbal
+///    sounds and callbacks.
+/// 6: beats are marked on the turn that begins each one (`beat`), not listed
+///    as index ranges: llama3.1:8b wrote inclusive ends for exclusive ones.
+/// 7: a Contested claim's ledger entry carries the adjudicator's verdict
 ///    ([`LedgerVerdict`]).
-pub const PROMPT_VERSION: u32 = 4;
+/// 8: script sources are numbered ([`SourceText::source`]) and a quote names
+///    a source number, not a chunk id, which llama3.1:8b cited as a claim. A
+///    sentence lists the quotations inside it (`quoted`), and a quote may name
+///    one of them (`part`).
+pub const PROMPT_VERSION: u32 = 8;
 
 /// Version of the adjudicator's prompt and input shape, in its cache key only.
 /// Kept apart from [`PROMPT_VERSION`] so a change to the adjudicator doesn't
@@ -33,7 +45,11 @@ pub enum LlmTask {
     /// an object, not a bare array, because JSON mode only guarantees objects.
     ExtractClaims,
     /// Input: `{ "topic", "target_minutes", "ledger": [LedgerClaim],
-    /// "sources": [SourceText] }`. Output: JSON `ScriptDraft`.
+    /// "sources": [SourceText], "cast"?: [Speaker], "audio"?: true }`.
+    /// Output: JSON `ScriptDraft`. `cast` is present only when the episode
+    /// fixes it; `audio` only when the script will be spoken, and then the
+    /// draft's turns may carry beat marks, pace, nonverbal sounds and
+    /// callbacks.
     WriteScript,
     /// Input: `{ "claim": AdjudicationClaim, "evidence": [AdjudicationEvidence] }`
     /// for one Contested claim. Output: a JSON [`VerdictDraft`].
@@ -45,6 +61,11 @@ pub struct CompletionRequest {
     pub task: LlmTask,
     pub instructions: String,
     pub input: Value,
+    /// The most tokens this reply may have, for a task whose answer is small:
+    /// a model stuck repeating itself is cut off instead of running until the
+    /// timeout, and the cut-off reply is rejected like any other bad one. A
+    /// provider with its own `max_output_tokens` uses the lower of the two.
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +82,13 @@ pub trait LlmProvider {
     fn fingerprint(&self) -> Value;
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion>;
+
+    /// Frees whatever the model holds on the GPU, when the run no longer
+    /// needs it. A *default method*: providers that hold nothing (most of
+    /// them) inherit this no-op and need not write one.
+    fn release(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The reply to [`LlmTask::ExtractClaims`].
@@ -154,7 +182,10 @@ pub struct VerdictDraft {
 /// split into numbered sentences so a quote can be pointed at by number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceText {
-    pub chunk: ChunkId,
+    /// The chunk's position in the request's `sources`, counting from 0. The
+    /// model sees no chunk id: a second kind of hash-shaped id next to the
+    /// claim ids got cited as a claim.
+    pub source: usize,
     /// Title of the chunk's document, for the model's orientation.
     pub title: String,
     pub sentences: Vec<NumberedSentence>,
@@ -165,6 +196,10 @@ pub struct SourceText {
 pub struct NumberedSentence {
     pub sentence: usize,
     pub text: String,
+    /// The quotations inside the sentence (`text::quotations`), in order: a
+    /// [`QuoteRef::part`] counts over these. Left out when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quoted: Vec<String>,
 }
 
 /// A script as returned by [`LlmTask::WriteScript`]. Quotes are *references*
@@ -188,49 +223,129 @@ pub struct DraftTurn {
     pub citations: Vec<ClaimId>,
     #[serde(default)]
     pub quotes: Vec<QuoteRef>,
+    /// Set on the first turn of each beat; the turns after it, up to the
+    /// next mark, belong to the same beat. Only asked for when the script
+    /// will be spoken. The script stage turns the marks into ranges, so the
+    /// model never counts turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat: Option<BeatKind>,
+    #[serde(default, skip_serializing_if = "Pace::is_normal")]
+    pub pace: Pace,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nonverbal: Vec<Nonverbal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_to: Option<usize>,
 }
 
-/// The sentence of a chunk that the turn quotes verbatim. The model counts
+impl DraftTurn {
+    /// A plain turn: normal pace, no sounds, no callback.
+    fn plain(speaker: SpeakerId, text: String, emotion: Emotion) -> Self {
+        Self {
+            speaker,
+            text,
+            emotion,
+            citations: vec![],
+            quotes: vec![],
+            beat: None,
+            pace: Pace::Normal,
+            nonverbal: vec![],
+            callback_to: None,
+        }
+    }
+}
+
+/// The sentence of a source that the turn quotes verbatim. The model counts
 /// sentences far more reliably than bytes; the script stage turns this into a
 /// span and copies the words out of the source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuoteRef {
-    pub chunk: ChunkId,
+    /// [`SourceText::source`] of the quoted chunk.
+    pub source: usize,
     /// Counting from 0, as in [`SourceText`].
     pub sentence: usize,
+    /// Quote only this quotation inside the sentence, counting from 0 over
+    /// [`NumberedSentence::quoted`]; the whole sentence when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<usize>,
 }
 
-/// Runs `request` and checks the reply with `validate` (parse it, resolve its
-/// references, whatever the stage needs). If the reply is rejected, asks once
-/// more with the rejection reason appended to the instructions, then gives up
-/// with [`CoreError::InvalidProviderOutput`]. Transport failures are not
-/// retried here: the provider has its own policy.
+/// The most characters of a rejection reason that are shown to the model or
+/// stored. A reason can quote part of the model's reply (serde names an
+/// unknown variant in full), so it is bounded.
+pub const MAX_REASON_CHARS: usize = 500;
+
+/// `reason`, cut to [`MAX_REASON_CHARS`] with a trailing `…` if it was longer.
+pub fn reason_excerpt(reason: &str) -> String {
+    match reason.char_indices().nth(MAX_REASON_CHARS) {
+        Some((end, _)) => format!("{}…", &reason[..end]),
+        None => reason.to_owned(),
+    }
+}
+
+/// Attempts per request in [`complete_validated`]: one retry.
+pub const DEFAULT_ATTEMPTS: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+
+/// [`complete_validated_with`] with [`DEFAULT_ATTEMPTS`].
 pub fn complete_validated<T>(
     llm: &dyn LlmProvider,
     stage: &'static str,
     request: &CompletionRequest,
     validate: impl Fn(&str) -> std::result::Result<T, String>,
 ) -> Result<T> {
-    let first = llm.complete(request)?;
-    let reason = match validate(&first.text) {
-        Ok(value) => return Ok(value),
-        Err(reason) => reason,
-    };
-    tracing::warn!(stage, %reason, "provider output rejected; asking once more");
+    complete_validated_with(llm, stage, request, DEFAULT_ATTEMPTS, validate)
+}
 
-    let excerpt: String = reason.chars().take(500).collect();
-    let retry = CompletionRequest {
-        instructions: format!(
-            "{}\n\nYour previous reply was rejected: {excerpt}\nReply again with the corrected JSON object only.",
-            request.instructions
-        ),
-        ..request.clone()
-    };
-    let second = llm.complete(&retry)?;
-    validate(&second.text).map_err(|message| CoreError::InvalidProviderOutput {
-        stage,
-        message: format!("{message} (after 2 attempts)"),
-    })
+/// Runs `request` and checks the reply with `validate` (parse it, resolve its
+/// references, whatever the stage needs). While a reply is rejected and
+/// attempts remain, asks again with every rejection so far ([`reason_excerpt`]
+/// of each) appended to the instructions, so a fix for one mistake is less
+/// likely to bring back an earlier one; then gives up with
+/// [`CoreError::InvalidProviderOutput`] naming the last reason. Transport
+/// failures are not retried here: the provider has its own policy.
+pub fn complete_validated_with<T>(
+    llm: &dyn LlmProvider,
+    stage: &'static str,
+    request: &CompletionRequest,
+    attempts: NonZeroUsize,
+    validate: impl Fn(&str) -> std::result::Result<T, String>,
+) -> Result<T> {
+    let mut rejections: Vec<String> = Vec::new();
+    let mut current = request.clone();
+    loop {
+        // A reply cut off at the token limit is a bad reply like any other.
+        let checked = match llm.complete(&current) {
+            Ok(reply) => validate(&reply.text),
+            Err(err) if err.provider_failure() == Some(ProviderFailure::CutOff) => {
+                Err(format!("{err}; reply with a shorter JSON object"))
+            }
+            Err(err) => return Err(err),
+        };
+        let reason = match checked {
+            Ok(value) => return Ok(value),
+            Err(reason) => reason,
+        };
+        rejections.push(reason_excerpt(&reason));
+        if rejections.len() == attempts.get() {
+            return Err(CoreError::InvalidProviderOutput {
+                stage,
+                message: format!("{reason} (after {} attempts)", attempts.get()),
+            });
+        }
+        tracing::warn!(stage, %reason, "provider output rejected; asking again");
+        let listed: Vec<String> = rejections
+            .iter()
+            .enumerate()
+            .map(|(n, r)| format!("{}. {r}", n + 1))
+            .collect();
+        current = CompletionRequest {
+            instructions: format!(
+                "{}\n\nYour previous replies were rejected, for these reasons; avoid all of them:\n{}\nReply again with the corrected JSON object only.",
+                request.instructions,
+                listed.join("\n")
+            ),
+            ..request.clone()
+        };
+    }
 }
 
 /// A deterministic, offline stand-in for a real model.
@@ -264,20 +379,31 @@ impl FakeLlm {
         let sources: Vec<SourceText> = serde_json::from_value(input["sources"].clone())
             .map_err(|err| invalid_input(format!("sources: {err}")))?;
 
-        let host = SpeakerId("host".into());
-        let guest = SpeakerId("guest".into());
-        let cast = vec![
-            Speaker {
-                id: host.clone(),
-                name: "Ada".into(),
-                role: "host".into(),
-            },
-            Speaker {
-                id: guest.clone(),
-                name: "Ben".into(),
-                role: "co-host".into(),
-            },
-        ];
+        // A declared cast is used as given: the first speaker hosts, the
+        // second (or the first again, for a solo show) answers.
+        let declared: Vec<Speaker> = match input.get("cast") {
+            Some(cast) => serde_json::from_value(cast.clone())
+                .map_err(|err| invalid_input(format!("cast: {err}")))?,
+            None => Vec::new(),
+        };
+        let cast = if declared.is_empty() {
+            vec![
+                Speaker {
+                    id: SpeakerId("host".into()),
+                    name: "Ada".into(),
+                    role: "host".into(),
+                },
+                Speaker {
+                    id: SpeakerId("guest".into()),
+                    name: "Ben".into(),
+                    role: "co-host".into(),
+                },
+            ]
+        } else {
+            declared
+        };
+        let host = cast[0].id.clone();
+        let guest = cast.get(1).unwrap_or(&cast[0]).id.clone();
 
         let mut turns = vec![Self::opening(&host, topic, sources.first())];
         for (i, entry) in ledger.iter().enumerate() {
@@ -287,6 +413,11 @@ impl FakeLlm {
                 ClaimStatus::Contested { .. } => ("The sources disagree here", Emotion::Serious),
                 ClaimStatus::Unsupported => continue,
             };
+            let speaker = if i % 2 == 0 {
+                guest.clone()
+            } else {
+                host.clone()
+            };
             // A claim copied from a source sentence can carry its quotation
             // marks, and a turn must not type quotations, so they are dropped.
             let claim: String = entry
@@ -294,29 +425,55 @@ impl FakeLlm {
                 .chars()
                 .filter(|c| !matches!(c, '"' | '\u{201C}' | '\u{201D}'))
                 .collect();
+            let text = match &entry.verdict {
+                Some(verdict) => format!("{lead}: {claim} {}", verdict.explanation),
+                None => format!("{lead}: {claim}"),
+            };
             turns.push(DraftTurn {
-                speaker: if i % 2 == 0 {
-                    guest.clone()
-                } else {
-                    host.clone()
-                },
-                text: match &entry.verdict {
-                    Some(verdict) => format!("{lead}: {claim} {}", verdict.explanation),
-                    None => format!("{lead}: {claim}"),
-                },
-                emotion,
                 citations: vec![entry.id.clone()],
-                quotes: vec![],
+                ..DraftTurn::plain(speaker, text, emotion)
             });
         }
-        turns.push(DraftTurn {
-            speaker: host,
-            text: "That's all for today.".into(),
-            emotion: Emotion::Neutral,
-            citations: vec![],
-            quotes: vec![],
+        turns.push(DraftTurn::plain(
+            host.clone(),
+            "That's all for today.".into(),
+            Emotion::Neutral,
+        ));
+        let mut draft = ScriptDraft { cast, turns };
+        if input.get("audio") == Some(&Value::Bool(true)) {
+            Self::direct_for_audio(&mut draft, &host);
+        }
+        Ok(draft)
+    }
+
+    /// Adds one of each audio direction: beat marks (the opening, the claims
+    /// as banter, the sign-off), a quick reply with the host's "mm-hm" over
+    /// it, and a sign-off that pauses and calls back to the opening.
+    fn direct_for_audio(draft: &mut ScriptDraft, host: &SpeakerId) {
+        let n = draft.turns.len();
+        let opening = &mut draft.turns[0];
+        opening.beat = Some(if opening.quotes.is_empty() {
+            BeatKind::Narration
+        } else {
+            BeatKind::QuoteReading
         });
-        Ok(ScriptDraft { cast, turns })
+        // Turns 1..n-1 are the claims, if the ledger had any usable ones.
+        if n > 2 {
+            let reply = &mut draft.turns[1];
+            reply.beat = Some(BeatKind::Banter);
+            reply.pace = Pace::Quick;
+            reply.nonverbal.push(Nonverbal {
+                kind: NonverbalKind::Backchannel {
+                    text: "Mm-hm.".into(),
+                },
+                by: host.clone(),
+                at: NonverbalAt::Over,
+            });
+        }
+        let sign_off = &mut draft.turns[n - 1];
+        sign_off.beat = Some(BeatKind::Transition);
+        sign_off.pace = Pace::LongPause;
+        sign_off.callback_to = Some(0);
     }
 
     /// Never takes a side: cites the first piece of evidence on each side and
@@ -352,25 +509,21 @@ impl FakeLlm {
         let quote = first_source.and_then(|source| {
             let first = source.sentences.first()?;
             Some(QuoteRef {
-                chunk: source.chunk.clone(),
+                source: source.source,
                 sentence: first.sentence,
+                part: None,
             })
         });
         match quote {
             Some(quote_ref) => DraftTurn {
-                speaker: host.clone(),
-                text: format!("Today: {topic}. It begins with this: {{{{quote:0}}}}"),
-                emotion: Emotion::Curious,
-                citations: vec![],
                 quotes: vec![quote_ref],
+                ..DraftTurn::plain(
+                    host.clone(),
+                    format!("Today: {topic}. It begins with this: {{{{quote:0}}}}"),
+                    Emotion::Curious,
+                )
             },
-            None => DraftTurn {
-                speaker: host.clone(),
-                text: format!("Today: {topic}."),
-                emotion: Emotion::Curious,
-                citations: vec![],
-                quotes: vec![],
-            },
+            None => DraftTurn::plain(host.clone(), format!("Today: {topic}."), Emotion::Curious),
         }
     }
 }
@@ -391,8 +544,14 @@ impl LlmProvider for FakeLlm {
     fn fingerprint(&self) -> Value {
         // Bump when the fake's behaviour changes.
         // 3: the opening turn says `{{quote:0}}` instead of typing the sentence.
-        // 4: answers `AdjudicateClaim`.
-        json!({ "provider": "fake", "version": 5 })
+        // 4: a declared cast in the script request is used.
+        // 5: a script request for audio gets beats, pace, a backchannel and
+        //    a callback.
+        // 6: beats are marked on the turns that begin them.
+        // 7: answers `AdjudicateClaim`; a judged claim's turn adds the
+        //    verdict's explanation, and quotation marks are dropped from claims.
+        // 8: quotes name a source number.
+        json!({ "provider": "fake", "version": 8 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
@@ -410,14 +569,26 @@ impl LlmProvider for FakeLlm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use podling_types::{Chunk, Claim, Document, SourceRef, TextSpan};
+    use podling_types::Claim;
 
     fn request(task: LlmTask, input: Value) -> CompletionRequest {
         CompletionRequest {
             task,
             instructions: String::new(),
             input,
+            max_tokens: None,
         }
+    }
+
+    #[test]
+    fn a_reason_excerpt_is_cut_on_a_character_boundary() {
+        assert_eq!(reason_excerpt("short"), "short");
+        let exact = "é".repeat(MAX_REASON_CHARS);
+        assert_eq!(reason_excerpt(&exact), exact);
+        let long = "é".repeat(MAX_REASON_CHARS + 3);
+        let cut = reason_excerpt(&long);
+        assert_eq!(cut.chars().count(), MAX_REASON_CHARS + 1);
+        assert!(cut.ends_with("é…"));
     }
 
     #[test]
@@ -444,17 +615,9 @@ mod tests {
 
     #[test]
     fn write_script_quotes_the_first_sentence_by_reference() {
-        let source = SourceRef {
-            connector: "t".into(),
-            locator: "a".into(),
-            independence_group: "g".into(),
-        };
-        let doc = Document::new(source, "A", "# Title\n\nA flash was seen. Then a boom.");
-        let chunk = Chunk::from_document(&doc, TextSpan::new(9, doc.text().len()).unwrap(), vec![])
-            .unwrap();
         let ledger = Ledger::from_claims([Claim::new("A flash was seen.")]);
         let sources = json!([{
-            "chunk": chunk.id(),
+            "source": 0,
             "title": "A",
             "sentences": [
                 { "sentence": 0, "text": "A flash was seen." },
@@ -474,8 +637,9 @@ mod tests {
         assert_eq!(
             draft.turns[0].quotes,
             vec![QuoteRef {
-                chunk: chunk.id().clone(),
-                sentence: 0
+                source: 0,
+                sentence: 0,
+                part: None,
             }]
         );
         // The fake points at the sentence and never types it.
@@ -534,7 +698,9 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[0], req);
         assert!(
-            seen[1].instructions.contains("previous reply was rejected"),
+            seen[1]
+                .instructions
+                .contains("previous replies were rejected"),
             "{}",
             seen[1].instructions
         );
@@ -552,6 +718,33 @@ mod tests {
             "{err}"
         );
         assert_eq!(llm.seen.borrow().len(), 2);
+    }
+
+    #[test]
+    fn with_three_attempts_the_third_reply_sees_both_rejections() {
+        let llm = Scripted::new(&["nonsense", "[1]", r#"{"ok":true}"#]);
+        let req = request(LlmTask::WriteScript, json!({}));
+        let three = NonZeroUsize::new(3).unwrap();
+        let value = complete_validated_with(&llm, "s", &req, three, parse_object).unwrap();
+        assert_eq!(value["ok"], true);
+
+        let seen = llm.seen.borrow();
+        assert_eq!(seen.len(), 3);
+        let third = &seen[2].instructions;
+        assert!(third.starts_with(&req.instructions), "{third}");
+        assert!(third.contains("1. expected ident"), "{third}");
+        assert!(third.contains("2. not an object"), "{third}");
+        assert_eq!(seen[2].input, req.input, "only the instructions change");
+    }
+
+    #[test]
+    fn three_attempts_that_all_fail_error_after_exactly_three_calls() {
+        let llm = Scripted::new(&["a", "b", "c", r#"{"ok":true}"#]);
+        let req = request(LlmTask::WriteScript, json!({}));
+        let three = NonZeroUsize::new(3).unwrap();
+        let err = complete_validated_with(&llm, "s", &req, three, parse_object).unwrap_err();
+        assert!(err.to_string().contains("after 3 attempts"), "{err}");
+        assert_eq!(llm.seen.borrow().len(), 3);
     }
 
     #[test]
@@ -579,6 +772,78 @@ mod tests {
         let req = request(LlmTask::ExtractClaims, json!({}));
         let err = complete_validated(&Down, "s", &req, parse_object).unwrap_err();
         assert!(matches!(err, CoreError::Provider { .. }));
+    }
+
+    #[test]
+    fn a_reply_cut_off_at_the_token_limit_is_retried_as_a_rejection() {
+        /// Cut off on the first call, a good object on the second.
+        struct CutOnce(std::cell::RefCell<Vec<CompletionRequest>>);
+        impl LlmProvider for CutOnce {
+            fn id(&self) -> &str {
+                "cut_once"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
+                let mut seen = self.0.borrow_mut();
+                seen.push(request.clone());
+                if seen.len() == 1 {
+                    return Err(CoreError::Provider {
+                        plugin: "cut_once".into(),
+                        kind: ProviderFailure::CutOff,
+                        message: "cut off at the token limit".into(),
+                    });
+                }
+                Ok(Completion {
+                    text: r#"{"ok":true}"#.into(),
+                })
+            }
+        }
+        let llm = CutOnce(Default::default());
+        let req = request(LlmTask::ExtractClaims, json!({}));
+        let value = complete_validated(&llm, "s", &req, parse_object).unwrap();
+        assert_eq!(value["ok"], true);
+        let seen = llm.0.borrow();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[1]
+                .instructions
+                .contains("reply with a shorter JSON object"),
+            "{}",
+            seen[1].instructions
+        );
+    }
+
+    #[test]
+    fn a_reply_cut_off_on_every_attempt_is_invalid_output_not_a_provider_error() {
+        struct AlwaysCut(std::cell::Cell<usize>);
+        impl LlmProvider for AlwaysCut {
+            fn id(&self) -> &str {
+                "always_cut"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+                self.0.set(self.0.get() + 1);
+                Err(CoreError::Provider {
+                    plugin: "always_cut".into(),
+                    kind: ProviderFailure::CutOff,
+                    message: "cut off at the token limit".into(),
+                })
+            }
+        }
+        let llm = AlwaysCut(Default::default());
+        let req = request(LlmTask::ExtractClaims, json!({}));
+        let err = complete_validated(&llm, "s", &req, parse_object).unwrap_err();
+        assert_eq!(llm.0.get(), DEFAULT_ATTEMPTS.get());
+        match err {
+            CoreError::InvalidProviderOutput { message, .. } => {
+                assert!(message.contains("after 2 attempts"), "{message}");
+            }
+            other => panic!("expected InvalidProviderOutput, got {other:?}"),
+        }
     }
 
     #[test]

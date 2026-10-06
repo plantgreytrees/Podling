@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use podling_core::plugin::{
     Completion, CompletionRequest, FakeLlm, LedgerClaim, LlmProvider, LlmTask, SourceText,
 };
-use podling_core::{CoreError, DiskCache, RunReport, pipeline};
+use podling_core::{CoreError, DiskCache, GroundingCounts, RunReport, pipeline};
 use podling_types::{
     Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script, Stance, Verdicts,
 };
@@ -66,13 +66,20 @@ fn first_run_misses_and_second_run_hits_every_stage() {
     assert_eq!(hits(&second), STAGES.map(|id| (id, true)).to_vec());
 }
 
+/// Every artifact a run writes when the episode has no `[tts]`: all but audio.
+fn text_artifacts() -> impl Iterator<Item = podling_types::ArtifactKind> {
+    podling_types::ArtifactKind::ALL
+        .into_iter()
+        .filter(|kind| *kind != podling_types::ArtifactKind::Audio)
+}
+
 #[test]
 fn writes_every_artifact_in_a_versioned_envelope() {
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out");
     pipeline::run(&spec(&fixtures()), &fixtures(), None, &out).unwrap();
 
-    for kind in podling_types::ArtifactKind::ALL {
+    for kind in text_artifacts() {
         let path = out.join(format!("{}.json", kind.as_str()));
         let json: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
@@ -98,9 +105,12 @@ fn no_nli_config_writes_todays_artifacts() {
     pipeline::run(&spec(&fixtures()), &fixtures(), None, &out).unwrap();
 
     let current = format!("\"schema_version\": {},", podling_types::SCHEMA_VERSION);
-    let golden_kinds = podling_types::ArtifactKind::ALL
-        .into_iter()
-        .filter(|kind| *kind != podling_types::ArtifactKind::Verdicts);
+    assert!(
+        !out.join("audio.json").exists(),
+        "an episode without [tts] must not write audio"
+    );
+    let golden_kinds =
+        text_artifacts().filter(|kind| *kind != podling_types::ArtifactKind::Verdicts);
     for kind in golden_kinds {
         let name = format!("{}.json", kind.as_str());
         let golden = fs::read_to_string(fixtures().join("golden").join(&name)).unwrap();
@@ -113,6 +123,30 @@ fn no_nli_config_writes_todays_artifacts() {
     }
     let verdicts: Verdicts = read_body(&out, "verdicts");
     assert!(verdicts.as_slice().is_empty());
+}
+
+/// Phase 5's half of the golden test above: without `[tts]` no audio stage
+/// runs and nothing but the text artifacts is written.
+#[test]
+fn without_tts_no_audio_is_made() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let report = pipeline::run(&spec(&fixtures()), &fixtures(), Some(&cache), &out).unwrap();
+
+    assert_eq!(report.audio, None);
+    assert_eq!(hits(&report), STAGES.map(|id| (id, false)).to_vec());
+    let mut written: Vec<String> = fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    written.sort();
+    let mut expected: Vec<String> = text_artifacts()
+        .map(|kind| format!("{}.json", kind.as_str()))
+        .collect();
+    expected.sort();
+    assert_eq!(written, expected);
+    assert_eq!(cache.stats().unwrap().blobs, 0);
 }
 
 fn read_body<T: serde::de::DeserializeOwned>(out: &Path, kind: &str) -> T {
@@ -310,14 +344,14 @@ impl LlmProvider for Replay {
                 let sources: Vec<SourceText> =
                     serde_json::from_value(request.input["sources"].clone()).unwrap();
                 for source in sources.iter().filter(|s| !s.sentences.is_empty()) {
-                    let id = serde_json::to_value(&source.chunk).unwrap();
+                    // The quotes go too: a source number is a JSON number.
                     script = script.replace(
-                        &format!("{{{{chunk:{}}}}}", source.title),
-                        id.as_str().unwrap(),
+                        &format!("\"{{{{source:{}}}}}\"", source.title),
+                        &source.source.to_string(),
                     );
                 }
                 // `{{quote:N}}` is meant to stay: the script stage fills it in.
-                for unfilled in ["{{claim:", "{{chunk:"] {
+                for unfilled in ["{{claim:", "{{source:"] {
                     assert!(
                         !script.contains(unfilled),
                         "unfilled {unfilled} in {script}"
@@ -497,6 +531,7 @@ fn a_contradicting_source_contests_both_claims() {
             "ingest",
             "chunk",
             "extract_claims",
+            "ground_claims",
             "cluster_claims",
             "score_stances",
             "ledger",
@@ -574,6 +609,142 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
     let report = pipeline::run(&spec(&fixtures()), &fixtures(), None, tmp.path()).unwrap();
     let ids: Vec<&str> = hits(&report).into_iter().map(|(id, _)| id).collect();
     assert_eq!(ids, STAGES);
+}
+
+/// The cache keys of the episode without `[embedding]` and `[nli]`, recorded
+/// on `main` before `ground_claims` existed (commit f12b046). Adding NLI
+/// grounding must not move them. A deliberate bump of one of these stages
+/// (see "The five bump rules" in docs/architecture.md) updates its line here:
+/// Phase 5 bumped `PROMPT_VERSION` (4, then 5, then 6), the fake LLM (4, then
+/// 5, then 6) and `script` (8, then 9, then 10), so the two LLM stages moved;
+/// ledger and analyse, fed the same data, did not. Phase 4 added `adjudicate`
+/// and bumped `PROMPT_VERSION` to 7, the fake LLM to 7 and `script` to 11 (its
+/// input gained the verdicts), so the LLM stages moved again; analyse's key,
+/// a hash of the script it reads, shows the script itself did not change.
+const NO_NLI_KEYS: [(&str, &str); 7] = [
+    (
+        "ingest",
+        "5bbf36eb1044c6336e376993c584a8e9a5377d0e50b6e91614ec17a97869be78",
+    ),
+    (
+        "chunk",
+        "f1e9f15d11dacd5b91550932ea19b8e88c06f0ae7638f18c3a9e582450695d1a",
+    ),
+    (
+        "extract_claims",
+        "404b5da9403d6e27c9ff4b11b1bc8b38f26813fa53c310abe775721782292c36",
+    ),
+    (
+        "ledger",
+        "2a120f337669852c147ed39b55abd8e02f1ba7f56425832d78ae4c399cb3ee28",
+    ),
+    (
+        "adjudicate",
+        "63e7aba9e26e90018988bd4112af3bf17b3665b8d4ee3bef2da2eb2836d9479f",
+    ),
+    (
+        "script",
+        "db0ce133885efec5041e02d4656058624f94d5da17074c53d0380fb7682dd875",
+    ),
+    (
+        "analyse",
+        "038465e90df3d8074e5054c6b0c489c397aaa33443cfe556cf8d76e07ff058b9",
+    ),
+];
+
+fn keys(report: &RunReport) -> Vec<(&str, &str)> {
+    report
+        .stages
+        .iter()
+        .map(|s| (s.id.as_str(), s.key.as_str()))
+        .collect()
+}
+
+#[test]
+fn without_nli_the_cache_keys_are_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let report = pipeline::run(&spec(&fixtures()), &fixtures(), None, tmp.path()).unwrap();
+    assert_eq!(keys(&report), NO_NLI_KEYS);
+    assert_eq!(report.grounding, None);
+
+    // Turning grounding on adds stages after extraction; extraction itself
+    // is keyed exactly as before.
+    let mut grounded = spec(&fixtures());
+    grounded.embedding = Some(toml::from_str("kind = \"fake\"").unwrap());
+    grounded.nli = Some(toml::from_str("kind = \"fake\"").unwrap());
+    let report = pipeline::run(&grounded, &fixtures(), None, &tmp.path().join("nli")).unwrap();
+    let extract = keys(&report)
+        .into_iter()
+        .find(|(id, _)| *id == "extract_claims")
+        .unwrap();
+    assert_eq!(extract, NO_NLI_KEYS[2]);
+    assert!(report.grounding.is_some());
+}
+
+/// `FakeLlm`, except that extraction also states a distortion of the chunk
+/// in its own words: "led" where the source says "joined".
+///
+/// The fixture's heading ("Field notes") shares no word with the claims on
+/// purpose: title words don't count toward the lexical share, so a title of
+/// "Kulik joined the expedition." would leave only "led" to count, and the
+/// lexical check would reject the distortion before NLI ever saw it.
+struct Distorting;
+
+impl LlmProvider for Distorting {
+    fn id(&self) -> &str {
+        "distorting"
+    }
+
+    fn fingerprint(&self) -> Value {
+        json!({ "provider": "distorting" })
+    }
+
+    fn complete(&self, request: &CompletionRequest) -> Result<Completion, CoreError> {
+        match request.task {
+            LlmTask::ExtractClaims => Ok(Completion {
+                text: json!({ "claims": [
+                    { "text": "Kulik led the expedition." },
+                    { "text": "Kulik joined the expedition." },
+                ]})
+                .to_string(),
+            }),
+            _ => FakeLlm.complete(request),
+        }
+    }
+}
+
+fn run_distortion(cache: Option<&DiskCache>, out: &Path) -> RunReport {
+    let base = fixtures().join("distortion");
+    pipeline::run_with_llm(&spec(&base), &Distorting, &base, cache, out).unwrap()
+}
+
+#[test]
+fn nli_drops_a_distortion_the_lexical_check_lets_through() {
+    let tmp = tempfile::tempdir().unwrap();
+    let report = run_distortion(None, tmp.path());
+    assert_eq!(
+        report.grounding,
+        Some(GroundingCounts {
+            dropped_claims: 1,
+            rejected_evidence: 1,
+        })
+    );
+    let ledger: Ledger = read_body(tmp.path(), "ledger");
+    let texts: Vec<&str> = ledger.entries().iter().map(|e| e.claim.text()).collect();
+    assert_eq!(texts, ["Kulik joined the expedition."]);
+    let claims = fs::read_to_string(tmp.path().join("claims.json")).unwrap();
+    assert!(!claims.contains("Kulik led"), "{claims}");
+}
+
+#[test]
+fn the_rejection_count_survives_a_cache_hit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let first = run_distortion(Some(&cache), &tmp.path().join("a"));
+    let second = run_distortion(Some(&cache), &tmp.path().join("b"));
+    assert!(hits(&second).contains(&("ground_claims", true)));
+    assert_eq!(second.grounding, first.grounding);
+    assert_eq!(second.grounding.unwrap().dropped_claims, 1);
 }
 
 // --- The adjudicator ---------------------------------------------------------

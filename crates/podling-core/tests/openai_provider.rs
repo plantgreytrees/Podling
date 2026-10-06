@@ -151,6 +151,7 @@ fn provider(server: &MockServer, key: Option<&str>, timeout_secs: Option<u64>) -
         temperature: Some(0.5),
         timeout_secs,
         max_output_tokens: Some(256),
+        unload_after: false,
     };
     OpenAiCompat::from_config_with_env(&config, |_| key.map(Into::into))
         .unwrap()
@@ -162,6 +163,7 @@ fn request() -> CompletionRequest {
         task: LlmTask::ExtractClaims,
         instructions: "Extract claims.".into(),
         input: json!({ "chunk_text": "Trees fell." }),
+        max_tokens: None,
     }
 }
 
@@ -294,6 +296,51 @@ fn a_body_that_is_not_a_chat_completion_is_a_shape_error() {
     );
     assert!(message.contains("choices[0].message.content"), "{message}");
     assert_eq!(kind, ProviderFailure::Other);
+}
+
+#[test]
+fn a_reply_stopped_at_the_token_limit_is_cut_off() {
+    let body = json!({
+        "choices": [{ "message": { "content": "{\"claims\": [" }, "finish_reason": "length" }],
+        "usage": { "prompt_tokens": 11, "completion_tokens": 2048 },
+    });
+    let server = MockServer::start(vec![Reply::status(200, body.to_string())]);
+    let (kind, message) = provider_error(
+        provider(&server, None, None)
+            .complete(&request())
+            .unwrap_err(),
+    );
+    assert_eq!(kind, ProviderFailure::CutOff);
+    // `provider()` sets llm.max_output_tokens = 256 and `request()` no cap.
+    assert!(
+        message.contains("llm.max_output_tokens = 256 (2048 generated)"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_reply_stopped_at_the_stage_cap_names_the_stage() {
+    let body = json!({
+        "choices": [{ "message": { "content": "{\"verdict\": " }, "finish_reason": "length" }],
+        "usage": { "prompt_tokens": 11, "completion_tokens": 128 },
+    });
+    let server = MockServer::start(vec![Reply::status(200, body.to_string())]);
+    let request = CompletionRequest {
+        max_tokens: Some(128),
+        ..request()
+    };
+    let (kind, message) = provider_error(
+        provider(&server, None, None)
+            .complete(&request)
+            .unwrap_err(),
+    );
+    assert_eq!(kind, ProviderFailure::CutOff);
+    assert!(
+        message.contains("this stage's cap of 128 tokens"),
+        "{message}"
+    );
+    assert!(!message.contains("max_output_tokens"), "{message}");
+    assert_eq!(server.request(0).body["max_tokens"], 128);
 }
 
 #[test]

@@ -27,6 +27,13 @@ pub trait Stage {
     }
 
     fn run(&self, input: &Self::Input) -> Result<Self::Output>;
+
+    /// Whether a cached output can still be used. Defaults to yes; a stage
+    /// whose output points at something stored elsewhere (an audio blob)
+    /// says no when that has gone, and the stage runs again.
+    fn is_reusable(&self, _output: &Self::Output) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +50,26 @@ pub struct RunReport {
     pub stages: Vec<StageRecord>,
     /// Number of `Error` findings in the analysis report.
     pub error_findings: usize,
+    /// What `ground_claims` dropped; `None` when it didn't run (no
+    /// `[embedding]` and `[nli]`). Filled in on a cache hit too.
+    ///
+    /// `#[serde(default)]` lets a report serialised before this field existed
+    /// still deserialise: a missing field becomes `None` instead of an error.
+    #[serde(default)]
+    pub grounding: Option<GroundingCounts>,
+    /// The episode's audio file; `None` without `[tts]`.
+    #[serde(default)]
+    pub audio: Option<std::path::PathBuf>,
+}
+
+/// Counts from the `ground_claims` stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GroundingCounts {
+    /// Claims dropped because no chunk they came from entails them.
+    pub dropped_claims: usize,
+    /// Pieces of extraction evidence dropped, including those of claims that
+    /// kept other evidence.
+    pub rejected_evidence: usize,
 }
 
 /// Runs `stage`, reusing a cached output when one exists. With `cache` set to
@@ -66,6 +93,13 @@ pub fn cached<S: Stage>(
         Some(cache) => cache.get::<S::Output>(&key).map_err(wrap)?,
         None => None,
     };
+    let hit = hit.filter(|output| {
+        let usable = stage.is_reusable(output);
+        if !usable {
+            tracing::warn!(key = %key, "cached output refers to data that is gone; running again");
+        }
+        usable
+    });
     let cache_hit = hit.is_some();
     let output = match hit {
         Some(output) => output,
@@ -163,5 +197,39 @@ mod tests {
         cached(&stage, &"x".to_string(), None, &mut report).unwrap();
         cached(&stage, &"x".to_string(), None, &mut report).unwrap();
         assert_eq!(stage.runs.get(), 2);
+    }
+
+    /// Reuses nothing: every cached output is stale.
+    struct Picky {
+        runs: Cell<u32>,
+    }
+
+    impl Stage for Picky {
+        const ID: &'static str = "picky";
+        const VERSION: u32 = 1;
+        type Input = String;
+        type Output = usize;
+
+        fn run(&self, input: &String) -> Result<usize> {
+            self.runs.set(self.runs.get() + 1);
+            Ok(input.len())
+        }
+
+        fn is_reusable(&self, _output: &usize) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn an_unusable_cached_output_is_a_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = DiskCache::new(dir.path());
+        let stage = Picky { runs: Cell::new(0) };
+        let mut report = RunReport::default();
+        for _ in 0..2 {
+            cached(&stage, &"x".to_string(), Some(&cache), &mut report).unwrap();
+        }
+        assert_eq!(stage.runs.get(), 2);
+        assert!(report.stages.iter().all(|s| !s.cache_hit));
     }
 }

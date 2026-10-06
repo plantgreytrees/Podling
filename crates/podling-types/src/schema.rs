@@ -4,6 +4,7 @@
 use schemars::{JsonSchema, Schema, schema_for};
 
 use crate::analysis::AnalysisReport;
+use crate::audio::AudioManifest;
 use crate::claim::Claim;
 use crate::document::{Chunk, Document};
 use crate::envelope::{ArtifactKind, Envelope};
@@ -34,5 +35,6 @@ pub fn of(kind: ArtifactKind) -> Schema {
         ArtifactKind::Verdicts => enveloped::<Verdicts>(),
         ArtifactKind::Script => enveloped::<Script>(),
         ArtifactKind::Analysis => enveloped::<AnalysisReport>(),
+        ArtifactKind::Audio => enveloped::<AudioManifest>(),
     }
 }

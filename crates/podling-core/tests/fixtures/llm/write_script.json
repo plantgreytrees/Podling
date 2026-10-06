@@ -9,7 +9,7 @@
       "text": "Today: the 1908 Tunguska explosion. One witness at the trading post put it this way: {{quote:0}}",
       "emotion": "curious",
       "citations": ["{{claim:At breakfast the sky split in two.}}"],
-      "quotes": [{ "chunk": "{{chunk:Eyewitness account}}", "sentence": 0 }]
+      "quotes": [{ "source": "{{source:Eyewitness account}}", "sentence": 0 }]
     },
     {
       "speaker": "guest",
@@ -23,7 +23,7 @@
       "text": "One source, the expedition, reports that no impact crater was found: {{quote:0}}",
       "emotion": "curious",
       "citations": ["{{claim:No impact crater was found.}}"],
-      "quotes": [{ "chunk": "{{chunk:The 1927 expedition}}", "sentence": 2 }]
+      "quotes": [{ "source": "{{source:The 1927 expedition}}", "sentence": 2 }]
     }
   ]
 }

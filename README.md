@@ -12,22 +12,35 @@ never text the model typed.
 
 ## Status
 
-This is **Phase 3: embeddings and NLI in the claim ledger**. The pipeline runs end
-to end, either offline with a deterministic fake LLM or with any OpenAI-compatible
-model (Ollama, llama.cpp, vLLM, LM Studio, OpenAI):
+This is **Phase 5: episode audio**, with **Phase 4's adjudicator for Contested
+claims**. The pipeline runs end to end, either offline with a deterministic fake
+LLM or with any OpenAI-compatible model (Ollama, llama.cpp, vLLM, LM Studio,
+OpenAI), and, with `[tts]`, ends in a spoken `episode.wav`:
 
 ```
-sources → documents → chunks → claims → [cluster → stances] → ledger → script → analysis
+sources → documents → chunks → claims → [ground → cluster → stances] → ledger → verdicts → script → analysis
+        → [chunks of speech → synthesise → check with speech recognition → assemble]
 ```
 
 With the optional `[embedding]` and `[nli]` sections, the same fact worded differently
 by two independent sources becomes one Corroborated claim, and a source that
-contradicts a claim makes it Contested. A local NLI model decides both, not exact text
-matching (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)).
+contradicts a claim makes it Contested. Before that, a claim is kept only where its
+own source passage entails it, so a distortion made from the passage's own words
+("Kulik led the expedition" when he joined it) is dropped and counted. A local NLI
+model decides all three, not exact text matching (see
+[Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)).
+When two sources disagree, an LLM adjudicator says which side the sources favour, or
+that it is unresolved, and the script explains the disagreement from that (see
+[Explaining disagreements](#explaining-disagreements)).
+
+With `[tts]`, a local text-to-speech model speaks the script in voices cloned from
+short reference clips, Whisper checks every chunk against the script (every quote
+word for word), and the episode is assembled at podcast loudness (see
+[Episode audio](#episode-audio)).
 
 Every stage is cached, and every artifact is a versioned JSON file with an exported JSON
-Schema. Text-to-speech, PDF ingestion, MCP source connectors and an LLM adjudicator for
-Contested claims come in later phases. See [docs/architecture.md](docs/architecture.md).
+Schema. PDF ingestion and MCP source connectors come in later phases. See
+[docs/architecture.md](docs/architecture.md).
 
 ## Prerequisites
 
@@ -52,13 +65,13 @@ cargo run -p podling-cli -- run --episode examples/tunguska/episode.toml
 ```
 
 It prints one row per stage showing whether the cache was hit, then writes
-`episode`, `documents`, `chunks`, `claims`, `ledger`, `script` and
-`analysis` JSON files to `.podling/out`. Run it again and every stage is a
+`episode`, `documents`, `chunks`, `claims`, `ledger`, `verdicts`, `script`
+and `analysis` JSON files to `.podling/out`. Run it again and every stage is a
 cache hit.
 
 | Command | What it does |
 |---|---|
-| `podling run --episode <file.toml> [--out <dir>] [--no-cache]` | Run an episode. Exits non-zero if an analyser reports an error. |
+| `podling run --episode <file.toml> [--out <dir>] [--no-cache] [--sidecars <file>]` | Run an episode. Exits non-zero if an analyser reports an error. `--sidecars` overrides where TTS worker profiles are read from. |
 | `podling schema export --out <dir>` | Write `<kind>.schema.json` for every artifact kind. |
 | `podling cache stats` / `podling cache clear` | Inspect or empty the stage cache. |
 
@@ -130,9 +143,11 @@ export OPENAI_API_KEY=...   # never put the key in the episode file
 | `api_key_env` | Optional. The *name* of the variable holding the key. If it is named but unset or empty, the run stops before any request. |
 | `temperature`, `max_output_tokens` | Optional. The server's defaults apply when left out. |
 | `timeout_secs` | Optional, default 120. |
+| `unload_after` | Optional, default `false`. Ollama only: free the model as soon as its last stage is done, so the GPU is empty for text-to-speech. |
 
 **Privacy.** With a hosted provider, the text of your sources (chunk by chunk,
-then the claim ledger and numbered source sentences for the script) is sent to
+then the passages behind each Contested claim, then the claim ledger and numbered
+source sentences for the script) is sent to
 that provider. With a local server on `localhost` nothing leaves your machine, so
 that is the recommended default. The key is sent only as an `Authorization:
 Bearer` header. It is never written to the cache, the artifacts, a log line or an error
@@ -142,8 +157,9 @@ message. Cached outputs derived from your sources are stored under `--cache-dir`
 writes `{{quote:N}}` in a turn's text where each one goes. Podling copies the words
 from the source and puts them there, so the model never types a quotation. A citation
 of a claim that is not in the ledger, a quote of a sentence that doesn't exist, a
-placeholder with no quote behind it, or quoted words the model typed itself, is rejected. The model gets one
-retry with the reason, and then the run fails with an error naming the stage. A
+placeholder with no quote behind it, or quoted words the model typed itself, is rejected. The model is
+asked again with the reasons (twice for the script, once for every other stage), and
+then the run fails with an error naming the stage. A
 small local model may produce invalid JSON often, so pick an instruct model that
 handles JSON well. A rate-limited (429) or failing (5xx) server is retried twice.
 
@@ -188,7 +204,7 @@ decided it. The claim's status still comes from fixed rules, never from an LLM.
 | Key | Meaning |
 |---|---|
 | `embedding.kind` | `open_ai_compat` (any server with `POST /v1/embeddings`) or `fake` (offline, for tests). |
-| `embedding.base_url`, `embedding.model`, `embedding.api_key_env`, `embedding.timeout_secs` | As for `[llm]`. |
+| `embedding.base_url`, `embedding.model`, `embedding.api_key_env`, `embedding.timeout_secs`, `embedding.unload_after` | As for `[llm]`. |
 | `nli.kind` | `cross_encoder` or `fake`. |
 | `nli.model_dir` | Directory with `config.json`, `tokenizer.json` and `model.safetensors`. |
 
@@ -215,3 +231,84 @@ To run the test that talks to a real server (it is `#[ignore]`d, so a normal
 PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b \
   cargo test -p podling-cli -- --ignored live
 ```
+
+### Explaining disagreements
+
+[`examples/titanic`](examples/titanic) has two sources that really disagree: the 1912
+US Senate and British inquiries into the Titanic give different times for the
+iceberg warning and different numbers of survivors (see
+[its SOURCES.md](examples/titanic/SOURCES.md)). With grounding on, those claims are
+Contested, and the `adjudicate` stage asks the LLM about each one:
+
+```sh
+cargo run -p podling-cli -- run --episode examples/titanic/episode-ollama.toml
+```
+
+`verdicts.json` holds one verdict per Contested claim: which side the sources favour
+(`supporting`, `contradicting` or `unresolved`), a short explanation without
+quotations, and the evidence it rests on. The script then gives both accounts and
+explains the disagreement, without stating either side as settled. The verdict never
+changes the claim's status, and it quotes nothing.
+
+It costs one LLM request per Contested claim, plus one retry if the reply is
+rejected; with nothing Contested (always the case without `[nli]`) there is none. A
+reply still rejected after the retry becomes an `unresolved` verdict that records why
+(`fallback`), so a weak model can't make the adjudicator take a side.
+
+### Episode audio
+
+`examples/tunguska/episode-tts.toml` goes on from the script to a spoken episode,
+entirely on one machine; an 8 GB GPU is enough because only one model is on it at
+a time. Its header lists what to fetch first. In short:
+
+1. **The TTS worker.** A small Python program that holds the voice model
+   (Qwen3-TTS 1.7B, Apache-2.0); install it as
+   [`sidecars/tts/README.md`](sidecars/tts/README.md) says.
+2. **A worker profile** in `~/.config/podling/sidecars.toml` (or pass
+   `--sidecars <file>`). The episode file only *names* a profile; it can never
+   choose a program, so a shared episode file cannot start a process:
+
+   ```toml
+   [sidecars.qwen]
+   program = "/home/you/.local/bin/uv"     # argv, never a shell string
+   args = ["run", "--project", "/path/to/Podling/sidecars/tts", "--extra", "qwen",
+           "podling-tts", "--backend", "qwen"]
+   ```
+3. **Whisper weights** (`openai/whisper-base.en`, MIT) for the checks:
+   `hf download openai/whisper-base.en --local-dir examples/tunguska/models/whisper-base.en`.
+4. **Voice clips** with a licence that allows your use; see
+   [`examples/tunguska/voices/README.md`](examples/tunguska/voices/README.md).
+5. **`ffmpeg`** on `PATH`, only for an Opus or MP3 copy.
+
+```sh
+cargo run --release -p podling-cli -- run --episode examples/tunguska/episode-tts.toml
+```
+
+The run writes `episode.wav` (48 kHz, −16 LUFS, peaks at most −1 dBTP), the optional
+`episode.opus`/`episode.mp3`, and `audio.json`, which lists every chunk with its seed,
+take and check result, and every voice with its licence. Each chunk is cached on its
+own, so editing one turn re-synthesises one chunk. A chunk that still fails its check
+after `max_retries` becomes an `Error` finding in `analysis.json`; the episode is still
+assembled.
+
+| Key | Meaning |
+|---|---|
+| `[[cast]]` `id`, `name`, `role` | One entry per speaker. With a cast, the script may use only these speaker ids. |
+| `[[cast]]` `voice = { reference, transcript, licence }` | The reference clip (WAV, relative to the episode file), exactly what is said in it, and its SPDX licence (e.g. `CC0-1.0`, `CC-BY-4.0`). All three are required; the licence is copied into `audio.json`. |
+| `tts.kind` | `sidecar` (a worker process) or `fake` (sine tones, offline, for tests). Needs `[asr]` and `[[cast]]`. |
+| `tts.sidecar` | The profile name in `sidecars.toml`. |
+| `tts.takes` | Default 2, at least 1. Takes per banter beat; the best one that passes is kept. Other beats get one. |
+| `tts.max_retries` | Default 2. Further attempts, each with a new seed, for a chunk that fails its check. |
+| `asr.kind` | `whisper` (on the CPU) or `fake`. |
+| `asr.model_dir` | Directory with Whisper's `config.json`, `tokenizer.json`, `model.safetensors` and `preprocessor_config.json`. |
+| `asr.max_wer_pm` | Default 80 (8%). The highest word error rate, in thousandths, a chunk may have and pass. Every quote must also be heard word for word. |
+| `mix.gaps_ms` | Optional silences in ms before a turn, by its pace: `quick` 120, `normal` 300, `beat` 600, `long_pause` 1000, and `interrupt` 150 (an overlap, crossfaded). Set any of them, e.g. `gaps_ms = { beat = 700 }`. `[mix]` needs `[tts]`. |
+| `mix.encode` | Optional `opus` (64 kb/s) or `mp3`: a copy of `episode.wav` made with `ffmpeg`. |
+
+**Licences.** A cloned voice carries its clip's terms, and many voice datasets are
+non-commercial (Kyutai's Expresso and EARS voices are CC-BY-NC), so check each clip
+before you use it. The worker, its libraries and the default weights are
+Apache-2.0, MIT or BSD; the list is in `sidecars/tts/README.md`.
+
+**Privacy.** The voice model and Whisper run locally; no audio or text leaves the
+machine. The worker listens on `127.0.0.1` only and is stopped when synthesis ends.

@@ -74,6 +74,11 @@ pub struct ExtractClaims<'a> {
     pub llm: &'a dyn LlmProvider,
 }
 
+/// The most tokens one chunk's claims reply may have: dozens of short claims.
+/// Live, llama3.1:8b in JSON mode once kept writing past 23,000 tokens; cut
+/// off, the reply fails to parse and takes the usual retry.
+pub const MAX_CLAIMS_TOKENS: u32 = 2048;
+
 impl Stage for ExtractClaims<'_> {
     const ID: &'static str = "extract_claims";
     // 2: the reply is a `{ "claims": [...] }` object, and a rejected reply is
@@ -81,7 +86,8 @@ impl Stage for ExtractClaims<'_> {
     // 3: a claim the chunk doesn't state (`is_grounded`) is a rejected reply.
     // 4: grounding also sees the document title and the chunk's heading path.
     // 5: title and heading words name things but don't count toward the share.
-    const VERSION: u32 = 5;
+    // 6: a reply is capped at `MAX_CLAIMS_TOKENS`.
+    const VERSION: u32 = 6;
     type Input = ClaimInput;
     type Output = Vec<Claim>;
 
@@ -106,6 +112,7 @@ impl Stage for ExtractClaims<'_> {
                 task: LlmTask::ExtractClaims,
                 instructions: INSTRUCTIONS.to_owned(),
                 input: json!({ "chunk_text": chunk.text() }),
+                max_tokens: Some(MAX_CLAIMS_TOKENS),
             };
             let names: Vec<&str> = input
                 .titles
@@ -276,6 +283,7 @@ mod tests {
 
         let requests = llm.0.borrow();
         assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].max_tokens, Some(MAX_CLAIMS_TOKENS));
         assert!(!requests[0].instructions.contains(INJECTION));
         assert!(requests[0].instructions.contains("untrusted data"));
         assert_eq!(

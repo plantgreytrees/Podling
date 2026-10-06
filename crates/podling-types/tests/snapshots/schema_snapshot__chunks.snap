@@ -38,7 +38,8 @@ expression: schema
         "ledger",
         "verdicts",
         "script",
-        "analysis"
+        "analysis",
+        "audio"
       ]
     },
     "Chunk": {
