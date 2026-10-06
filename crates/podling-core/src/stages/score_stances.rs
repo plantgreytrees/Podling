@@ -64,8 +64,11 @@ pub struct ScoreStances<'a> {
 impl Stage for ScoreStances<'_> {
     const ID: &'static str = "score_stances";
     // 3: a number-against-number contradiction needs the premise's number to
-    // share the claim's subject (`numbers_share_the_subject`).
-    const VERSION: u32 = 3;
+    // share the claim's subject.
+    // 4: only a premise naming the subject in a numberless sentence is
+    // refused; a reworded subject keeps the model's call
+    // (`number_is_about_the_subject`).
+    const VERSION: u32 = 4;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -236,7 +239,7 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
         Some(Stance::Supports)
     } else if evidence.contradiction.get() >= CONTRADICT_PM
         && evidence.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
-        && numbers_share_the_subject(evidence.claim, evidence.premise)
+        && number_is_about_the_subject(evidence.claim, evidence.premise)
     {
         Some(Stance::Contradicts)
     } else {
@@ -244,15 +247,17 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
     }
 }
 
-/// When the claim and the premise both state a number, whether some premise
-/// sentence holding a number shares a word (not a number) with the claim.
-/// Without one, the premise's number is about something else: in "The
-/// explosion was heard far away. Kulik's expedition reached the site in
+/// When the claim and the premise both state a number, false if the premise
+/// names the claim's subject (shares a word that isn't a number) only in
+/// sentences without a number: its number is then about something else. In
+/// "The explosion was heard far away. Kulik's expedition reached the site in
 /// 1927." against "The explosion happened in June 1908.", the model reads
 /// 1927 as a contradicting date, but it dates the expedition, not the
-/// explosion. True when either text has no number, so the rule only judges
+/// explosion. A premise that shares no word with the claim at all ("The
+/// blast occurred in 1907.") is reworded, not off-subject, so the model's
+/// call stands. True when either text has no number, so the rule only judges
 /// number-against-number contradictions.
-fn numbers_share_the_subject(claim: &str, premise: &str) -> bool {
+fn number_is_about_the_subject(claim: &str, premise: &str) -> bool {
     if numbers(claim).is_empty() || numbers(premise).is_empty() {
         return true;
     }
@@ -263,10 +268,12 @@ fn numbers_share_the_subject(claim: &str, premise: &str) -> bool {
             .collect()
     };
     let claim_subject = subject(claim);
-    sentences(premise).into_iter().any(|range| {
-        let sentence = &premise[range];
-        !numbers(sentence).is_empty() && !subject(sentence).is_disjoint(&claim_subject)
-    })
+    let (with_number, without_number): (Vec<_>, Vec<_>) = sentences(premise)
+        .into_iter()
+        .map(|range| &premise[range])
+        .partition(|sentence| !numbers(sentence).is_empty());
+    let names_subject = |sentence: &&str| !subject(sentence).is_disjoint(&claim_subject);
+    with_number.iter().any(names_subject) || !without_number.iter().any(names_subject)
 }
 
 impl Judged {
@@ -520,6 +527,21 @@ mod tests {
         // Without a number in the premise the gate doesn't apply.
         let no_number = "Kulik's expedition found no crater.";
         assert_eq!(decide(&evidence(no_number)), Some(Stance::Contradicts));
+        // A reworded subject shares no word at all: the model's call stands.
+        let reworded = "Witnesses heard thunder. The blast occurred in 1907.";
+        assert_eq!(decide(&evidence(reworded)), Some(Stance::Contradicts));
+    }
+
+    #[test]
+    fn a_claim_without_a_number_skips_the_subject_rule() {
+        let evidence = StanceEvidence {
+            claim: "No impact crater was found at the site.",
+            premise: "The explosion was heard far away. Kulik reached the site in 1927.",
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        assert_eq!(decide(&evidence), Some(Stance::Contradicts));
     }
 
     #[test]

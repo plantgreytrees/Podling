@@ -9,375 +9,514 @@
   "pairs": [
     {
       "id": "s01",
+      "text_hash": "10692ef869ace92c582efe9320ed58ca97b7085296f834632cd063dd07e703e9",
       "similarity_pm": 985,
       "entailment_pm": 998,
       "contradiction_pm": 0
     },
     {
       "id": "s02",
+      "text_hash": "e9ad6e2146b49c16a4736dafa9e08472407ffdb77ea70f3517428a4a57183f89",
       "similarity_pm": 881,
       "entailment_pm": 997,
       "contradiction_pm": 0
     },
     {
       "id": "s03",
+      "text_hash": "21135d2038acb2f9358e012ab2e8e1ca6e3ef6afa6d740b8747f0f81e4d729fe",
       "similarity_pm": 873,
       "entailment_pm": 996,
       "contradiction_pm": 0
     },
     {
       "id": "s04",
+      "text_hash": "5e8eb6ab49f391ab588ad8128649206af0b9193fe89796d9f2b55b09952fa205",
       "similarity_pm": 870,
       "entailment_pm": 1,
       "contradiction_pm": 0
     },
     {
       "id": "s05",
+      "text_hash": "dd7837e6058864369a877fbeecbabe3ac0e5df5ea3133538f802472cd9d09150",
       "similarity_pm": 657,
       "entailment_pm": 9,
       "contradiction_pm": 0
     },
     {
       "id": "s06",
+      "text_hash": "fcea92979ddd631d2eadc0ece28e94a433a1d9c0447c1fadfc3035add529d3c4",
       "similarity_pm": 807,
       "entailment_pm": 14,
       "contradiction_pm": 1
     },
     {
       "id": "s07",
+      "text_hash": "ace13fdf162bb52d43a6229b4bf323ab9ea8b4a8dce9c91feedc84f41b2f6a0c",
       "similarity_pm": 883,
       "entailment_pm": 991,
       "contradiction_pm": 0
     },
     {
       "id": "s08",
+      "text_hash": "3e478ed812bf5dc8b7a920913dec880a7c3b4216358eec59de919ec5bfa543b1",
       "similarity_pm": 793,
       "entailment_pm": 964,
       "contradiction_pm": 0
     },
     {
       "id": "s09",
+      "text_hash": "a96a2b512acdfcd203135e3689b7e75b10e16d99470b560a5e3d3bdbbbbc2192",
       "similarity_pm": 827,
       "entailment_pm": 985,
       "contradiction_pm": 1
     },
     {
       "id": "s10",
+      "text_hash": "d2dbfddde5a71b93992005d68e3571ba406c81a6ff8d86a37a1e0d9919c5437f",
       "similarity_pm": 796,
       "entailment_pm": 997,
       "contradiction_pm": 0
     },
     {
       "id": "s11",
+      "text_hash": "0604888276a2da65a7fa40cd775b0b54abdf79d7704f300b4925ad06e098899c",
       "similarity_pm": 793,
       "entailment_pm": 998,
       "contradiction_pm": 0
     },
     {
       "id": "s12",
+      "text_hash": "4cdbfd0eb6fdba09d7ff9db4fda6fba8d700acafcbcdb675a1c0d6860dbf87e3",
       "similarity_pm": 812,
       "entailment_pm": 1,
       "contradiction_pm": 0
     },
     {
       "id": "s13",
+      "text_hash": "97add76e9eb7c4c91bac7637eaab71aef633c191b1065219cf9b6dcc40c028d5",
       "similarity_pm": 849,
       "entailment_pm": 998,
       "contradiction_pm": 0
     },
     {
       "id": "s14",
+      "text_hash": "8dab9df318fa554c4c99d5c9d5a5f1c16d0cd6f97e8c881a05977877bd860c55",
       "similarity_pm": 921,
       "entailment_pm": 997,
       "contradiction_pm": 0
     },
     {
       "id": "s15",
+      "text_hash": "8c66e2a14feac11abc68f15f29e7af05a6b91ae0404f85c74a7470d964e9a5f5",
       "similarity_pm": 690,
       "entailment_pm": 973,
       "contradiction_pm": 1
     },
     {
       "id": "s16",
+      "text_hash": "c7469962408b624794a05c8467c018fabf14a704391c78fef75eb1103abd3867",
       "similarity_pm": 801,
       "entailment_pm": 1,
       "contradiction_pm": 0
     },
     {
       "id": "c01",
+      "text_hash": "bcca723c3fda98b4b5e016a4d848fb3cd20383416f74011128bc929cd9d77364",
       "similarity_pm": 936,
       "entailment_pm": 0,
       "contradiction_pm": 998
     },
     {
       "id": "c02",
+      "text_hash": "e7a0c58e889ede185aeae57b994cfdf25340874c3533c16a0c1fd9ff1aa4d4be",
       "similarity_pm": 965,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c03",
+      "text_hash": "6708d13850fea92eb2bca180db6143c79cb279c89a11cbe4c08a9a84a76ab442",
       "similarity_pm": 969,
       "entailment_pm": 0,
       "contradiction_pm": 999
     },
     {
       "id": "c04",
+      "text_hash": "889a86504e400ea13292610b2806396cdf16809a53dfa66b8ac0c319d6ee4f22",
       "similarity_pm": 663,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c05",
+      "text_hash": "925f4037b44e7b9d08d73f45482b677eb1aeb51505d4db27ec847140a143bd51",
       "similarity_pm": 977,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c06",
+      "text_hash": "925ce639d49691cfedf2bcf517f5208308c545df420677c222d4652ad9db10fa",
       "similarity_pm": 846,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c07",
+      "text_hash": "dedb3279f3ca1bdd2518a7067c3f694752fc4058e2bd53ea50b1c8795d221bec",
       "similarity_pm": 936,
       "entailment_pm": 0,
       "contradiction_pm": 999
     },
     {
       "id": "c08",
+      "text_hash": "b77f65bab5fe095d343d74eab803021112f9cfd778909faf633c53f08f9bb407",
       "similarity_pm": 725,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c09",
+      "text_hash": "713c058a52a5f9366fa8a74f89457cb4d504a7536118e151e983960564ad24cf",
       "similarity_pm": 732,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c10",
+      "text_hash": "0225e354ac520152571d1ccf16ebfa77428050bd6b6b6e2387783a5fbf949073",
       "similarity_pm": 987,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c11",
+      "text_hash": "a1af66055cffc76055b4df721975fe4ce4c59ecc55bcb9fce8386cb3568c41ab",
       "similarity_pm": 927,
       "entailment_pm": 0,
       "contradiction_pm": 999
     },
     {
       "id": "c12",
+      "text_hash": "f92f747891f4b9de46ede839acbd9bd82fc1beb07148d5ba573246df4e72a827",
       "similarity_pm": 893,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c13",
+      "text_hash": "2585db4339678aba75209412d6e4d591fa87915bd98f0f329fb6c774b654962c",
       "similarity_pm": 899,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "c14",
+      "text_hash": "255f6e75b527557f5e5ac1f4821957427613432bbae45aee0dad7255963c4a66",
       "similarity_pm": 892,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "n01",
+      "text_hash": "469dd1f271abd586197605c37cb1ec773f4841972574fe768ba491367b4de7c6",
       "similarity_pm": 442,
       "entailment_pm": 0,
       "contradiction_pm": 4
     },
     {
       "id": "n02",
+      "text_hash": "8c3d6b9c79336b849f295b13e429900b75ca88eba7488738df845c244bb1c9dd",
       "similarity_pm": 442,
       "entailment_pm": 0,
       "contradiction_pm": 466
     },
     {
       "id": "n03",
+      "text_hash": "c04dabb5eaa520264ac47e720c57b83a8acec7313b922bd79f6f71e99c0ba287",
       "similarity_pm": 625,
       "entailment_pm": 0,
       "contradiction_pm": 0
     },
     {
       "id": "n04",
+      "text_hash": "3b09847823ef7a03a03e3d85f3c69af515982d15d4f85cfd6db8bc2637fce4ba",
       "similarity_pm": 439,
       "entailment_pm": 0,
       "contradiction_pm": 0
     },
     {
       "id": "n05",
+      "text_hash": "28e4d7449588a9f2a564beda7a7fa0fe3ce331a1960052e8395ea54edceeae56",
       "similarity_pm": 603,
       "entailment_pm": 0,
       "contradiction_pm": 3
     },
     {
       "id": "n06",
+      "text_hash": "9cae2ea2486df6014d6d67b5fbdb349b8da63a62c2f3578b1a9cb8d12c02cbd5",
       "similarity_pm": 489,
       "entailment_pm": 0,
       "contradiction_pm": 980
     },
     {
       "id": "n07",
+      "text_hash": "33cb0ed515f27568f4bb3cf79dd4227b045404b6a5001e6a359555aca9dfcbf3",
       "similarity_pm": 526,
       "entailment_pm": 1,
       "contradiction_pm": 0
     },
     {
       "id": "n08",
+      "text_hash": "e88b8c0d47686cc940a8ba4fafc914ee681e669aae21ae3149d2256b97291a77",
       "similarity_pm": 556,
       "entailment_pm": 0,
       "contradiction_pm": 998
     },
     {
       "id": "n09",
+      "text_hash": "4b979843851e600be705c0f26c5467f71443753b5957f660e1601892495bf930",
       "similarity_pm": 666,
       "entailment_pm": 0,
       "contradiction_pm": 6
     },
     {
       "id": "n10",
+      "text_hash": "8bcf599e36d53d55d37f6a94fcc5880de797755dadcd2b74a70edb295ff0de97",
       "similarity_pm": 694,
       "entailment_pm": 0,
       "contradiction_pm": 0
     },
     {
       "id": "n11",
+      "text_hash": "edf22cca6c83b12f0ee0eb21710fa9d5468e9a7659faa378472f628ff11f18cb",
       "similarity_pm": 655,
       "entailment_pm": 2,
       "contradiction_pm": 4
     },
     {
       "id": "n12",
+      "text_hash": "f2a9d5f9010ca03ee014075014647e1635df9b85e3c428201e3f2647f84dcb11",
       "similarity_pm": 490,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "n13",
+      "text_hash": "9be455d365f5f4c7e8353ba3b863dfddb18dece3922e83c140755c2f3eebbf91",
       "similarity_pm": 767,
       "entailment_pm": 0,
       "contradiction_pm": 4
     },
     {
       "id": "n14",
+      "text_hash": "27452551b32959771e3fd3b0d4969bf5d5f77c3ba969f2fb5c6265806bffe027",
       "similarity_pm": 596,
       "entailment_pm": 0,
       "contradiction_pm": 16
     },
     {
       "id": "n15",
+      "text_hash": "36b8d164059315a44e72b64fcb3bc3840604bb851d5c5bc0db2f6896cda32841",
       "similarity_pm": 663,
       "entailment_pm": 0,
       "contradiction_pm": 2
     },
     {
       "id": "n16",
+      "text_hash": "8892ab441899c7bb6168a229cb7a39f41201491fc9d5b5218434dc63bb73575f",
       "similarity_pm": 594,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "n17",
+      "text_hash": "92002f317cb8cea596bd2537a1fc15793d7a512bdf669e9cedf3bc291a29ef8a",
       "similarity_pm": 517,
       "entailment_pm": 6,
       "contradiction_pm": 135
     },
     {
       "id": "n18",
+      "text_hash": "57a5e68e59004f657bb21798cf5d7bef34d4979da8536a3c7c20f2714e24a172",
       "similarity_pm": 710,
       "entailment_pm": 0,
       "contradiction_pm": 0
     },
     {
       "id": "s17",
+      "text_hash": "b91c6e7398d44d1b5cf3061a3d8bb3e43703704c49f695d56b900e5002763366",
       "similarity_pm": 847,
       "entailment_pm": 996,
       "contradiction_pm": 0
     },
     {
       "id": "s18",
+      "text_hash": "34f679c4e7e3504eb67d8c3a0f1eb9471637e70edf1cf0d0bd11565587bbcb29",
       "similarity_pm": 792,
       "entailment_pm": 997,
       "contradiction_pm": 0
     },
     {
       "id": "c15",
+      "text_hash": "e9c3862611541f8e4e9081727ba3198a5a58d311479dbfa6774d09a614581360",
       "similarity_pm": 807,
       "entailment_pm": 0,
       "contradiction_pm": 999
     },
     {
       "id": "c16",
+      "text_hash": "256480c9e0230009e11dd56e145d534cea89fe85f6b46f848b431c2290b6ecdb",
       "similarity_pm": 650,
       "entailment_pm": 0,
       "contradiction_pm": 1000
     },
     {
       "id": "n19",
+      "text_hash": "2440046db240829e05cc475bbb235c31b1a248f559fa3f109054001853ca9d19",
       "similarity_pm": 625,
       "entailment_pm": 0,
       "contradiction_pm": 1
     },
     {
       "id": "n20",
+      "text_hash": "152a1e589cf257cd6d408eeca00ea8a3db6b2d1c8fd126b2dcc5ee96c5051653",
       "similarity_pm": 548,
       "entailment_pm": 2,
       "contradiction_pm": 1
     },
     {
       "id": "n21",
+      "text_hash": "568349506684797027570f293802bf3545532069258b315f91d6c60997727441",
       "similarity_pm": 691,
       "entailment_pm": 0,
       "contradiction_pm": 991
     },
     {
       "id": "n22",
+      "text_hash": "a11569ac903d1400ca367fdfbad373be63bb3b3d55f56a18707d7c62853bf227",
       "similarity_pm": 625,
       "entailment_pm": 0,
       "contradiction_pm": 248
     },
     {
       "id": "n23",
+      "text_hash": "34f35f2611c7d6e1e119c22c73c1a0334a55e6ca715d3e233869e6f1c4a8c0d4",
       "similarity_pm": 735,
       "entailment_pm": 0,
       "contradiction_pm": 102
     },
     {
       "id": "n24",
+      "text_hash": "062a248b34e117ef0b5c85e13e25f5f4fb4fb892bb41c6477188698e12a5787f",
       "similarity_pm": 774,
       "entailment_pm": 3,
       "contradiction_pm": 1
     },
     {
       "id": "n25",
+      "text_hash": "b39b4b10f9392c73e212ce107ea48ccdbe95f8b408e96abf4402397c2898f0e4",
       "similarity_pm": 799,
       "entailment_pm": 5,
       "contradiction_pm": 1
     },
     {
       "id": "n26",
+      "text_hash": "5eae4b46549a60e06fc7638ae0b15540c61615f5ed53d12cbcab87bb3cecfc5f",
       "similarity_pm": 692,
       "entailment_pm": 0,
       "contradiction_pm": 0
     },
     {
       "id": "n27",
+      "text_hash": "568b918d86c524b9a85785956b1e030a61162a4b4a931c133e6da9ed0e2f1203",
       "similarity_pm": 719,
       "entailment_pm": 0,
       "contradiction_pm": 1
     },
     {
       "id": "n28",
+      "text_hash": "68d860f098e34286ef4dc50a70af0c84a29cc81911172e0840a4903d4e249274",
       "similarity_pm": 611,
       "entailment_pm": 0,
       "contradiction_pm": 939
+    },
+    {
+      "id": "c17",
+      "text_hash": "590fa609e5409d2b187efe71981821da624f5547fa36fdaed52cfd69fbec3943",
+      "similarity_pm": 878,
+      "entailment_pm": 1,
+      "contradiction_pm": 992
+    },
+    {
+      "id": "c18",
+      "text_hash": "53013eb58c238624e3e9b403e944f2443f079b0c086b6bc093550d05efefe619",
+      "similarity_pm": 669,
+      "entailment_pm": 1,
+      "contradiction_pm": 995
+    },
+    {
+      "id": "c19",
+      "text_hash": "80b94f9cf74bbe3bb110708bc4622500e6b9dbe36dc4e007a086f4fcdabb9a1b",
+      "similarity_pm": 752,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c20",
+      "text_hash": "200bf9aaac903b65f485cc2a2d331d6a7851dfe31c0270142623b84221c6844c",
+      "similarity_pm": 765,
+      "entailment_pm": 0,
+      "contradiction_pm": 999
+    },
+    {
+      "id": "c21",
+      "text_hash": "fc1666fce5e4d85a388417c0c7cb7715ba1e8ae947f9f3c50f2ddc490ced4983",
+      "similarity_pm": 747,
+      "entailment_pm": 1,
+      "contradiction_pm": 997
+    },
+    {
+      "id": "n29",
+      "text_hash": "93a6b91535003c09c184649268fc7e7e55237a5c1bc2bb691bf23998de8b2ad2",
+      "similarity_pm": 515,
+      "entailment_pm": 0,
+      "contradiction_pm": 999
+    },
+    {
+      "id": "n30",
+      "text_hash": "b0479a5d3b2a7139537285b3ca74a19f7b15c3ab368e164af18d3f824379e4bc",
+      "similarity_pm": 610,
+      "entailment_pm": 0,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "n31",
+      "text_hash": "9ffa40ccfed49dda6db4d06e6f7f63425aeb41c94862da23a3845389d0b8c34c",
+      "similarity_pm": 605,
+      "entailment_pm": 0,
+      "contradiction_pm": 2
+    },
+    {
+      "id": "n32",
+      "text_hash": "720d13cbdcf25cd5b526b6a95a9fc15a73a285414c88dfaff3008dc17deaf45f",
+      "similarity_pm": 705,
+      "entailment_pm": 0,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s19",
+      "text_hash": "bc976e1e2be7e3dfea0ba20b399d72f1641f28cc8260d6008e511b2fa15a7c60",
+      "similarity_pm": 843,
+      "entailment_pm": 995,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "n33",
+      "text_hash": "a00e39090ad68f27c19854822ba4d9dbd844f3e3d67bd21eb5f5bb79056b6ab0",
+      "similarity_pm": 741,
+      "entailment_pm": 0,
+      "contradiction_pm": 997
     }
   ]
 }
