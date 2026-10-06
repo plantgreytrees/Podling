@@ -1,13 +1,13 @@
 ---
 slug: natural-episode-speech
-status: pursue-with-changes
+status: architected
 verdict: pursue-with-changes
 confidence: medium
 depth: standard
 isolation: isolated
 created: 2026-10-06
 updated: 2026-10-06
-related: [docs/plans/phase5-tts-audio.md, docs/plans/scrutinise-phase5-tts-audio.md, docs/architecture.md]
+related: [docs/architecture/speech.rules.md, docs/architecture/speech.md, docs/plans/phase5-tts-audio.md, docs/plans/scrutinise-phase5-tts-audio.md, docs/architecture.md]
 touches:
   - crates/podling-types/src/episode.rs                 # [tts] pronunciation list; schema snapshot
   - crates/podling-types/tests/snapshots/schema_snapshot__episode.snap
@@ -180,3 +180,11 @@ What it shows:
 
 ## Next step
 `/architect natural-episode-speech`, after recommendation 1's word log and isolated tests. Separately, `/idea` for the voice marketplace.
+
+## Architected (2026-10-06)
+
+Decided in [speech.rules.md](../architecture/speech.rules.md) (ARCH-SPEECH-01..17):
+- **Lexicon:** names are respelt through a user-level `~/.config/podling/pronounce.toml` plus the episode's `[tts.pronounce]`; the episode wins per name.
+- **Model text:** the respelling travels as `SpokenTurn.say_as` and is swapped in on the wire only, so the worker protocol and `ADAPTER_VERSION` are unchanged.
+- **Speech check:** gains optional per-name `heard` variants and a built-in British/American word-pair table.
+- **Open question 1 resolved:** self-designed clips use `LicenseRef-Podling-Generated` with a required provenance file, made by an offline `scripts/voice_design/` tool.
