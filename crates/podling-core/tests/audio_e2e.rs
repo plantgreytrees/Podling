@@ -8,13 +8,15 @@ use std::process::Command;
 use std::time::Instant;
 
 use podling_core::audio::{Pcm, WavFormat};
+use podling_core::lexicon::{HeardVariants, Respellings};
 use podling_core::plugin::{FakeAsr, FakeLlm, FakeTts};
 use podling_core::stages::assemble::{TARGET_LUFS, measure};
 use podling_core::stages::{Takes, Verification, Voices, synthesize_script};
 use podling_core::{CoreError, DiskCache, RunReport, pipeline};
 use podling_types::{
     AnalysisReport, AudioManifest, Beat, BeatKind, CastMember, Emotion, Envelope, EpisodeSpec,
-    NonverbalAt, Pace, PerMille, Script, Severity, Speaker, SpeakerId, Turn, TurnRange, VoiceRef,
+    Lexicon, NonverbalAt, Pace, PerMille, Pronunciation, Script, Severity, Speaker, SpeakerId,
+    Turn, TurnRange, VoiceRef,
 };
 use serde_json::Value;
 
@@ -285,6 +287,28 @@ fn an_unknown_sidecar_profile_fails_before_any_stage_runs() {
     );
 }
 
+#[test]
+fn a_bad_user_lexicon_beside_the_profiles_fails_before_any_stage_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let spec = audio_episode(tmp.path(), "kind = \"sidecar\"\nsidecar = \"stub\"");
+    let profiles = tmp.path().join("sidecars.toml");
+    fs::write(
+        &profiles,
+        "[sidecars.stub]\nprogram = \"python3\"\nargs = []\n",
+    )
+    .unwrap();
+    let lexicon = tmp.path().join("pronounce.toml");
+    fs::write(&lexicon, "[pronounce]\nKulik = { heard = [\"Koolik\"] }\n").unwrap();
+    let out = tmp.path().join("out");
+    let err = pipeline::run_with_sidecars(&spec, &profiles, tmp.path(), None, &out).unwrap_err();
+    assert!(
+        matches!(&err, CoreError::Config { message }
+            if message.contains(&lexicon.display().to_string())),
+        "{err}"
+    );
+    assert!(!out.exists(), "nothing ran");
+}
+
 fn python_ok() -> bool {
     let ok = Command::new("python3")
         .args(["-c", "import sys; sys.exit(sys.version_info < (3, 11))"])
@@ -408,10 +432,11 @@ fn a_thirty_minute_script_is_chunked_by_beat_and_cached_per_chunk() {
                 max_retries: 2,
                 max_wer_pm: PerMille::new(80).unwrap(),
             },
+            heard: HeardVariants::none(),
         };
         let chunks = synthesize_script(
             script,
-            &voices,
+            voices.speaking(Respellings::none()),
             &mut FakeTts::dialogue(),
             verification,
             &blobs,
@@ -447,4 +472,124 @@ fn a_thirty_minute_script_is_chunked_by_beat_and_cached_per_chunk() {
 
     let elapsed = started.elapsed();
     assert!(elapsed.as_secs_f64() < 10.0, "took {elapsed:?}");
+}
+
+/// A lexicon of `(name, respelling)` pairs.
+fn lexicon(entries: &[(&str, &str)]) -> Lexicon {
+    Lexicon::new(
+        entries
+            .iter()
+            .map(|(name, say)| {
+                let say = Pronunciation::new(*say, Vec::new()).unwrap();
+                ((*name).to_owned(), say)
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+/// Six turns, two naming Kulik and one naming Vanavara.
+fn named_script() -> Script {
+    let speaker = |id: &str| Speaker {
+        id: SpeakerId(id.into()),
+        name: id.into(),
+        role: "host".into(),
+    };
+    let texts = [
+        "Kulik went north in 1927.",
+        "Why so late?",
+        "The war came first.",
+        "And Vanavara?",
+        "The trading post Kulik reached.",
+        "Then the forest.",
+    ];
+    let turns = texts
+        .iter()
+        .enumerate()
+        .map(|(t, text)| Turn {
+            speaker: SpeakerId(if t % 2 == 0 { "host" } else { "guest" }.into()),
+            text: (*text).into(),
+            emotion: Emotion::Neutral,
+            citations: vec![],
+            quotes: vec![],
+            pace: Pace::Normal,
+            nonverbal: vec![],
+            callback_to: None,
+        })
+        .collect();
+    Script::new(vec![speaker("host"), speaker("guest")], turns).unwrap()
+}
+
+#[test]
+fn editing_one_respelling_remakes_only_the_chunks_that_name_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cast: Vec<CastMember> = ["host", "guest"]
+        .iter()
+        .map(|id| {
+            fs::write(tmp.path().join(format!("{id}.wav")), id.as_bytes()).unwrap();
+            CastMember {
+                id: SpeakerId((*id).into()),
+                name: (*id).into(),
+                role: "host".into(),
+                voice: VoiceRef::new(format!("{id}.wav"), "Hello.", "CC0-1.0").unwrap(),
+            }
+        })
+        .collect();
+    let voices = Voices::resolve(&cast, tmp.path()).unwrap();
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let blobs = cache.blobs();
+    let script = named_script();
+    // A per-turn model with no context: one chunk a turn, keyed on its own.
+    let run = |lexicon: &Lexicon| {
+        let mut report = RunReport::default();
+        let respellings = Respellings::new(lexicon);
+        let heard = HeardVariants::new(lexicon);
+        let verification = Verification {
+            asr: &mut FakeAsr::default(),
+            takes: Takes {
+                banter: 1,
+                max_retries: 0,
+                max_wer_pm: PerMille::new(80).unwrap(),
+            },
+            heard: &heard,
+        };
+        let chunks = synthesize_script(
+            &script,
+            voices.speaking(&respellings),
+            &mut FakeTts::default(),
+            verification,
+            &blobs,
+            Some(&cache),
+            &mut report,
+        )
+        .unwrap();
+        let count = |hits: Vec<bool>| hits.iter().filter(|hit| !**hit).count();
+        let ids: Vec<_> = chunks.iter().map(|c| c.record.id.clone()).collect();
+        (ids, (count(synth(&report)), count(transcribed(&report))))
+    };
+
+    // No lexicon, and one naming no one in the script, key every chunk the
+    // same: no turn gets a respelling.
+    let (plain, misses) = run(&Lexicon::default());
+    assert_eq!((plain.len(), misses), (6, (6, 6)));
+    let (ids, misses) = run(&lexicon(&[("Krinov", "Kreenov")]));
+    assert_eq!((&ids, misses), (&plain, (0, 0)));
+
+    let both = lexicon(&[("Kulik", "Koolick"), ("Vanavara", "Vanavahra")]);
+    let (named, misses) = run(&both);
+    assert_eq!(misses, (3, 3), "the three turns that name someone");
+    let changed: Vec<usize> = (0..6).filter(|&i| named[i] != plain[i]).collect();
+    assert_eq!(changed, [0, 3, 4]);
+
+    let (_, misses) = run(&both);
+    assert_eq!(misses, (0, 0), "a warm rerun makes no TTS or ASR calls");
+
+    // Respelling Kulik differently remakes his two turns and nothing else.
+    let edited = lexicon(&[("Kulik", "Kooleek"), ("Vanavara", "Vanavahra")]);
+    let (again, misses) = run(&edited);
+    assert_eq!(misses, (2, 2));
+    let changed: Vec<usize> = (0..6).filter(|&i| again[i] != named[i]).collect();
+    assert_eq!(changed, [0, 4]);
+    let (_, misses) = run(&edited);
+    assert_eq!(misses, (0, 0));
 }

@@ -283,7 +283,8 @@ fn wire_turns(turns: &[SpokenTurn]) -> Vec<WireTurn<'_>> {
         .iter()
         .map(|turn| WireTurn {
             speaker: &turn.speaker.0,
-            text: &turn.text,
+            // The model says the respelt names; nothing else sees them.
+            text: turn.say_as.as_deref().unwrap_or(&turn.text),
             // Neutral is the default delivery; only a real hint is sent.
             emotion: (turn.emotion != Emotion::Neutral).then_some(turn.emotion),
             nonverbal: &turn.nonverbal,

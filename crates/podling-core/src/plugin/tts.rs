@@ -38,6 +38,12 @@ pub struct TtsCapabilities {
 pub struct SpokenTurn {
     pub speaker: SpeakerId,
     pub text: String,
+    /// `text` with names respelt from the lexicon, for the TTS model only;
+    /// `None` when the turn names no one in it. Only the wire turn reads it:
+    /// [`said`](Self::said) and the quotes keep `text`. Skipped when
+    /// `None`, so a chunk without names keeps its cache key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub say_as: Option<String>,
     pub emotion: Emotion,
     /// Sounds the speaker makes just before or after the words, which the
     /// backend renders in the same voice (as its own tags, or not at all and
@@ -53,6 +59,7 @@ impl SpokenTurn {
         Self {
             speaker,
             text: text.into(),
+            say_as: None,
             emotion,
             nonverbal: Vec::new(),
         }
@@ -337,6 +344,19 @@ mod tests {
         ];
         assert_eq!(spoken.said(), "Mm-hm. Right, so. Okay.");
         assert_eq!(turn("host", "Plain.").said(), "Plain.");
+    }
+
+    #[test]
+    fn said_keeps_the_name_when_the_model_gets_a_respelling() {
+        let mut spoken = turn("host", "Kulik went north.");
+        spoken.say_as = Some("Koolick went north.".into());
+        assert_eq!(spoken.said(), "Kulik went north.");
+    }
+
+    #[test]
+    fn a_turn_without_a_respelling_serialises_as_before() {
+        let json = serde_json::to_value(turn("host", "Plain.")).unwrap();
+        assert!(json.get("say_as").is_none(), "{json}");
     }
 
     fn voices(ids: &[&str]) -> BTreeMap<SpeakerId, VoiceRef> {

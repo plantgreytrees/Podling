@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use podling_types::{
     ArtifactKind, AsrConfig, AudioManifest, Document, DocumentId, Envelope, EpisodeAudio,
-    EpisodeSpec, Finding, MixConfig, PerMille, Script, SourceRef, Speaker, TtsConfig,
+    EpisodeSpec, Finding, Lexicon, MixConfig, PerMille, Script, SourceRef, Speaker, TtsConfig,
 };
 use serde::Serialize;
 
@@ -17,6 +17,7 @@ use crate::audio::WavFormat;
 use crate::cache::{BlobStore, DiskCache};
 use crate::encode::Encoder;
 use crate::error::{CoreError, Result};
+use crate::lexicon::{self, HeardVariants, Respellings};
 use crate::plugin::{
     AsrProvider, LlmProvider, build_analysers, build_asr, build_grounding, build_llm,
     build_sources, build_tts, check_audio, default_profiles_path, load_profile,
@@ -283,6 +284,9 @@ struct AudioPlan<'a> {
     asr: Box<dyn AsrProvider>,
     takes: Takes,
     mix: MixConfig,
+    /// The user's `pronounce.toml` with the episode's `[tts.pronounce]` over
+    /// it; empty for the fake.
+    lexicon: Lexicon,
 }
 
 /// Whisper's default limit, used for the fake recogniser too.
@@ -320,15 +324,18 @@ impl<'a> AudioPlan<'a> {
             max_retries,
             max_wer_pm,
         };
-        let profiles = match tts {
-            TtsConfig::Fake {} => PathBuf::new(),
-            TtsConfig::Sidecar { sidecar, .. } => {
+        let (profiles, lexicon) = match tts {
+            TtsConfig::Fake {} => (PathBuf::new(), Lexicon::default()),
+            TtsConfig::Sidecar {
+                sidecar, pronounce, ..
+            } => {
                 let path = match sidecars {
                     Some(path) => path.to_owned(),
                     None => default_profiles_path(|name| std::env::var(name).ok())?,
                 };
                 load_profile(&path, sidecar)?;
-                path
+                let user = lexicon::load_user(&lexicon::user_path(&path))?;
+                (path, lexicon::merge(&user, pronounce))
             }
         };
         Ok(Self {
@@ -338,6 +345,7 @@ impl<'a> AudioPlan<'a> {
             asr,
             takes,
             mix: spec.mix.clone().unwrap_or_default(),
+            lexicon,
         })
     }
 
@@ -359,13 +367,16 @@ impl<'a> AudioPlan<'a> {
         };
         let (chunks, overlays) = {
             let mut tts = build_tts(self.tts, &self.profiles)?;
+            let respellings = Respellings::new(&self.lexicon);
+            let heard = HeardVariants::new(&self.lexicon);
             let verification = Verification {
                 asr: self.asr.as_mut(),
                 takes: self.takes,
+                heard: &heard,
             };
             let chunks = synthesize_script(
                 script,
-                &self.voices,
+                self.voices.speaking(&respellings),
                 tts.as_mut(),
                 verification,
                 &blobs,

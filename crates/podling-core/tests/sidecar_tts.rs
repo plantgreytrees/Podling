@@ -129,9 +129,11 @@ fn synthesises_through_the_stub_and_stops_it_on_drop() {
     );
     assert!(!tts.capabilities().multi_speaker);
 
+    let mut respelt = turn("bo", "Over Siberia.", Emotion::Neutral);
+    respelt.say_as = Some("Over Sigh-beer-ia.".into());
     let turns = [
         turn("ada", "The sky split in two.", Emotion::Excited),
-        turn("bo", "Over Siberia.", Emotion::Neutral),
+        respelt,
     ];
     let previous = [turn("bo", "Where was this?", Emotion::Curious)];
     let previous_audio = clips.path().join("ada.wav");
@@ -161,6 +163,10 @@ fn synthesises_through_the_stub_and_stops_it_on_drop() {
         "neutral is not sent"
     );
     assert_eq!(sent["context"]["turns"][0]["text"], "Where was this?");
+    // A respelling is the wire text; the worker never sees the field.
+    assert_eq!(sent["turns"][0]["text"], "The sky split in two.");
+    assert_eq!(sent["turns"][1]["text"], "Over Sigh-beer-ia.");
+    assert!(sent["turns"][1].get("say_as").is_none());
     for path in [
         &sent["voices"]["ada"]["reference"],
         &sent["voices"]["bo"]["reference"],
