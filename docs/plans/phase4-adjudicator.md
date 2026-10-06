@@ -256,26 +256,26 @@ Depends on: script-integration
 ### Step 5 — live-and-docs (., markdown, normal)
 Tooling: implementer · gates docs-curator
 Depends on: titanic-example
-- [ ] 5.1 Two cold-cache runs of `examples/titanic/episode-ollama.toml` (fresh `--cache-dir` each time). → accept: each run meets all of these:
+- [x] 5.1 Two cold-cache runs of `examples/titanic/episode-ollama.toml` (fresh `--cache-dir` each time). → accept: each run meets all of these:
   - exit 0
   - `analysis.json` has no `error`
   - at least 1 Contested claim, each with a verdict
   - script.json names the disagreement
 
   Record the results under "Live results".
-- [ ] 5.2 One cold-cache run of `examples/tunguska/episode-ollama.toml`. → accept: exit 0, no `error`, and `verdicts.json` is consistent with its Contested count.
-- [ ] 5.3 `PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b cargo test -p podling-cli -- --ignored`. → accept: passes.
-- [ ] 5.4 The fmt, clippy (`-D warnings`) and test workspace gates. → accept: all three pass.
+- [x] 5.2 One cold-cache run of `examples/tunguska/episode-ollama.toml`. → accept: exit 0, no `error`, and `verdicts.json` is consistent with its Contested count.
+- [x] 5.3 `PODLING_LIVE_LLM_URL=http://localhost:11434/v1 PODLING_LIVE_LLM_MODEL=llama3.1:8b cargo test -p podling-cli -- --ignored`. → accept: passes.
+- [x] 5.4 The fmt, clippy (`-D warnings`) and test workspace gates. → accept: all three pass.
 - [ ] 5.5 `docs/architecture.md`: update the artifact flow, add an "Adjudicating Contested claims" section (cost bound, fallback, caching, no quoting), the bump rules (ADJUDICATE_PROMPT_VERSION), and drop "next phase" at :166. → accept: docs-curator check; every cited path resolves.
 - [ ] 5.6 README: the artifact list, the stage list and the Titanic example. → accept: matches the code.
 - [ ] 5.7 `docs/handoff.md`: rewrite it for the next goal (NLI entailment in `is_grounded`). → accept: written.
-- [ ] 5.8 Live fix: cap each verdict reply (`CompletionRequest::max_tokens`, `MAX_VERDICT_TOKENS` = 512; the OpenAI-compatible provider sends the lower of it and `max_output_tokens`); `Adjudicate::VERSION` 2→3. Live, llama3.1:8b in JSON mode wrote 13,000+ tokens for one verdict. → accept: tests that the provider sends the lower cap.
-- [ ] 5.9 Live fix: the script request numbers its sources (`SourceText::source`, `QuoteRef { source, sentence }`) instead of showing chunk ids, which llama3.1:8b cited as claims on both attempts. `PROMPT_VERSION` 7→8 (ARCH-SPEECH-16), `WriteScript::VERSION` 11→12, fake 7→8. → accept: a test for an out-of-range source; no-NLI artifact bodies unchanged.
-- [ ] 5.10 Live fix: a script must cite every Contested claim that has a verdict (rule 2, checked by `build_script` with a rejection that names the missing claim), since a live script left both judged claims out. → accept: a unit test that a script missing a judged claim is rejected with its id.
-- [ ] 5.11 Live fix: the script stage gets three attempts (`SCRIPT_ATTEMPTS`), and each retry lists every earlier rejection (each cut by `reason_excerpt`). Live, every retry fixed the reported error and made a new one (source numbered from 1, then a sentence past the end; a missing judged claim, then a typed quotation). Extraction and adjudication keep two attempts, so the adjudicator's cost bound is unchanged. Folded into `WriteScript::VERSION` 12, which has not landed. → accept: a unit test that a third reply is accepted after two rejections and that the third request lists both reasons; a test that two-attempt stages still stop at two.
-- [ ] 5.12 Live fix: a quotation inside a sentence can be quoted by number. Each numbered sentence lists the quotations in it (`NumberedSentence::quoted`, by `text::quotation_ranges`, the spans the typed-quote check finds), and `QuoteRef` gains an optional `part`; the stage still copies the words from the document. A typed quotation that is a listed part is rejected with a hint naming its source, sentence and part. Live, on 3 of 4 cold Titanic runs llama3.1:8b typed the lookout's "Iceberg right ahead.", which sits inside a longer sentence, on every attempt. Folded into the unlanded `PROMPT_VERSION` 8 and `WriteScript::VERSION` 12. → accept: unit tests that a `part` resolves to the quotation's document span without its marks, that an out-of-range part is rejected, and that the typed-quote rejection names the part.
-- [ ] 5.13 Live fix: every LLM request is capped, not only the verdict. `MAX_CLAIMS_TOKENS` = 2048 per extraction reply, `MAX_SCRIPT_TOKENS` = 8192 per script reply (the provider still sends the lower of these and `max_output_tokens`). Live, an extraction reply ran past 23,000 tokens and would have held the GPU until the 1800 s timeout. `ExtractClaims::VERSION` 5→6; folded into the unlanded `WriteScript::VERSION` 12. → accept: tests that the extraction and script requests carry their caps.
-- [ ] 5.14 Live fix: a reply cut off at the token limit is a rejection, not a provider failure. The OpenAI-compatible provider reports `finish_reason: "length"` as `ProviderFailure::CutOff`, and `complete_validated_with` turns that into a rejection reason, so it is retried and the adjudicator falls back; the CLI gives it no hint. Live, a capped extraction reply was cut off and failed the run with no retry, contradicting 5.8 and 5.13. → accept: a unit test that a cut-off first reply is retried and the second accepted; a test that the provider maps `length` to `CutOff`.
+- [x] 5.8 Live fix: cap each verdict reply (`CompletionRequest::max_tokens`, `MAX_VERDICT_TOKENS` = 512; the OpenAI-compatible provider sends the lower of it and `max_output_tokens`); `Adjudicate::VERSION` 2→3. Live, llama3.1:8b in JSON mode wrote 13,000+ tokens for one verdict. → accept: tests that the provider sends the lower cap.
+- [x] 5.9 Live fix: the script request numbers its sources (`SourceText::source`, `QuoteRef { source, sentence }`) instead of showing chunk ids, which llama3.1:8b cited as claims on both attempts. `PROMPT_VERSION` 7→8 (ARCH-SPEECH-16), `WriteScript::VERSION` 11→12, fake 7→8. → accept: a test for an out-of-range source; no-NLI artifact bodies unchanged.
+- [x] 5.10 Live fix: a script must cite every Contested claim that has a verdict (rule 2, checked by `build_script` with a rejection that names the missing claim), since a live script left both judged claims out. → accept: a unit test that a script missing a judged claim is rejected with its id.
+- [x] 5.11 Live fix: the script stage gets three attempts (`SCRIPT_ATTEMPTS`), and each retry lists every earlier rejection (each cut by `reason_excerpt`). Live, every retry fixed the reported error and made a new one (source numbered from 1, then a sentence past the end; a missing judged claim, then a typed quotation). Extraction and adjudication keep two attempts, so the adjudicator's cost bound is unchanged. Folded into `WriteScript::VERSION` 12, which has not landed. → accept: a unit test that a third reply is accepted after two rejections and that the third request lists both reasons; a test that two-attempt stages still stop at two.
+- [x] 5.12 Live fix: a quotation inside a sentence can be quoted by number. Each numbered sentence lists the quotations in it (`NumberedSentence::quoted`, by `text::quotation_ranges`, the spans the typed-quote check finds), and `QuoteRef` gains an optional `part`; the stage still copies the words from the document. A typed quotation that is a listed part is rejected with a hint naming its source, sentence and part. Live, on 3 of 4 cold Titanic runs llama3.1:8b typed the lookout's "Iceberg right ahead.", which sits inside a longer sentence, on every attempt. Folded into the unlanded `PROMPT_VERSION` 8 and `WriteScript::VERSION` 12. → accept: unit tests that a `part` resolves to the quotation's document span without its marks, that an out-of-range part is rejected, and that the typed-quote rejection names the part.
+- [x] 5.13 Live fix: every LLM request is capped, not only the verdict. `MAX_CLAIMS_TOKENS` = 2048 per extraction reply, `MAX_SCRIPT_TOKENS` = 8192 per script reply (the provider still sends the lower of these and `max_output_tokens`). Live, an extraction reply ran past 23,000 tokens and would have held the GPU until the 1800 s timeout. `ExtractClaims::VERSION` 5→6; folded into the unlanded `WriteScript::VERSION` 12. → accept: tests that the extraction and script requests carry their caps.
+- [x] 5.14 Live fix: a reply cut off at the token limit is a rejection, not a provider failure. The OpenAI-compatible provider reports `finish_reason: "length"` as `ProviderFailure::CutOff`, and `complete_validated_with` turns that into a rejection reason, so it is retried and the adjudicator falls back; the CLI gives it no hint. Live, a capped extraction reply was cut off and failed the run with no retry, contradicting 5.8 and 5.13. → accept: a unit test that a cut-off first reply is retried and the second accepted; a test that the provider maps `length` to `CutOff`.
 
 ## Sequencing
 Contracts → stage → script → example → live/docs. Each step needs the types or stage before it. The example needs the script integration to show verdicts.
@@ -323,7 +323,30 @@ CONSUMERS:
 - The prompt is bigger when a basis-None evidence carries its whole chunk. The example chunks are small.
 
 ## Live results
-_(filled in by step 5)_
+Recorded 2026-10-06 on commit `7245b32`. The runs used llama3.1:8b (Q4_K_M) on a native Ollama 0.35.1 on the GPU (RTX 5060, `OLLAMA_CONTEXT_LENGTH=16384`), at 127.0.0.1:11435. The Docker Ollama on 11434 that `episode-ollama.toml` names ran on the CPU at 0.1–0.3 tok/s and timed out. The configs differed from `episode-ollama.toml` only in `base_url`. Each run used a fresh `--cache-dir`.
+
+| Run | Exit | Claims | Contested | Verdicts | Fallbacks | `error` findings | Turns naming the disagreement | Time |
+|---|---|---|---|---|---|---|---|---|
+| Titanic (titanic11) | 0 | 20 | 4 | 4 | 2 | 0 | 3 | 168 s |
+| Titanic (titanic12) | 0 | 13 | 2 | 2 | 0 | 0 | 2 | 94 s |
+| Tunguska (tunguska2) | 0 | 9 | 0 | 0 (consistent) | 0 | 0 | — | 43 s |
+| Ignored live CLI test | pass | | | | | | | 50 s |
+
+In titanic12 the script says: "However, the British inquiry report states that only 712 people were saved, which contradicts the US Senate inquiry report's claim." That is the 706-vs-712 saved disagreement.
+
+**Reliability with llama3.1:8b.** Titanic is not reliable on an 8B model. Of the cold runs on each fix's final form, these passed: titanic6, titanic8, titanic10, titanic11 and titanic12. These failed, each for a different reason:
+- titanic5: a mangled claim id (66 hex characters) on all three script attempts.
+- titanic9: extraction grounding rejected the paraphrase "Sunday evening".
+
+Each earlier failure led to one of fixes 5.8–5.14:
+- a chunk id cited as a claim;
+- judged claims left out of the script;
+- a typed lookout quotation;
+- a runaway 13k-token verdict;
+- a runaway 23k-token extraction reply;
+- a cut-off reply failing the run with no retry.
+
+The adjudicator often fell back when the model left out a supporting cite. A fallback always records why, and never takes a side. Some NLI contradictions are spurious; "lifeboats for 1,176" vs "712 saved" is not a real disagreement. That is a scoring limit, out of scope here.
 
 ## Risk & rollback
 The only behaviour change without `[nli]` is the new stage row and an empty `verdicts.json`. To revert, run `git revert -m 1 <merge>`.
