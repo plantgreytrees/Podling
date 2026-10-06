@@ -28,7 +28,9 @@ use crate::text::sentences;
 /// 7: a Contested claim's ledger entry carries the adjudicator's verdict
 ///    ([`LedgerVerdict`]).
 /// 8: script sources are numbered ([`SourceText::source`]) and a quote names
-///    a source number, not a chunk id, which llama3.1:8b cited as a claim.
+///    a source number, not a chunk id, which llama3.1:8b cited as a claim. A
+///    sentence lists the quotations inside it (`quoted`), and a quote may name
+///    one of them (`part`).
 pub const PROMPT_VERSION: u32 = 8;
 
 /// Version of the adjudicator's prompt and input shape, in its cache key only.
@@ -194,6 +196,10 @@ pub struct SourceText {
 pub struct NumberedSentence {
     pub sentence: usize,
     pub text: String,
+    /// The quotations inside the sentence (`text::quotations`), in order: a
+    /// [`QuoteRef::part`] counts over these. Left out when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quoted: Vec<String>,
 }
 
 /// A script as returned by [`LlmTask::WriteScript`]. Quotes are *references*
@@ -257,6 +263,10 @@ pub struct QuoteRef {
     pub source: usize,
     /// Counting from 0, as in [`SourceText`].
     pub sentence: usize,
+    /// Quote only this quotation inside the sentence, counting from 0 over
+    /// [`NumberedSentence::quoted`]; the whole sentence when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<usize>,
 }
 
 /// The most characters of a rejection reason that are shown to the model or
@@ -494,6 +504,7 @@ impl FakeLlm {
             Some(QuoteRef {
                 source: source.source,
                 sentence: first.sentence,
+                part: None,
             })
         });
         match quote {
@@ -620,7 +631,8 @@ mod tests {
             draft.turns[0].quotes,
             vec![QuoteRef {
                 source: 0,
-                sentence: 0
+                sentence: 0,
+                part: None,
             }]
         );
         // The fake points at the sentence and never types it.

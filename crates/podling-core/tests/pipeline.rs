@@ -644,7 +644,7 @@ const NO_NLI_KEYS: [(&str, &str); 7] = [
     ),
     (
         "script",
-        "dd7a59a7ea0d20a252f64993d8bfa6f0e07db768e53f45d2027bb44a301bc01a",
+        "db0ce133885efec5041e02d4656058624f94d5da17074c53d0380fb7682dd875",
     ),
     (
         "analyse",

@@ -237,6 +237,12 @@ a numbered source (`source`, its position in the chunk list) of numbered sentenc
 (`text::sentences`), both counting from 0, and the model answers with
 `QuoteRef { source, sentence }`. Models count sentences far more reliably than bytes.
 The model sees no chunk id: llama3.1:8b, shown chunk ids, cited one as a claim.
+A sentence also lists the quotations inside it (`quoted`, the spans
+`text::quotation_ranges` finds), and a reference may add `part` to quote only one
+of them: live, the model kept typing a lookout's words that sit inside a longer
+sentence, since it had no way to point at them. A typed quotation that is one of
+these parts is rejected with the reference to use instead. `text::sentences` does
+not end a sentence at `."`, so a chunk with quoted speech can be one long sentence.
 The stage takes the chunk at that position, takes the sentence's span, and calls
 `Quote::from_document`. The invariant is unchanged: the model points and the code copies.
 
