@@ -27,6 +27,7 @@ use crate::plugin::{
     EmbeddingProvider, NliPair, NliProvider, cosine, embed_checked, score_checked,
 };
 use crate::stage::Stage;
+use crate::text::{content_words, is_number, numbers, sentences};
 
 /// Premise windows retrieved per claim (the cost bound).
 pub const RETRIEVE_K: usize = 4;
@@ -62,7 +63,9 @@ pub struct ScoreStances<'a> {
 
 impl Stage for ScoreStances<'_> {
     const ID: &'static str = "score_stances";
-    const VERSION: u32 = 2;
+    // 3: a number-against-number contradiction needs the premise's number to
+    // share the claim's subject (`numbers_share_the_subject`).
+    const VERSION: u32 = 3;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -233,11 +236,37 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
         Some(Stance::Supports)
     } else if evidence.contradiction.get() >= CONTRADICT_PM
         && evidence.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
+        && numbers_share_the_subject(evidence.claim, evidence.premise)
     {
         Some(Stance::Contradicts)
     } else {
         None
     }
+}
+
+/// When the claim and the premise both state a number, whether some premise
+/// sentence holding a number shares a word (not a number) with the claim.
+/// Without one, the premise's number is about something else: in "The
+/// explosion was heard far away. Kulik's expedition reached the site in
+/// 1927." against "The explosion happened in June 1908.", the model reads
+/// 1927 as a contradicting date, but it dates the expedition, not the
+/// explosion. True when either text has no number, so the rule only judges
+/// number-against-number contradictions.
+fn numbers_share_the_subject(claim: &str, premise: &str) -> bool {
+    if numbers(claim).is_empty() || numbers(premise).is_empty() {
+        return true;
+    }
+    let subject = |text: &str| -> BTreeSet<String> {
+        content_words(text)
+            .into_iter()
+            .filter(|w| !is_number(w))
+            .collect()
+    };
+    let claim_subject = subject(claim);
+    sentences(premise).into_iter().any(|range| {
+        let sentence = &premise[range];
+        !numbers(sentence).is_empty() && !subject(sentence).is_disjoint(&claim_subject)
+    })
 }
 
 impl Judged {
@@ -470,6 +499,27 @@ mod tests {
             .filter(|e| e.independence_group == "b")
             .count();
         assert_eq!(from_b, 1);
+    }
+
+    #[test]
+    fn a_number_about_something_else_does_not_contradict() {
+        let evidence = |premise| StanceEvidence {
+            claim: "The explosion happened in June 1908.",
+            premise,
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+        };
+        // The window's only year dates the expedition, not the explosion.
+        let other_subject =
+            "The explosion was heard far away. Kulik's expedition reached the site in 1927.";
+        assert_eq!(decide(&evidence(other_subject)), None);
+        // The same year beside the claim's subject does contradict it.
+        let same_subject = "The explosion was heard far away. The explosion happened in 1927.";
+        assert_eq!(decide(&evidence(same_subject)), Some(Stance::Contradicts));
+        // Without a number in the premise the gate doesn't apply.
+        let no_number = "Kulik's expedition found no crater.";
+        assert_eq!(decide(&evidence(no_number)), Some(Stance::Contradicts));
     }
 
     #[test]

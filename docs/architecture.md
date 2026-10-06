@@ -356,8 +356,19 @@ evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are s
 - else contradiction ≥ 0.950 **and** cosine ≥ 0.60: `Contradicts`. NLI models over-call
   contradiction between sentences that merely share a topic (0.903 for "Kulik reached
   the site in 1927" against "No impact crater was found"), hence the high bar and the
-  same-subject requirement;
+  same-subject requirement. When claim and premise both hold a number, a premise
+  sentence holding a number must also share a non-number content word with the claim:
+  in a window "The explosion was heard far away. Kulik's expedition reached the site in
+  1927.", the 1927 dates the expedition, so it doesn't contradict "The explosion happened
+  in June 1908." (0.991 from the model);
 - else nothing.
+
+**Measured precision.** `tests/stance_precision.rs` runs the rule on 62 hand-labelled
+pairs scored once by the real models (`tests/fixtures/stance_pairs/`) and prints a
+before/after table on every `cargo test`. With the number-subject gate (VERSION 3):
+supports precision 100% / recall 72%, contradicts 100% / 100%; without it, contradicts
+precision was 94% (one window false positive). A set this small shows the rule fits it,
+not that it generalises; see [the plan's report](plans/stance-precision.md#report).
 
 A chunk gives a claim at most one piece of evidence, from its most decisive window, and
 entailment wins over contradiction, so a chunk is never both for and against.
