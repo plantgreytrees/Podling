@@ -632,7 +632,7 @@ const NO_NLI_KEYS: [(&str, &str); 7] = [
     ),
     (
         "extract_claims",
-        "633c1a3b185a4cb9877ace660c3d96702685ed1939a62977d78c941a2eac479e",
+        "404b5da9403d6e27c9ff4b11b1bc8b38f26813fa53c310abe775721782292c36",
     ),
     (
         "ledger",

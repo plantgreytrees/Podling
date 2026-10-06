@@ -92,7 +92,8 @@ impl Stage for WriteScript<'_> {
     // 12: sources are numbered and a quote names a source number, so the
     //     model sees no chunk id; every judged Contested claim must be cited;
     //     up to `SCRIPT_ATTEMPTS` attempts, each retry listing every rejection;
-    //     a quote may name a quotation inside its sentence (`part`).
+    //     a quote may name a quotation inside its sentence (`part`); a reply
+    //     is capped at `MAX_SCRIPT_TOKENS`.
     const VERSION: u32 = 12;
     type Input = ScriptInput;
     type Output = Script;
@@ -121,7 +122,7 @@ impl Stage for WriteScript<'_> {
                 "ledger": LedgerClaim::from_ledger(&input.ledger, &input.verdicts),
                 "sources": source_texts(&input.chunks, &input.documents),
             }),
-            max_tokens: None,
+            max_tokens: Some(MAX_SCRIPT_TOKENS),
         };
         if !input.cast.is_empty() {
             request.input["cast"] = json!(input.cast);
@@ -144,6 +145,11 @@ impl Stage for WriteScript<'_> {
         })
     }
 }
+
+/// The most tokens a script reply may have: a long audio script with its
+/// citations fits well inside, and a runaway JSON reply stops here instead of
+/// at the request timeout.
+pub const MAX_SCRIPT_TOKENS: u32 = 8192;
 
 /// Attempts at a script before the stage fails. A script has more rules to
 /// break than any other reply, and live, llama3.1:8b often fixed the rejected
@@ -741,6 +747,7 @@ mod tests {
             .unwrap();
         let request = llm.0.borrow().clone().unwrap();
         assert_eq!(request.instructions, INSTRUCTIONS);
+        assert_eq!(request.max_tokens, Some(MAX_SCRIPT_TOKENS));
         assert!(request.input.get("audio").is_none());
         let written = serde_json::to_value(&script).unwrap();
         assert!(written.get("beats").is_none(), "{written}");

@@ -104,7 +104,11 @@ instructions, each cut to 500 characters (`reason_excerpt`), since a reason can 
 part of the reply. Extraction and adjudication get two attempts (`DEFAULT_ATTEMPTS`)
 per chunk or Contested claim; the script gets three (`SCRIPT_ATTEMPTS`), because
 live, llama3.1:8b often fixed the rejected mistake on a retry and made a new one.
-The last failure is the error. The adjudicator alone turns that error into a
+The last failure is the error. Every request is also capped through
+`CompletionRequest::max_tokens` (`MAX_CLAIMS_TOKENS` 2048, `MAX_SCRIPT_TOKENS` 8192,
+`MAX_VERDICT_TOKENS` 512; the provider sends the lower of that and the episode's
+`max_output_tokens`): live, llama3.1:8b in JSON mode sometimes never stops, and a
+cut-off reply is just another rejection. The adjudicator alone turns that error into a
 verdict instead of failing (see [Adjudicating Contested claims](#adjudicating-contested-claims)). Transport failures are not retried there, because the provider
 has its own policy (below).
 
