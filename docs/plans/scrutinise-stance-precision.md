@@ -2,7 +2,7 @@
 slug: scrutinise-stance-precision
 goal: The number-subject gate is measured on reworded and incidental-word numeric pairs too, so its precision gain is not bought with unseen recall loss.
 classification: in-scope   # fixes from /scrutinise stance-precision (range d5a78af..b3632c1); docs/plans/stance-precision.md
-tracker_rows: [TRACKER#scrutinise-stance-precision/1, TRACKER#scrutinise-stance-precision/2]
+tracker_rows: [TRACKER#scrutinise-stance-precision/1, TRACKER#scrutinise-stance-precision/2, TRACKER#scrutinise-stance-precision/3]
 guards:
   blast_radius: done
   completeness_sweep: done
@@ -12,10 +12,10 @@ coverage:
   data:          N/A(no persistence; stage cache keyed by VERSION, bumped in 1.6 only if the rule changes)
   config:        N/A(the gate has no tunable value; nothing joins config_fingerprint)
   security:      N/A(no authn/input/secret surface; fixtures are committed text)
-  tests:         1.1, 1.2, 1.3, 1.5, 2.1, 2.3, 2.4
-  observability: 1.4, 2.2 (before/after report printed)
+  tests:         1.1, 1.2, 1.3, 1.5, 2.1, 2.3, 2.4, 3.1, 3.3, 3.4
+  observability: 1.4, 2.2, 3.2 (before/after report printed)
   interface:     N/A(no CLI/UI change)
-  docs:          1.7, 2.5 (docs/architecture.md score_stances), 2.6 (text.rs doc), 1.8, 2.7 (this plan's Reports)
+  docs:          1.7, 2.5, 3.6 (docs/architecture.md score_stances), 2.6, 3.5 (text.rs doc), 1.8, 2.7, 3.7 (this plan's Reports)
   rollback:      git revert; a VERSION bump makes cached entries foreign misses
 units:
   - id: 1
@@ -51,6 +51,33 @@ units:
     project: .
     depends_on: [1]
     module: crates/podling-core stance gate pronoun windows + docs
+    language: rust
+    security: normal
+    scope:
+      read:
+        - crates/podling-core/src/stages/score_stances.rs
+        - crates/podling-core/src/text.rs
+        - crates/podling-core/tests/stance_precision.rs
+        - crates/podling-core/tests/fixtures/stance_pairs/pairs.json
+        - crates/podling-core/tests/fixtures/stance_pairs/scores.json
+      docs:
+        - docs/architecture.md
+        - docs/plans/scrutinise-stance-precision.md
+      write:
+        - crates/podling-core/src/stages/score_stances.rs
+        - crates/podling-core/src/text.rs
+        - crates/podling-core/tests/fixtures/stance_pairs/pairs.json
+        - crates/podling-core/tests/fixtures/stance_pairs/scores.json
+        - docs/architecture.md
+        - docs/plans/scrutinise-stance-precision.md
+    arch: []
+    tooling: { implementer: implementer, gates: [code-reviewer],
+               skills: [language-aware-planning], guards: [cargo fmt, cargo clippy, cargo test], mcp: [] }
+  - id: 3
+    scope_id: stance-pronoun-anywhere
+    project: .
+    depends_on: [2]
+    module: crates/podling-core stance gate fronted/possessive pronouns + docs
     language: rust
     security: normal
     scope:
@@ -173,6 +200,44 @@ and tests.
   accept: `cargo doc`-visible comment updated; no behaviour change.
 - [x] 2.7 Fill "Report (round 2)" below.
 
+### Unit 3 — stance-pronoun-anywhere (round 3: /scrutinise range d64f503..5ef59fa, 0 C / 1 W / 2 S)
+Findings: W1 `score_stances.rs:297-303` `opens_with_pronoun` checks only the first word
+(used at :280-282), so a fronted adverbial ("…to the site. In 1931 he got there.") or a
+possessive opener ("His arrival came in 1931."; "his" is a stop word, `text.rs:30-34`) is
+refused; no such pair is measured. S1 `text.rs:30-34,41` STOP_WORDS/`content_words`/
+`sentences` feed the stance gate but `ScoreStances::fingerprint` doesn't cover them. S2
+`score_stances.rs:534-607` the gate is tested through `decide` only, not `ScoreStances::run`.
+
+- [ ] 3.1 W1 pairs: add to `pairs.json` c25 ("Kulik reached the site in 1927." / "Leonid
+  Kulik led the first expedition to the site. In 1931 he got there."), c26 ("Kulik reached
+  the site in 1927." / "Leonid Kulik led the first expedition to the site. His arrival came
+  in 1931."), and same-shape neithers whose pronoun means another noun: n36 ("Kulik reached
+  the site in 1927." / "Kulik studied meteorites in Petrograd. In 1924 it became
+  Leningrad."), n37 ("The explosion happened in June 1908." / "The explosion was witnessed by
+  Evenki herders. Their village was moved in 1921."). Re-score live.
+  accept: `the_pair_set_is_well_formed` passes; old pairs' scores unchanged.
+- [ ] 3.2 Print the report for VERSION 5 on the extended set; record it in Report (round 3).
+  accept: printed with `-- --nocapture report`.
+- [ ] 3.3 Only if 3.2 shows a contradicts miss among c25–c26: candidate (e) a numbered
+  sentence carries the previous sentence's subject when any of its words is a pronoun or
+  possessive (he/she/it/they/this/these/his/her/its/their/him/them). Report its contradicts
+  TP/FP/FN (n36/n37 measure the cost); adopt it only at ≥ VERSION 2 precision and recall
+  (the guard in `stance_precision_report`), else keep VERSION 5 and record the trade-off.
+  If adopted: VERSION 5 → 6 with a one-line reason; unit cases for c25/c26 shapes beside
+  `a_pronoun_carries_the_subject_into_the_numbered_sentence`; no threshold moved.
+  accept: chosen rule's figures printed; pre-existing tests unchanged; `cargo test --workspace` green.
+- [ ] 3.4 S2: one `ScoreStances::run`-level test with the module's fake NLI returning
+  contradiction ≥ CONTRADICT_PM for a claim and an off-subject numbered window (n21 shape),
+  asserting that claim gets no Contradicts evidence from that chunk.
+  accept: test passes and fails if `Judged::stance` gets claim/premise swapped or the gate removed.
+- [ ] 3.5 S1: doc comments on `STOP_WORDS`, `content_words` and `sentences` in `text.rs` say
+  the stance gate depends on them, so a change must bump `ScoreStances` VERSION.
+  accept: comments present; no behaviour change.
+- [ ] 3.6 `docs/architecture.md` score_stances: pair count and figures equal the 3.2/3.3
+  report; rule bullet describes the pronoun carry-over as adopted.
+  accept: doc figures equal the printed report.
+- [ ] 3.7 Fill "Report (round 3)" below.
+
 ## Report
 Pair set: 62 → 73 pairs (c17–c21 reworded/plural-subject numeric contradictions; n29–n33
 incidental-word and window numeric neithers; s19 a window restating the claim's number
@@ -241,6 +306,9 @@ the constraints forbid. VERSION 5 holds recall at 100% and still raises contradi
 over VERSION 2 (85.7% → 92.3%). A false Contradicts sends the claim to the adjudicator; a
 dropped one silently leaves it Corroborated/SingleSource. Supports unchanged; no threshold
 moved.
+
+## Report (round 3)
+_Filled by 3.7._
 
 ## Verification background
 - Gate: `crates/podling-core/src/stages/score_stances.rs` `numbers_share_the_subject` (~259),
