@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current as of 2026-10-06. It covers Phase 1 (core contracts), the
+> **Status:** current as of 2026-10-07. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes, Phase 2 (the OpenAI-compatible LLM provider) and its
 > scrutinise fixes (unreferenced-quotation check, claim grounding, script input
 > size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
@@ -10,8 +10,8 @@
 > `/scrutinise` fixes (backchannel-aware speech checks, a weights- and
 > adapter-aware TTS cache key, a voice licence allow-list, and stopping the
 > sidecar's whole process tree). Phase 5 was built before Phase 4. It also
-> covers stance precision (the number-subject rule in `score_stances`, VERSION 6,
-> measured on a labelled pair set).
+> covers stance precision (the number-subject rule and the two-way check in
+> `score_stances`, VERSION 7, measured on a labelled pair set).
 
 This document describes the state after Phases 4 and 5. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -392,17 +392,30 @@ evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are s
   1931.") also names what the sentence before it names: word overlap can't tell
   which noun the pronoun means, so such a window keeps the model's call even when the
   pronoun means another noun ("Kulik studied meteorites in Petrograd. It became Leningrad
-  in 1924."), trading those false contradictions for not dropping real ones;
+  in 1924."), trading those false contradictions for not dropping real ones. Finally,
+  a number-against-number contradiction must hold **both ways**: the claim, read as the
+  premise, must also contradict one of the window's numbered sentences at ≥ 0.950
+  (`reverse_hypotheses`; scored only for candidates that would otherwise contradict,
+  in one extra batch). A count that only shares a topic is over-called one way:
+  "The vessel was provided with lifeboats for 1,176 persons." against "From these
+  boats he took on board 712 persons" scores 0.997 forward but 0.010 back, while
+  "706 persons were saved." scores 0.997 / 0.995. The cost: a count the model reads as
+  a subset ("80 million trees" against "8 million fir trunks", 0.000 back) is no
+  longer a contradiction;
 - else nothing.
 
-**Measured precision.** `tests/stance_precision.rs` runs the rule on 82 hand-labelled
-pairs scored once by the real models (`tests/fixtures/stance_pairs/`); the test fails if
-the rule's precision or recall falls below the VERSION 2 rule's on that set, and
+**Measured precision.** `tests/stance_precision.rs` runs the rule on 84 hand-labelled
+pairs scored once by the real models, both ways (`tests/fixtures/stance_pairs/`); the
+test pins the current rule's counts and false-positive ids exactly, so any rule change
+must update them on purpose, and
 `cargo test -p podling-core --test stance_precision -- --nocapture report` prints the
-before/after table. With the number-subject rule (VERSION 6): supports precision 100% /
-recall 74%, contradicts 87% / 100% (four false positives, all pronouns meaning another
-noun); without it (VERSION 2), contradicts precision is 81% (six window false
-positives). VERSION 3's stricter rule (the number's own sentence must share a word) cost
+before/after table. VERSION 7: supports precision 100% / recall 73.7%, contradicts
+92.9% / 96.3% (false positives n35 n36, pronouns meaning another noun; missed c18, the
+subset count above); the VERSION 2 rule (thresholds only) gives contradicts 79.4% /
+100% (seven false positives). VERSION 6 (no two-way check) had 86.7% / 100% on the
+first 82 pairs, with four false positives (n34 n35 n36 n37, all pronouns meaning another
+noun); the two-way check removes n34 and n37, and t02, the lifeboat pair, added since.
+VERSION 3's stricter rule (the number's own sentence must share a word) cost
 contradicts recall 81% on reworded subjects, VERSION 4 (no pronoun carry-over) 92% on
 pronoun windows, and VERSION 5 (only a sentence-opening pronoun) 92% on fronted-date and
 possessive windows. A set this small shows the rule fits it, not that it generalises; see

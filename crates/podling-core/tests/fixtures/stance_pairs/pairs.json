@@ -84,5 +84,7 @@
   { "id": "c25", "label": "contradicts", "claim": "Kulik reached the site in 1927.", "premise": "Leonid Kulik led the first expedition to the site. In 1931 he got there.", "note": "window, changed year, fronted date before the pronoun" },
   { "id": "c26", "label": "contradicts", "claim": "Kulik reached the site in 1927.", "premise": "Leonid Kulik led the first expedition to the site. His arrival came in 1931.", "note": "window, changed year, possessive refers back to the subject" },
   { "id": "n36", "label": "neither", "claim": "Kulik reached the site in 1927.", "premise": "Kulik studied meteorites in Petrograd. In 1924 it became Leningrad.", "note": "window, fronted date, pronoun refers to something else" },
-  { "id": "n37", "label": "neither", "claim": "The explosion happened in June 1908.", "premise": "The explosion was witnessed by Evenki herders. Their village was moved in 1921.", "note": "window, possessive refers to someone else" }
+  { "id": "n37", "label": "neither", "claim": "The explosion happened in June 1908.", "premise": "The explosion was witnessed by Evenki herders. Their village was moved in 1921.", "note": "window, possessive refers to someone else" },
+  { "id": "t01", "label": "contradicts", "claim": "706 persons were saved.", "premise": "From these boats he took on board 712 persons, one of them died shortly afterwards.", "note": "Titanic: the US and British counts of survivors disagree" },
+  { "id": "t02", "label": "neither", "claim": "The vessel was provided with lifeboats for 1,176 persons.", "premise": "From these boats he took on board 712 persons, one of them died shortly afterwards.", "note": "Titanic: boat capacity against people taken aboard, a shared topic, not a disagreement" }
 ]
