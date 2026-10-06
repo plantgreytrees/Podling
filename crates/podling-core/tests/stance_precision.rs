@@ -72,6 +72,9 @@ struct Scores {
 #[serde(deny_unknown_fields)]
 struct Scored {
     id: String,
+    /// `text_hash` of the pair as scored, so an edited pair can't keep stale
+    /// scores under its old id.
+    text_hash: String,
     similarity_pm: PerMille,
     entailment_pm: PerMille,
     contradiction_pm: PerMille,
@@ -86,6 +89,13 @@ fn fixture(name: &str) -> PathBuf {
 fn pairs() -> Vec<Pair> {
     let text = std::fs::read_to_string(fixture("pairs.json")).unwrap();
     serde_json::from_str(&text).unwrap()
+}
+
+/// What the scores depend on: the claim and the premise.
+fn text_hash(pair: &Pair) -> String {
+    blake3::hash(format!("{}\n{}", pair.claim, pair.premise).as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 fn scores() -> Scores {
@@ -162,6 +172,12 @@ impl Report {
             contradicts: Counts::default(),
         };
         for (pair, scored) in pairs.iter().zip(&scores.pairs) {
+            assert_eq!(
+                scored.text_hash,
+                text_hash(pair),
+                "scores.json is stale for {}: run score_the_stance_pairs",
+                pair.id
+            );
             let got = rule(&StanceEvidence {
                 claim: &pair.claim,
                 premise: &pair.premise,
@@ -232,6 +248,10 @@ fn stance_precision_report() {
         ("supports", &before.supports, &after.supports),
         ("contradicts", &before.contradicts, &after.contradicts),
     ] {
+        // A gate that only removes stances raises precision for free by
+        // dropping right ones too, so recall must hold as well.
+        let (br, ar) = (b.recall().unwrap(), a.recall().unwrap());
+        assert!(ar >= br, "{name} recall fell: {br:.3} -> {ar:.3}");
         let (b, a) = (b.precision().unwrap(), a.precision().unwrap());
         assert!(a >= b, "{name} precision fell: {b:.3} -> {a:.3}");
         better |= a > b;
@@ -306,6 +326,7 @@ fn score_the_stance_pairs() {
         .zip(vectors.chunks(2))
         .map(|((p, s), v)| Scored {
             id: p.id.clone(),
+            text_hash: text_hash(p),
             similarity_pm: PerMille::from_probability(cosine(&v[0], &v[1])),
             entailment_pm: PerMille::from_probability(s.entailment),
             contradiction_pm: PerMille::from_probability(s.contradiction),

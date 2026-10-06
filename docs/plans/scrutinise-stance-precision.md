@@ -72,39 +72,72 @@ report fails the build when a rule change loses recall.
 ## Scope Steps (executable core)
 
 ### Unit 1 — stance-subject
-- [ ] 1.1 W2: `stance_precision_report` also asserts after-recall ≥ before-recall per stance.
+- [x] 1.1 W2: `stance_precision_report` also asserts after-recall ≥ before-recall per stance.
   accept: a rule that drops every Contradicts but one correct one fails the test (checked by
   temporarily pointing `after` at such a rule, then reverted).
-- [ ] 1.2 S2: `Scored` records `text_hash` (blake3 hex of claim + "\n" + premise);
+- [x] 1.2 S2: `Scored` records `text_hash` (blake3 hex of claim + "\n" + premise);
   `Report::of` asserts each matches its pair, message "scores.json is stale".
   accept: editing a pair's premise without re-scoring fails the report test.
-- [ ] 1.3 W1/S1 pairs: add labelled pairs to `pairs.json` — ≥4 numeric contradicts with a
+- [x] 1.3 W1/S1 pairs: add labelled pairs to `pairs.json` — ≥4 numeric contradicts with a
   reworded/plural subject (e.g. blast/occurred/1907; "explosions"; "trees … 80 million" vs
   "8 million fir trees"), ≥3 numeric neither pairs whose only shared word is incidental
   (e.g. "Kulik's expedition reached the site in June 1927." vs the June 1908 claim), and a
   window whose subject sentence restates the claim's number while another sentence holds
   an unrelated number. Re-score the whole set with the live models (module docs command).
   accept: `the_pair_set_is_well_formed` passes; scores.json fingerprint/embedding unchanged.
-- [ ] 1.4 Print the report on the extended set for the current rule (VERSION 3) and for
+- [x] 1.4 Print the report on the extended set for the current rule (VERSION 3) and for
   VERSION 2; record both in the Report section below.
   accept: report printed with `-- --nocapture report`.
-- [ ] 1.5 Gate change only if 1.4 shows a W1 miss or an S1 false positive: candidate rules
+- [x] 1.5 Gate change only if 1.4 shows a W1 miss or an S1 false positive: candidate rules
   (a) the subject sentence must hold a number the claim does not state; (b) month/unit
   words leave the subject; (c) shared-prefix match (≥5 chars) for the subject. Report each
   candidate's contradicts TP/FP/FN; pick the one with the best precision at ≥ the current
   recall, else keep the rule and record why. S3 cases join
   `a_number_about_something_else_does_not_contradict` (or a sibling test) either way.
   accept: chosen rule's figures printed before/after; pre-existing tests unchanged.
-- [ ] 1.6 If the rule changed: `Stage::VERSION` 3 → 4 with a one-line reason; `decide_v2`
+- [x] 1.6 If the rule changed: `Stage::VERSION` 3 → 4 with a one-line reason; `decide_v2`
   stays the baseline; nothing joins `config_fingerprint` unless a tunable value is added.
   accept: `cargo test --workspace` green.
-- [ ] 1.7 S4 + figures: `docs/architecture.md` score_stances "Measured precision" paragraph
+- [x] 1.7 S4 + figures: `docs/architecture.md` score_stances "Measured precision" paragraph
   gives the extended pair count and figures and the `-- --nocapture report` command.
   accept: doc figures equal the printed report.
-- [ ] 1.8 Fill the Report section below.
+- [x] 1.8 Fill the Report section below.
 
 ## Report
-(filled by 1.4/1.5)
+Pair set: 62 → 73 pairs (c17–c21 reworded/plural-subject numeric contradictions; n29–n33
+incidental-word and window numeric neithers; s19 a window restating the claim's number
+beside an unrelated one). Re-scored live (DeBERTa NLI, nomic-embed-text); the 62 old
+pairs' scores came back identical.
+
+`cargo test -p podling-core --test stance_precision -- --nocapture report`:
+
+```
+before: VERSION 2 rule on the labelled pair set
+  stance       TP  FP  FN  precision  recall  false positives
+  supports     14   0   5     100.0%   73.7%
+  contradicts  21   2   0      91.3%  100.0%  n21 n33
+VERSION 3 (number's own sentence must share a word), same set:
+  contradicts  17   0   4     100.0%   81.0%   -> W1 confirmed; the new recall check failed it
+after: score_stances::decide (VERSION 4) on the labelled pair set
+  supports     14   0   5     100.0%   73.7%
+  contradicts  21   0   0     100.0%  100.0%
+```
+
+What separates the false positives from the misses: n21 and n33 name the claim's subject
+("explosion") in a sentence without a number and put their year in a sentence about
+something else; c17–c21 share no word with the claim anywhere, so word overlap cannot
+judge them. VERSION 4 refuses Contradicts only when some sentence names the subject and
+no number-holding sentence does.
+
+| Candidate (plan 1.5) | Contradicts TP/FP/FN | Outcome |
+|---|---|---|
+| (a) subject sentence must hold a number the claim doesn't state | ≤17 / 0 / ≥4 | adds a condition to VERSION 3, so it can't recover c17–c21 |
+| (b) month/unit words leave the subject | ≤17 / 0 / ≥4 | n29 ("June" only) is no false positive here (the model is below 0.950), and it can't recover the misses |
+| (c) ≥5-char shared prefix | ≤18 / 0 / ≥3 | only "expedition(s)" (c19) is matched; blast/explosion, trees/trunks are not |
+| subject named only in a numberless sentence (chosen) | 21 / 0 / 0 | precision and recall both 100% |
+
+No threshold moved. S1 (one incidental word such as "june" passes the gate) remains
+possible in principle; n29 shows the model doesn't over-call it on this set.
 
 ## Verification background
 - Gate: `crates/podling-core/src/stages/score_stances.rs` `numbers_share_the_subject` (~259),
