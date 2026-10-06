@@ -5,6 +5,18 @@
 > was finished. NLI grounding in extraction and Phase 5 (episode audio) were
 > merged before it.
 
+> **Status (2026-10-06):** stance-precision is built on branch
+> `worktree-stance-precision-instruction`, not yet merged to main.
+> `score_stances` VERSION 6 refuses a number-against-number contradiction whose
+> premise names the claim's subject only in sentences without a number (see
+> `docs/architecture.md`, score_stances). On 82 labelled pairs, contradicts
+> precision rose from 81.2% to 86.7% and recall stayed at 100%
+> (`docs/plans/scrutinise-stance-precision.md`, Report (round 3)). Two things
+> stay open. First, the lifeboat case ("lifeboats for 1,176" against
+> "712 saved") isn't addressed: both numbers sit beside the shared subject, so
+> the rule keeps the model's call. Second, the live Titanic and Tunguska check
+> below hasn't been run.
+
 ## Goal
 
 **Fewer spurious Contested claims. With `[nli]` set, two sources should be

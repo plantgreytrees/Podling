@@ -9,7 +9,9 @@
 > (episode audio: TTS, speech-recognition checks, assembly) with its
 > `/scrutinise` fixes (backchannel-aware speech checks, a weights- and
 > adapter-aware TTS cache key, a voice licence allow-list, and stopping the
-> sidecar's whole process tree). Phase 5 was built before Phase 4.
+> sidecar's whole process tree). Phase 5 was built before Phase 4. It also
+> covers stance precision (the number-subject rule in `score_stances`, VERSION 6,
+> measured on a labelled pair set).
 
 This document describes the state after Phases 4 and 5. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -378,9 +380,8 @@ at most 120 words, well under DeBERTa's 512 tokens. For each claim, only windows
 evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are scored:
 - entailment ≥ 0.800: `Supports`;
 - else contradiction ≥ 0.950 **and** cosine ≥ 0.60: `Contradicts`. NLI models over-call
-  contradiction between sentences that merely share a topic (0.903 for "Kulik reached
-  the site in 1927" against "No impact crater was found"), hence the high bar and the
-  same-subject requirement. When claim and premise both hold a number, a premise that
+  contradiction between sentences that merely share a topic (0.991 for the 1927
+  expedition window below), hence the high bar and the same-subject requirement. When claim and premise both hold a number, a premise that
   names the claim's subject (shares a non-number content word with it) only in
   sentences without a number is refused: in a window "The explosion was heard far away.
   Kulik's expedition reached the site in 1927.", the 1927 dates the expedition, so it
