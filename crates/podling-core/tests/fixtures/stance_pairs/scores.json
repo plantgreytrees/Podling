@@ -1,0 +1,383 @@
+{
+  "nli": {
+    "max_tokens": 512,
+    "provider": "cross_encoder",
+    "version": 1,
+    "weights_blake3": "fc98f663050f14b92b9a0fd70eadb8c723200d6eeec94ab14d52ccd1034a6311"
+  },
+  "embedding": "nomic-embed-text",
+  "pairs": [
+    {
+      "id": "s01",
+      "similarity_pm": 985,
+      "entailment_pm": 998,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s02",
+      "similarity_pm": 881,
+      "entailment_pm": 997,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s03",
+      "similarity_pm": 873,
+      "entailment_pm": 996,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s04",
+      "similarity_pm": 870,
+      "entailment_pm": 1,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s05",
+      "similarity_pm": 657,
+      "entailment_pm": 9,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s06",
+      "similarity_pm": 807,
+      "entailment_pm": 14,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "s07",
+      "similarity_pm": 883,
+      "entailment_pm": 991,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s08",
+      "similarity_pm": 793,
+      "entailment_pm": 964,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s09",
+      "similarity_pm": 827,
+      "entailment_pm": 985,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "s10",
+      "similarity_pm": 796,
+      "entailment_pm": 997,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s11",
+      "similarity_pm": 793,
+      "entailment_pm": 998,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s12",
+      "similarity_pm": 812,
+      "entailment_pm": 1,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s13",
+      "similarity_pm": 849,
+      "entailment_pm": 998,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s14",
+      "similarity_pm": 921,
+      "entailment_pm": 997,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s15",
+      "similarity_pm": 690,
+      "entailment_pm": 973,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "s16",
+      "similarity_pm": 801,
+      "entailment_pm": 1,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "c01",
+      "similarity_pm": 936,
+      "entailment_pm": 0,
+      "contradiction_pm": 998
+    },
+    {
+      "id": "c02",
+      "similarity_pm": 965,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c03",
+      "similarity_pm": 969,
+      "entailment_pm": 0,
+      "contradiction_pm": 999
+    },
+    {
+      "id": "c04",
+      "similarity_pm": 663,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c05",
+      "similarity_pm": 977,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c06",
+      "similarity_pm": 846,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c07",
+      "similarity_pm": 936,
+      "entailment_pm": 0,
+      "contradiction_pm": 999
+    },
+    {
+      "id": "c08",
+      "similarity_pm": 725,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c09",
+      "similarity_pm": 732,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c10",
+      "similarity_pm": 987,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c11",
+      "similarity_pm": 927,
+      "entailment_pm": 0,
+      "contradiction_pm": 999
+    },
+    {
+      "id": "c12",
+      "similarity_pm": 893,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c13",
+      "similarity_pm": 899,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c14",
+      "similarity_pm": 892,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "n01",
+      "similarity_pm": 442,
+      "entailment_pm": 0,
+      "contradiction_pm": 4
+    },
+    {
+      "id": "n02",
+      "similarity_pm": 442,
+      "entailment_pm": 0,
+      "contradiction_pm": 466
+    },
+    {
+      "id": "n03",
+      "similarity_pm": 625,
+      "entailment_pm": 0,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "n04",
+      "similarity_pm": 439,
+      "entailment_pm": 0,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "n05",
+      "similarity_pm": 603,
+      "entailment_pm": 0,
+      "contradiction_pm": 3
+    },
+    {
+      "id": "n06",
+      "similarity_pm": 489,
+      "entailment_pm": 0,
+      "contradiction_pm": 980
+    },
+    {
+      "id": "n07",
+      "similarity_pm": 526,
+      "entailment_pm": 1,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "n08",
+      "similarity_pm": 556,
+      "entailment_pm": 0,
+      "contradiction_pm": 998
+    },
+    {
+      "id": "n09",
+      "similarity_pm": 666,
+      "entailment_pm": 0,
+      "contradiction_pm": 6
+    },
+    {
+      "id": "n10",
+      "similarity_pm": 694,
+      "entailment_pm": 0,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "n11",
+      "similarity_pm": 655,
+      "entailment_pm": 2,
+      "contradiction_pm": 4
+    },
+    {
+      "id": "n12",
+      "similarity_pm": 490,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "n13",
+      "similarity_pm": 767,
+      "entailment_pm": 0,
+      "contradiction_pm": 4
+    },
+    {
+      "id": "n14",
+      "similarity_pm": 596,
+      "entailment_pm": 0,
+      "contradiction_pm": 16
+    },
+    {
+      "id": "n15",
+      "similarity_pm": 663,
+      "entailment_pm": 0,
+      "contradiction_pm": 2
+    },
+    {
+      "id": "n16",
+      "similarity_pm": 594,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "n17",
+      "similarity_pm": 517,
+      "entailment_pm": 6,
+      "contradiction_pm": 135
+    },
+    {
+      "id": "n18",
+      "similarity_pm": 710,
+      "entailment_pm": 0,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s17",
+      "similarity_pm": 847,
+      "entailment_pm": 996,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "s18",
+      "similarity_pm": 792,
+      "entailment_pm": 997,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "c15",
+      "similarity_pm": 807,
+      "entailment_pm": 0,
+      "contradiction_pm": 999
+    },
+    {
+      "id": "c16",
+      "similarity_pm": 650,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "n19",
+      "similarity_pm": 625,
+      "entailment_pm": 0,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "n20",
+      "similarity_pm": 548,
+      "entailment_pm": 2,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "n21",
+      "similarity_pm": 691,
+      "entailment_pm": 0,
+      "contradiction_pm": 991
+    },
+    {
+      "id": "n22",
+      "similarity_pm": 625,
+      "entailment_pm": 0,
+      "contradiction_pm": 248
+    },
+    {
+      "id": "n23",
+      "similarity_pm": 735,
+      "entailment_pm": 0,
+      "contradiction_pm": 102
+    },
+    {
+      "id": "n24",
+      "similarity_pm": 774,
+      "entailment_pm": 3,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "n25",
+      "similarity_pm": 799,
+      "entailment_pm": 5,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "n26",
+      "similarity_pm": 692,
+      "entailment_pm": 0,
+      "contradiction_pm": 0
+    },
+    {
+      "id": "n27",
+      "similarity_pm": 719,
+      "entailment_pm": 0,
+      "contradiction_pm": 1
+    },
+    {
+      "id": "n28",
+      "similarity_pm": 611,
+      "entailment_pm": 0,
+      "contradiction_pm": 939
+    }
+  ]
+}

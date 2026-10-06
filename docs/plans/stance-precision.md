@@ -101,7 +101,32 @@ Depends on: stance-eval
 Measure before changing: step 1 adds the instrument and records today's figures with no behaviour change; step 2 changes the rule only where the recorded figures justify it.
 
 ## Report
-(filled by 1.5 and 2.1/2.6)
+
+**Pair set.** 62 hand-labelled pairs in `crates/podling-core/tests/fixtures/stance_pairs/pairs.json`:
+18 supports, 16 contradicts, 28 neither. 48 have a one-sentence premise; 14 (s17–s18, c15–c16,
+n19–n28) have a two-sentence premise window, the shape `score_stances` actually scores
+(`MAX_WINDOW_SENTENCES = 2`). Scored 2026-10-06 by `cross-encoder/nli-deberta-v3-base`
+(weights BLAKE3 `fc98f663…`) and `nomic-embed-text` (Ollama), raw scores in `scores.json`.
+
+**Before (VERSION 2 rule: entail ≥ 800 → Supports; contradiction ≥ 950 and similarity ≥ 600 → Contradicts):**
+
+| stance | TP | FP | FN | precision | recall | false positives |
+|---|---|---|---|---|---|---|
+| supports | 13 | 0 | 5 | 100.0% | 72.2% | |
+| contradicts | 16 | 1 | 0 | 94.1% | 100.0% | n21 |
+
+Observations:
+- **n21** is the topic-overlap false positive: claim "The explosion happened in June 1908." against
+  the window "The explosion was heard hundreds of kilometres away. Kulik's expedition reached the
+  site in 1927." — similarity 691, contradiction 991. The window shares the subject in one sentence
+  and carries a different event's year in the other.
+- The Kulik/crater pair does not reproduce sentence-to-sentence (n01 contradiction 4, n02 466) nor in
+  the window shapes tried (n19 1, n20 1). The 0.903 recorded in phase3-nli-ledger was a different
+  premise; the same failure family shows up as n21.
+- Four "neither" pairs get contradiction ≥ 980 and are stopped only by the similarity gate: n06 (489),
+  n08 (556), n12 (490), n16 (**594**, 6 per mille under the gate). n28 is at contradiction 939, 11
+  under `CONTRADICT_PM`. The lowest-similarity true contradictions are c16 (650) and c04 (663).
+- Supports has no false positive; its five misses (s04, s05, s06, s12, s16) are recall, not precision.
 
 ## Verification background
 - Decision rule today: entail ≥ 800 → Supports; else contradiction ≥ 950 and similarity ≥ 600 → Contradicts — `crates/podling-core/src/stages/score_stances.rs` `Judged::stance` (~line 217)

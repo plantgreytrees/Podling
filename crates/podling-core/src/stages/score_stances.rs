@@ -145,7 +145,8 @@ impl Stage for ScoreStances<'_> {
                 entailment: PerMille::from_probability(score.entailment),
                 contradiction: PerMille::from_probability(score.contradiction),
             };
-            let Some(stance) = judged.stance() else {
+            let premise = windows[candidate.window].text;
+            let Some(stance) = judged.stance(input.claims[candidate.claim].text(), premise) else {
                 continue;
             };
             let key = (candidate.claim, windows[candidate.window].chunk);
@@ -211,19 +212,44 @@ struct Judged {
     contradiction: PerMille,
 }
 
+/// Everything one premise window's stance on a claim is decided from: the two
+/// texts and the scores the models gave them. Public so the stance rule can
+/// be measured on a labelled pair set (`tests/stance_precision.rs`) without
+/// running the whole stage.
+#[derive(Debug, Clone, Copy)]
+pub struct StanceEvidence<'a> {
+    pub claim: &'a str,
+    pub premise: &'a str,
+    /// Embedding cosine of the claim and the premise.
+    pub similarity: PerMille,
+    pub entailment: PerMille,
+    pub contradiction: PerMille,
+}
+
+/// The stance a premise establishes on a claim, if any. Compared on the
+/// rounded scores, so the stored numbers are the ones that decided.
+pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
+    if evidence.entailment.get() >= SUPPORT_ENTAIL_PM {
+        Some(Stance::Supports)
+    } else if evidence.contradiction.get() >= CONTRADICT_PM
+        && evidence.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
+    {
+        Some(Stance::Contradicts)
+    } else {
+        None
+    }
+}
+
 impl Judged {
-    /// The stance this judgement establishes, if any. Compared on the rounded
-    /// scores, so the stored numbers are the ones that decided.
-    fn stance(&self) -> Option<Stance> {
-        if self.entailment.get() >= SUPPORT_ENTAIL_PM {
-            Some(Stance::Supports)
-        } else if self.contradiction.get() >= CONTRADICT_PM
-            && self.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
-        {
-            Some(Stance::Contradicts)
-        } else {
-            None
-        }
+    /// The stance this judgement of `premise` against `claim` establishes.
+    fn stance(&self, claim: &str, premise: &str) -> Option<Stance> {
+        decide(&StanceEvidence {
+            claim,
+            premise,
+            similarity: self.similarity,
+            entailment: self.entailment,
+            contradiction: self.contradiction,
+        })
     }
 }
 
