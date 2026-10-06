@@ -186,9 +186,11 @@ Deferred to later phases:
   `WriteScript` logs a warning when its input is over 24 KiB, because a small server
   context window truncates it silently; raise the server's context (for Ollama,
   `OLLAMA_CONTEXT_LENGTH`).
-- The Dia2 dialogue adapter in the TTS worker: the fallback if per-turn
-  banter doesn't sound natural (the planner and ASR turn spans already
-  handle a multi-speaker backend).
+- The Dia2 dialogue adapter in the TTS worker. Not needed for now: in the
+  2026-10-06 listening pass it sounded near identical to per-turn Qwen (the
+  planner and ASR turn spans already handle a multi-speaker backend).
+- Pronunciation hints and expressive delivery: the Qwen 1.7B Base model is
+  voice-clone only, so the adapter drops each turn's `emotion`.
 - Synthesising chunks in parallel.
 - MCP source connectors.
 - PDF ingestion (Docling / pdfium).

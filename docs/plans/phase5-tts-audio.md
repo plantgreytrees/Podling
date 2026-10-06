@@ -567,9 +567,19 @@ ledger (9 usable claims from the Tunguska sources), not by `target_minutes`. Aud
 repeating a point, which is what the model did when asked to fill 30 minutes. Longer episodes need
 more sources, not a longer target.
 
-**Listening (pending, the user's).** Seams, banter turn-taking and backchannels have not been judged
-by ear: `out-ten10/episode.wav` and `out-thirty/episode.wav` are the files to listen to. This closes
-the listening part of 10.3 and 1.4.
+**Listening (the user, 2026-10-06).** Closes the listening part of 1.4 and 10.3. Copies of the
+files are in `~/podling-listening/` (outside the repository).
+- *Bake-off (1.4):* Qwen and Dia2 sound very similar, near identical. Dia2 is slightly better, but
+  the difference is practically unnoticeable. **Decision: keep per-turn Qwen; the Dia2 dialogue
+  adapter (change 3) is not built.**
+- *Live episodes (10.3):* both are fine: the seams, turn-taking and loudness raised no complaint.
+- *Two problems, for a follow-up:*
+  - **Serious mispronunciations.** Which words are not yet recorded; proper nouns and Russian
+    names ("Kulik", "Tunguska") are the likely ones, matching the ASR's "Koolik".
+  - **Flat delivery.** The voices are not bad but lack personality in how they speak. One cause is
+    known: the 1.7B Base model is voice-clone only, and the adapter drops each turn's `emotion`
+    (`sidecars/tts/podling_tts/backends/qwen.py:160-161`), so the script's emotions never reach
+    the model.
 
 ## Scope Steps (executable core)
 
@@ -579,7 +589,7 @@ Depends on: none
 - [x] 1.1 Write `scripts/tts_bakeoff/pyproject.toml` (uv; Python 3.11) with only commercial-safe deps; record each dep's licence in README → accept: `uv sync` succeeds; README table lists every direct dep + licence; none is AGPL/NC.
 - [x] 1.2 Write `scripts/tts_bakeoff/bakeoff.py`: reads a Podling `script.json`, packs turns into ≤120 s chunks, runs one backend per process (MOSS-TTSD NF4, Dia2-1B, Qwen3-TTS-1.7B), pinned reference clips, writes chunk WAVs + `results.json` → accept: `python bakeoff.py --backend <b> --script <path>` writes ≥5 chunk WAVs for each backend on the Tunguska script. *Done for Qwen (5) and Dia2 (6). MOSS-TTSD cannot load on the 8 GB card after four fixes; that failure is its recorded result (Spike results). The script is the hand-written `fixtures/tunguska-10min.json`, because the example sources are too short for a 10-minute grounded script.*
 - [x] 1.3 Measure per backend: peak VRAM (`torch.cuda.max_memory_allocated` and `nvidia-smi` polling), RTF, speaker similarity of each chunk to its reference (ECAPA cosine, Apache-2.0 model), WER and quote hits with Whisper `base.en` and `small.en` on CPU (incl. CPU RTF) → accept: `results.json` has every metric for every backend; Ollama model unloaded during runs (recorded). *Every backend that produced audio; Ollama's GPU usage was 0 throughout (`ollama_at_start`/`_end`).*
-- [ ] 1.4 Listening pass: rate seams (1–5) and banter timing on chunks 1, 3, 5; confirm weight licences on the model cards → accept: notes recorded per backend. *Licences confirmed (README table). The listening needs a human: `scripts/tts_bakeoff/out/{qwen,dia2}/chunk_00{1,3}.wav` plus `qwen/chunk_004.wav` and `dia2/chunk_005.wav`. In particular, does per-turn Qwen banter sound natural? If not, the Dia2 fallback (change 3) gets built.*
+- [x] 1.4 Listening pass: rate seams (1–5) and banter timing on chunks 1, 3, 5; confirm weight licences on the model cards → accept: notes recorded per backend. *Licences confirmed (README table). The listening needs a human: `scripts/tts_bakeoff/out/{qwen,dia2}/chunk_00{1,3}.wav` plus `qwen/chunk_004.wav` and `dia2/chunk_005.wav`. In particular, does per-turn Qwen banter sound natural? If not, the Dia2 fallback (change 3) gets built.* **Done 2026-10-06:** Qwen and Dia2 near identical (Dia2 marginally better); Qwen kept, no Dia2 adapter. See "Live results".
 - [x] 1.5 Record "Spike results" in this plan: the default backend (must fit ≤ 7.0 GB peak, RTF ≤ 2.0, licence clean), a fallback, Whisper size, and any change to the design above → accept: section exists with numbers and a one-line decision; downstream units' text updated if the decision changes them.
 
 ### Step 2 — audio-contracts (., rust, normal)
@@ -673,7 +683,7 @@ Tooling: implementer · gates docs-curator · guards cargo test
 Depends on: full-assembler
 - [x] 10.1 Add `examples/tunguska/episode-tts.toml` (Ollama + sidecar profile + CC0 voices) and `voices/README.md` with the download commands and licences (clips gitignored) → accept: file parses; README lists each clip's licence. *(LibriTTS-R test-clean 4446/1089 clips, CC-BY-4.0, not CC0: the bake-off voices, credited in `voices/README.md`, whose curl|tar command was run and gave byte-identical clips. `every_example_episode_parses` loads the file, runs `check_audio`, and requires each cast licence to be CC0-1.0 or CC-BY-4.0 and named in the README.)*
 - [x] 10.2 Live run: 10-minute Tunguska episode, cold cache → accept: `episode.wav` plays; all chunks verified; peak VRAM of the sidecar process ≤ 7.0 GB (device total recorded beside it); numbers recorded under "Live results". *(Exit 0; 18/18 chunks verified; sidecar peak 5,120 MiB, device 6,389 of 8,151 during TTS, with llama unloaded first; `episode.wav` decodes at −16.17 LUFS, −1.45 dBTP. See "Live results".)*
-- [ ] 10.3 Live run: 30-minute episode, then edit one turn and rerun → accept: one chunk re-synthesised; listening notes on seams and banter recorded. *(Machine part done: one edited turn re-synthesised exactly one chunk (2 takes), every upstream stage cached. The 30-minute target gives about 1 minute, capped by the ledger. Listening notes pending with the user, so this stays open.)*
+- [x] 10.3 Live run: 30-minute episode, then edit one turn and rerun → accept: one chunk re-synthesised; listening notes on seams and banter recorded. *(Machine part done: one edited turn re-synthesised exactly one chunk (2 takes), every upstream stage cached. The 30-minute target gives about 1 minute, capped by the ledger. Listening notes recorded under "Live results": the episodes are fine; mispronunciations and flat delivery are follow-ups.)*
 - [x] 10.4 Update `docs/architecture.md`: pipeline, TTS/ASR rows in the plugin table, sidecar protocol and lifecycle, blob cache, bump rule for the TTS fingerprint, remove "TTS and ASR provider traits" from Deferred → accept: docs-curator passes. *(Artifact flow, plugin table (TTS, ASR, `UncitedFigures`), new "Episode audio" section, TTS/ASR fingerprints under bump rule 5, Deferred updated. Docs-curator check done in root-only mode: every relative link resolves and every claim was checked against the code.)*
 - [x] 10.5 Update README config table (`[[cast]]`, `[tts]`, `[asr]`, `sidecars.toml`) → accept: every new key documented. *("Episode audio" section: `[[cast]]`, `tts.*`, `asr.*`, `mix.*`, `unload_after`, `sidecars.toml`, `--sidecars`.)*
 - [x] 10.6 Update `docs/handoff.md` "Where things stand" and "Out of scope" → accept: Phase 5 row present. *("Where Phase 5 leaves it", Out of scope, and a phase5-tts-audio row in "Where things stand".)*

@@ -40,9 +40,11 @@ With `[tts]`, a run ends in `episode.wav`: Qwen3-TTS in a sidecar worker speaks
 each turn in a cloned voice, Whisper (CPU) checks every chunk, and the assembler
 paces, mixes and normalises the episode (see `docs/architecture.md`, "Episode
 audio"). Two things are open:
-- **Listening.** Whether per-turn banter sounds natural, and how the seams and
-  backchannels sound, needs a human ear (plan tasks 1.4 and 10.3). If per-turn
-  banter is rejected, the Dia2 dialogue adapter is the planned fallback.
+- **Listening (done 2026-10-06).** Per-turn Qwen and Dia2 sound near identical,
+  so Qwen stays and the Dia2 adapter is not built; the live episodes are fine.
+  Two problems remain for a follow-up: serious mispronunciations (proper nouns
+  such as "Kulik") and flat delivery. The Qwen 1.7B Base model is voice-clone
+  only, and its adapter drops each turn's `emotion`.
 - **The adjudicator and audio.** An adjudicator that adds script turns needs
   nothing new from the audio stages: they read the script only.
 
@@ -119,5 +121,5 @@ The adjudicator would not catch these either, since only Contested claims reach 
 | [phase3-nli-ledger](plans/phase3-nli-ledger.md) | complete; live runs recorded in the plan ("Live results") |
 | [nli-extraction-grounding](plans/nli-extraction-grounding.md) | complete; live runs recorded in the plan ("Live results") |
 | [scrutinise-nli-extraction-grounding](plans/scrutinise-nli-extraction-grounding.md) | complete; premise windows capped at 120 words |
-| [phase5-tts-audio](plans/phase5-tts-audio.md) | Phase 5, episode audio: all units merged on `worktree-phase5-tts-plan`; live runs in the plan ("Live results"); listening passes (1.4, 10.3) pending |
+| [phase5-tts-audio](plans/phase5-tts-audio.md) | Phase 5, episode audio: all units merged on `worktree-phase5-tts-plan`; live runs in the plan ("Live results"); listening passes done: Qwen kept, mispronunciations and flat delivery are follow-ups |
 | [scrutinise-phase5-tts-audio](plans/scrutinise-phase5-tts-audio.md) | three `/scrutinise` rounds; every Warning fixed (units 1–4, 7), the last round clean; units 5, 6 and 8 are PENDING Suggestions |
