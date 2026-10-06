@@ -70,7 +70,9 @@ impl Stage for ScoreStances<'_> {
     // (`number_is_about_the_subject`).
     // 5: a numbered sentence opening with a pronoun also names the sentence
     // before it, so a contradiction told by pronoun isn't refused.
-    const VERSION: u32 = 5;
+    // 6: the pronoun may sit anywhere in the sentence ("In 1931 he got
+    // there.", "His arrival came in 1931."), not only first.
+    const VERSION: u32 = 6;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -257,7 +259,8 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
 /// 1927 as a contradicting date, but it dates the expedition, not the
 /// explosion. A premise that shares no word with the claim at all ("The
 /// blast occurred in 1907.") is reworded, not off-subject, so the model's
-/// call stands. A sentence opening with a pronoun ("He got there in 1931.")
+/// call stands. A sentence holding a pronoun or possessive anywhere ("He got
+/// there in 1931.", "In 1931 he got there.", "His arrival came in 1931.")
 /// also names what the sentence before it names: word overlap can't tell
 /// which noun the pronoun means, so it keeps the model's call rather than
 /// drop a real contradiction. True when either text has no number, so the
@@ -278,7 +281,7 @@ fn number_is_about_the_subject(claim: &str, premise: &str) -> bool {
     for range in sentences(premise) {
         let sentence = &premise[range];
         let mut named = subject(sentence);
-        if opens_with_pronoun(sentence) {
+        if refers_back(sentence) {
             named.extend(previous);
         }
         let names_subject = !named.is_disjoint(&claim_subject);
@@ -292,14 +295,15 @@ fn number_is_about_the_subject(claim: &str, premise: &str) -> bool {
     !named_without_number
 }
 
-/// Whether `sentence` starts with a pronoun that refers back to an earlier
-/// sentence.
-fn opens_with_pronoun(sentence: &str) -> bool {
-    const PRONOUNS: &[&str] = &["he", "she", "it", "they", "this", "these"];
+/// Whether `sentence` holds a pronoun or possessive that may refer back to an
+/// earlier sentence, wherever it sits ("In 1931 he got there.").
+fn refers_back(sentence: &str) -> bool {
+    const PRONOUNS: &[&str] = &[
+        "he", "she", "it", "they", "this", "these", "his", "her", "its", "their", "him", "them",
+    ];
     sentence
         .split(|c: char| !c.is_alphanumeric())
-        .find(|w| !w.is_empty())
-        .is_some_and(|w| PRONOUNS.contains(&w.to_lowercase().as_str()))
+        .any(|w| PRONOUNS.contains(&w.to_lowercase().as_str()))
 }
 
 impl Judged {
@@ -581,6 +585,12 @@ mod tests {
         };
         let pronoun = "Leonid Kulik led the first expedition to the site. He got there in 1931.";
         assert_eq!(decide(&evidence(pronoun)), Some(Stance::Contradicts));
+        // The pronoun needn't open the sentence, and a possessive counts.
+        let fronted = "Leonid Kulik led the first expedition to the site. In 1931 he got there.";
+        assert_eq!(decide(&evidence(fronted)), Some(Stance::Contradicts));
+        let possessive =
+            "Leonid Kulik led the first expedition to the site. His arrival came in 1931.";
+        assert_eq!(decide(&evidence(possessive)), Some(Stance::Contradicts));
         // The pronoun may mean another noun of that sentence; word overlap
         // can't tell, so this one is left to the model too.
         let elsewhere = "Kulik studied meteorites in Petrograd. It became Leningrad in 1924.";
@@ -604,6 +614,57 @@ mod tests {
             contradiction: PerMille::from_probability(0.99),
         };
         assert_eq!(decide(&evidence), Some(Stance::Contradicts));
+    }
+
+    #[test]
+    fn the_stage_refuses_a_number_about_something_else() {
+        /// Calls every premise holding a number a contradiction.
+        struct NumbersContradict;
+        impl NliProvider for NumbersContradict {
+            fn id(&self) -> &str {
+                "numbers-contradict"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+                Ok(pairs
+                    .iter()
+                    .map(|p| {
+                        let c = if numbers(p.premise).is_empty() {
+                            0.0
+                        } else {
+                            1.0
+                        };
+                        NliScores {
+                            entailment: 0.0,
+                            neutral: 1.0 - c,
+                            contradiction: c,
+                        }
+                    })
+                    .collect())
+            }
+        }
+        let claim = "The great explosion happened in 1908.";
+        let contradicted = |window: &str| {
+            let input = input(&[("a", claim), ("b", window)]);
+            let claims = run(&NumbersContradict, &input);
+            matches!(status_of(&claims, claim).0, ClaimStatus::Contested { .. })
+        };
+        // The two-sentence window is similar enough to be judged, so only the
+        // subject rule stops it: its year dates Kulik's arrival, not the
+        // explosion.
+        let off_subject = "The great explosion happened. Kulik arrived in 1927.";
+        let v = FakeEmbedding.embed(&[claim, off_subject]).unwrap();
+        let similarity = PerMille::from_probability(cosine(&v[0], &v[1]));
+        assert!(
+            similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM,
+            "{similarity:?}"
+        );
+        assert!(!contradicted(off_subject));
+        assert!(contradicted(
+            "The great explosion happened. The explosion happened in 1927."
+        ));
     }
 
     #[test]

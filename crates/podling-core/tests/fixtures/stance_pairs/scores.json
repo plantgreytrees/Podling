@@ -552,6 +552,34 @@
       "similarity_pm": 701,
       "entailment_pm": 0,
       "contradiction_pm": 998
+    },
+    {
+      "id": "c25",
+      "text_hash": "0a9f412e3e280e1899ea8a7bb6e2475b87bb29522e362222328a023b6fe4e33b",
+      "similarity_pm": 851,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c26",
+      "text_hash": "1e88f45212540e2b5b920470ae091c979455cd469de949e266f08cae3e3c7991",
+      "similarity_pm": 842,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "n36",
+      "text_hash": "04cb52b9705d99fb62253abeb54c28db0e6a7e05de148875f0830362625f919a",
+      "similarity_pm": 699,
+      "entailment_pm": 0,
+      "contradiction_pm": 997
+    },
+    {
+      "id": "n37",
+      "text_hash": "66e93620a94983cad965905943d901e41ac83efdf1c23f4c0574b300b12b1c6f",
+      "similarity_pm": 707,
+      "entailment_pm": 0,
+      "contradiction_pm": 979
     }
   ]
 }
