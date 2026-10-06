@@ -5,17 +5,20 @@
 > was finished. NLI grounding in extraction and Phase 5 (episode audio) were
 > merged before it.
 
-> **Status (2026-10-06):** stance-precision is built on branch
-> `worktree-stance-precision-instruction`, not yet merged to main.
-> `score_stances` VERSION 6 refuses a number-against-number contradiction whose
-> premise names the claim's subject only in sentences without a number (see
-> `docs/architecture.md`, score_stances). On 82 labelled pairs, contradicts
-> precision rose from 81.2% to 86.7% and recall stayed at 100%
-> (`docs/plans/scrutinise-stance-precision.md`, Report (round 3)). Two things
-> stay open. First, the lifeboat case ("lifeboats for 1,176" against
-> "712 saved") isn't addressed: both numbers sit beside the shared subject, so
-> the rule keeps the model's call. Second, the live Titanic and Tunguska check
-> below hasn't been run.
+> **Status (2026-10-07):** stance-precision is merged to main; its follow-up
+> stance-two-way is built on branch `worktree-stance-quantity`.
+> `score_stances` VERSION 7 refuses a number-against-number contradiction
+> whose premise names the claim's subject only in sentences without a number,
+> and one the NLI model doesn't also find with claim and premise swapped (see
+> `docs/architecture.md`, score_stances). On 84 labelled pairs, contradicts
+> precision is 92.9% (VERSION 2: 79.4%) at recall 96.3%; c18, a count the
+> model reads as a subset, is the approved cost (`docs/plans/stance-two-way.md`,
+> Report). The lifeboat case is addressed and the live check below has been
+> run: cold runs (llama3.1:8b) show "706 persons were saved." Contested and
+> "The vessel was provided with lifeboats for 1,176 persons." single-source on
+> Titanic, and 0 Contested of 9 claims on Tunguska. One known limit remains: a
+> pronoun that means another noun (pairs n35, n36) still keeps the model's
+> contradiction.
 
 ## Goal
 

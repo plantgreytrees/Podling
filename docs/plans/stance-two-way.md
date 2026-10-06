@@ -72,7 +72,7 @@ That is a deliberate, approved change to that test.
 ## Scope Steps (executable core)
 
 ### Unit 1 — stance-two-way
-- [ ] 1.1 `score_stances.rs`: `pub fn reverse_hypotheses(premise) -> Vec<&str>` returns the
+- [x] 1.1 `score_stances.rs`: `pub fn reverse_hypotheses(premise) -> Vec<&str>` returns the
   window's sentences that hold a number. `StanceEvidence` gains
   `reverse_contradiction: Option<PerMille>` — the highest contradiction of the claim (as
   premise) against those sentences (as hypotheses), `None` when not scored. `decide`: when
@@ -84,48 +84,71 @@ That is a deliberate, approved change to that test.
   reverse pair count. VERSION 6 → 7 with a
   one-line reason. The number-subject gate stays.
   accept: `cargo test -p podling-core --lib score_stances` green; no threshold value changed.
-- [ ] 1.2 Unit tests: `decide` refuses a numeric contradiction with low or missing reverse
+- [x] 1.2 Unit tests: `decide` refuses a numeric contradiction with low or missing reverse
   contradiction and keeps it at ≥ CONTRADICT_PM; a non-numeric contradiction ignores the
   reverse field. Existing `decide` tests built in this feature series pass the reverse
   value they need (they predate it); the pre-existing stage tests (paraphrase supports,
   changed-year contests, one evidence per chunk, own group never checked) stay unchanged
   and green.
   accept: tests named for each case; `git diff` shows no edit to the four pre-existing tests.
-- [ ] 1.3 A stage-level test with a fake NLI whose contradiction is one-way (forward high,
+- [x] 1.3 A stage-level test with a fake NLI whose contradiction is one-way (forward high,
   reverse low) for a numbered window: the claim gets no Contradicts evidence; a two-way one
   still contests.
   accept: test passes and asserts the window's similarity clears MIN_CONTRADICT_SIMILARITY_PM.
-- [ ] 1.4 `pairs.json`: add t01 contradicts ("706 persons were saved." / "From these boats he
+- [x] 1.4 `pairs.json`: add t01 contradicts ("706 persons were saved." / "From these boats he
   took on board 712 persons, one of them died shortly afterwards.") and t02 neither ("The
   vessel was provided with lifeboats for 1,176 persons." / same premise). `Scored` gains
   `reverse_contradiction_pm` (max over `reverse_hypotheses`, absent when the pair has no
   numbers on both sides); `score_the_stance_pairs` fills it; re-score live.
   accept: `the_pair_set_is_well_formed` passes; forward scores of the 82 earlier pairs unchanged.
-- [ ] 1.5 Round-4 suggestion: replace the vacuous Kulik/crater assertion with
+- [x] 1.5 Round-4 suggestion: replace the vacuous Kulik/crater assertion with
   `decide(..) == None` for n21 and n33 (the off-subject window pairs).
   accept: assertion fails if the subject gate and the reverse check are both removed.
-- [ ] 1.6 `stance_precision_report`: prints VERSION 2 (before) and current (after); asserts
+- [x] 1.6 `stance_precision_report`: prints VERSION 2 (before) and current (after); asserts
   the current contradicts and supports TP/FP/FN and FP id sets exactly, so any rule change
   must update them on purpose.
   accept: report printed with `-- --nocapture report`; figures recorded in Report below.
-- [ ] 1.7 Live acceptance (cold `--cache-dir`, llama3.1:8b on the GPU Ollama
+- [x] 1.7 Live acceptance (cold `--cache-dir`, llama3.1:8b on the GPU Ollama
   127.0.0.1:11435, NLI weights in `~/.cache/podling-models/nli-deberta-v3-base`): a Titanic
   run reaches the ledger with "706 persons were saved." (or the extracted 706 claim)
   Contested and the lifeboat-capacity claim not Contested; one Tunguska run exits 0 with 0
   Contested. A script-stage failure from llama's known quoting flake is recorded, and the
   run repeated until one exits 0.
   accept: run outcomes recorded in Report.
-- [ ] 1.8 `docs/architecture.md` score_stances: the rule bullet describes the two-way check
+- [x] 1.8 `docs/architecture.md` score_stances: the rule bullet describes the two-way check
   and its cost (c18); "Measured precision" gives the new pair count and figures, and says
   the test pins the current figures exactly.
   accept: doc figures equal the printed report.
-- [ ] 1.9 `docs/handoff.md` status: the lifeboat case is addressed and the live check run;
+- [x] 1.9 `docs/handoff.md` status: the lifeboat case is addressed and the live check run;
   remaining limits named (n35/n36 pronoun cases).
   accept: written.
-- [ ] 1.10 Fill Report below.
+- [x] 1.10 Fill Report below.
 
 ## Report
-_Filled by 1.10._
+Commit `4d2e853` (code, tests, pair set, live scores) on `feat/stance-two-way`.
+
+`cargo test -p podling-core --test stance_precision -- --nocapture report` on 84 pairs:
+
+| rule | stance | TP | FP | FN | precision | recall | false positives |
+|---|---|---|---|---|---|---|---|
+| VERSION 2 | supports | 14 | 0 | 5 | 100.0% | 73.7% | |
+| VERSION 2 | contradicts | 27 | 7 | 0 | 79.4% | 100.0% | n21 n33 n34 n35 n36 n37 t02 |
+| VERSION 7 | supports | 14 | 0 | 5 | 100.0% | 73.7% | |
+| VERSION 7 | contradicts | 26 | 2 | 1 | 92.9% | 96.3% | n35 n36 |
+
+The miss is c18 (approved). Live reverse scores: t01 997/995, t02 997/10, matching the probe.
+Forward scores of the 82 earlier pairs are unchanged: the `scores.json` diff only adds
+`reverse_contradiction_pm`. No threshold moved.
+
+Live, cold caches, llama3.1:8b on the GPU Ollama, binary from `4d2e853`:
+- Titanic run 1: exit 0; `score_stances` pairs=48 reverse_pairs=2 contradicts=1. The ledger's
+  only Contested claim is "706 persons were saved." (us-senate vs british-inquiry); "The
+  vessel was provided with lifeboats for 1,176 persons." is single_source (Contested on
+  `e37244c`). Adjudicator: 1 contested, 1 unresolved. No script-stage flake this time.
+- Tunguska run 1: exit 0; 9 claims, 1 corroborated, 8 single_source, 0 Contested.
+
+Gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+and `cargo test --workspace` exit 0.
 
 ## Verification background
 - Probe (real DeBERTa, forward contradiction / reverse contradiction, reverse = max over the
