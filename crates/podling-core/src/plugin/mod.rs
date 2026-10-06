@@ -5,24 +5,33 @@
 //! enum variant in `podling-types` and one arm here.
 
 pub mod analyser;
+pub mod asr;
 pub mod cross_encoder;
 pub mod embedding;
 mod http;
 pub mod llm;
 pub mod nli;
+mod ollama;
 pub mod openai;
 pub mod openai_embeddings;
+pub mod sidecar;
+pub mod sidecar_tts;
 pub mod source;
+pub mod tts;
+pub mod whisper;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use podling_types::{
-    AnalyserConfig, EmbeddingConfig, EpisodeSpec, LlmConfig, NliConfig, SourceSpec,
+    AnalyserConfig, AsrConfig, EmbeddingConfig, EpisodeSpec, LlmConfig, NliConfig, SourceSpec,
+    TtsConfig,
 };
 
 use crate::error::{CoreError, Result};
 
-pub use analyser::{Analyser, QuoteVerifier};
+pub use analyser::{Analyser, QuoteVerifier, UncitedFigures};
+pub use asr::{AsrProvider, AsrRequest, FakeAsr, Segment, Transcript, transcribe_checked};
 pub use cross_encoder::CrossEncoderNli;
 pub use embedding::{EmbeddingProvider, FakeEmbedding, cosine, embed_checked};
 pub use llm::{
@@ -33,7 +42,14 @@ pub use llm::{
 pub use nli::{FakeNli, NliPair, NliProvider, NliScores, score_checked};
 pub use openai::OpenAiCompat;
 pub use openai_embeddings::OpenAiEmbeddings;
+pub use sidecar::{Sidecar, SidecarProfile, default_profiles_path, load_profile};
+pub use sidecar_tts::SidecarTts;
 pub use source::{LocalFilesConnector, SourceConnector};
+pub use tts::{
+    ChunkAudio, ChunkContext, ChunkRequest, FakeTts, SpokenTurn, TtsCapabilities, TtsProvider,
+    synthesize_checked,
+};
+pub use whisper::CandleWhisper;
 
 /// Builds the LLM provider. Fallible because a real provider reads its
 /// configuration (a key from the environment, a URL) at construction.
@@ -67,6 +83,69 @@ pub fn build_grounding(spec: &EpisodeSpec, base_dir: &Path) -> Result<Option<Gro
         _ => Err(CoreError::Config {
             message: "[embedding] and [nli] work together: set both, or neither".into(),
         }),
+    }
+}
+
+/// Checks the audio sections: `[[cast]]` ids are unique, and `[tts]` comes
+/// with a `[[cast]]` (the pinned voices) and an `[asr]` (to verify the audio).
+/// Like [`build_grounding`], a half configuration is reported before any
+/// stage runs.
+pub fn check_audio(spec: &EpisodeSpec) -> Result<()> {
+    let config = |message: &str| CoreError::Config {
+        message: message.into(),
+    };
+    let mut ids = BTreeSet::new();
+    for member in &spec.cast {
+        if !ids.insert(&member.id) {
+            return Err(CoreError::Config {
+                message: format!("[[cast]] lists speaker {:?} twice", member.id.0),
+            });
+        }
+    }
+    if spec.mix.is_some() && spec.tts.is_none() {
+        return Err(config(
+            "[mix] puts the synthesised audio together, so it needs [tts]",
+        ));
+    }
+    match (&spec.tts, &spec.asr) {
+        (None, None) => Ok(()),
+        (None, Some(_)) => Err(config("[asr] checks synthesised audio, so it needs [tts]")),
+        (Some(_), None) => Err(config(
+            "[tts] needs [asr] to check the audio against the script",
+        )),
+        (Some(_), Some(_)) if spec.cast.is_empty() => Err(config(
+            "[tts] needs [[cast]]: one entry per speaker, each with a voice",
+        )),
+        (Some(TtsConfig::Sidecar { takes: 0, .. }), Some(_)) => {
+            Err(config("[tts] takes must be at least 1"))
+        }
+        (Some(_), Some(_)) => Ok(()),
+    }
+}
+
+/// Builds the TTS provider. A sidecar profile is read from `profiles` (the
+/// user-level `sidecars.toml`, never the episode file) and its worker is
+/// started here, so call this just before synthesis and drop the provider
+/// right after: dropping it stops the worker and frees the GPU.
+pub fn build_tts(config: &TtsConfig, profiles: &Path) -> Result<Box<dyn TtsProvider>> {
+    match config {
+        TtsConfig::Fake {} => Ok(Box::new(FakeTts::default())),
+        TtsConfig::Sidecar { sidecar, .. } => {
+            let profile = load_profile(profiles, sidecar)?;
+            Ok(Box::new(SidecarTts::start(sidecar, &profile, profiles)?))
+        }
+    }
+}
+
+/// Builds the speech recogniser. A relative `model_dir` resolves against
+/// `base_dir`. Whisper is only checked and fingerprinted here; it loads on
+/// its first transcript, on the CPU.
+pub fn build_asr(config: &AsrConfig, base_dir: &Path) -> Result<Box<dyn AsrProvider>> {
+    match config {
+        AsrConfig::Fake {} => Ok(Box::new(FakeAsr::default())),
+        AsrConfig::Whisper { model_dir, .. } => {
+            Ok(Box::new(CandleWhisper::new(&base_dir.join(model_dir))?))
+        }
     }
 }
 
@@ -118,6 +197,7 @@ pub fn build_analysers(configs: &[AnalyserConfig]) -> Vec<Box<dyn Analyser>> {
         .map(|config| -> Box<dyn Analyser> {
             match config {
                 AnalyserConfig::QuoteVerifier {} => Box::new(QuoteVerifier),
+                AnalyserConfig::UncitedFigures {} => Box::new(UncitedFigures),
             }
         })
         .collect()
@@ -137,7 +217,7 @@ mod tests {
             target_minutes = 5
             llm = { kind = "fake" }
             sources = [{ kind = "local_files", root = "src", independence_group = "g" }]
-            analysers = [{ kind = "quote_verifier" }]
+            analysers = [{ kind = "quote_verifier" }, { kind = "uncited_figures" }]
             "#,
         )
         .unwrap();
@@ -147,6 +227,7 @@ mod tests {
         assert_eq!(sources[0].id(), "local_files");
         let analysers = build_analysers(&spec.analysers);
         assert_eq!(analysers[0].id(), "quote_verifier");
+        assert_eq!(analysers[1].id(), "uncited_figures");
         assert!(
             build_grounding(&spec, Path::new("/episodes"))
                 .unwrap()
@@ -185,5 +266,78 @@ mod tests {
                 "{message}"
             );
         }
+    }
+
+    const CAST: &str = r#"
+        [[cast]]
+        id = "ada"
+        name = "Ada"
+        role = "host"
+        voice = { reference = "voices/ada.wav", transcript = "Hello.", licence = "CC0-1.0" }
+    "#;
+
+    fn audio_error(extra: &str) -> String {
+        match check_audio(&episode(extra)) {
+            Err(CoreError::Config { message }) => message,
+            other => panic!("expected a Config error for {extra:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn audio_sections_come_together() {
+        check_audio(&episode("")).unwrap();
+        // A cast alone is fine: it pins the script's speakers.
+        check_audio(&episode(CAST)).unwrap();
+        let full = format!("tts = {{ kind = \"fake\" }}\nasr = {{ kind = \"fake\" }}\n{CAST}");
+        check_audio(&episode(&full)).unwrap();
+
+        let message = audio_error("tts = { kind = \"fake\" }\nasr = { kind = \"fake\" }");
+        assert!(message.contains("[[cast]]"), "{message}");
+        let message = audio_error(&format!("tts = {{ kind = \"fake\" }}\n{CAST}"));
+        assert!(message.contains("needs [asr]"), "{message}");
+        let message = audio_error(&format!("asr = {{ kind = \"fake\" }}\n{CAST}"));
+        assert!(message.contains("needs [tts]"), "{message}");
+        let message = audio_error(&format!(
+            "tts = {{ kind = \"sidecar\", sidecar = \"qwen\", takes = 0 }}\n\
+             asr = {{ kind = \"fake\" }}\n{CAST}"
+        ));
+        assert!(message.contains("takes"), "{message}");
+
+        let mix = "mix = { encode = \"opus\", gaps_ms = { beat = 700 } }";
+        let message = audio_error(mix);
+        assert!(message.contains("[mix]"), "{message}");
+        let spec = episode(&format!("{mix}\n{full}"));
+        check_audio(&spec).unwrap();
+        let mix = spec.mix.unwrap();
+        // Keys left out keep their defaults.
+        assert_eq!((mix.gaps_ms.beat, mix.gaps_ms.quick), (700, 120));
+        assert_eq!(mix.encode, Some(podling_types::Encode::Opus));
+    }
+
+    #[test]
+    fn builds_the_tts_provider_from_an_episode() {
+        let full = format!("tts = {{ kind = \"fake\" }}\nasr = {{ kind = \"fake\" }}\n{CAST}");
+        let spec = episode(&full);
+        let profiles = Path::new("/no/sidecars.toml");
+        let tts = build_tts(spec.tts.as_ref().unwrap(), profiles).unwrap();
+        assert_eq!(tts.id(), "fake");
+        assert!(tts.capabilities().native_sample_rate > 0);
+
+        // A sidecar profile comes from the profiles file, which must exist.
+        let sidecar = TtsConfig::Sidecar {
+            sidecar: "qwen".into(),
+            takes: 2,
+            max_retries: 2,
+        };
+        let Err(CoreError::Config { message }) = build_tts(&sidecar, profiles) else {
+            panic!("a missing profiles file must be a Config error");
+        };
+        assert!(message.contains("/no/sidecars.toml"), "{message}");
+    }
+
+    #[test]
+    fn cast_ids_are_unique() {
+        let message = audio_error(&format!("{CAST}\n{CAST}"));
+        assert!(message.contains("\"ada\" twice"), "{message}");
     }
 }

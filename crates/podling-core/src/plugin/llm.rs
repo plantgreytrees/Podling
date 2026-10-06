@@ -1,6 +1,9 @@
 //! Text-generation providers and the output shapes they must produce.
 
-use podling_types::{ChunkId, ClaimId, ClaimStatus, Emotion, Ledger, Speaker, SpeakerId};
+use podling_types::{
+    BeatKind, ChunkId, ClaimId, ClaimStatus, Emotion, Ledger, Nonverbal, NonverbalAt,
+    NonverbalKind, Pace, Speaker, SpeakerId,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -15,7 +18,12 @@ use crate::text::sentences;
 ///    instead of the quoted words.
 /// 3: the script request's ledger lists each claim's id, text and status
 ///    ([`LedgerClaim`]), without evidence.
-pub const PROMPT_VERSION: u32 = 3;
+/// 4: the script request may carry the episode's fixed `cast`.
+/// 5: a script for audio (`"audio": true`) adds beats, pace, nonverbal
+///    sounds and callbacks.
+/// 6: beats are marked on the turn that begins each one (`beat`), not listed
+///    as index ranges: llama3.1:8b wrote inclusive ends for exclusive ones.
+pub const PROMPT_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,7 +32,11 @@ pub enum LlmTask {
     /// an object, not a bare array, because JSON mode only guarantees objects.
     ExtractClaims,
     /// Input: `{ "topic", "target_minutes", "ledger": [LedgerClaim],
-    /// "sources": [SourceText] }`. Output: JSON `ScriptDraft`.
+    /// "sources": [SourceText], "cast"?: [Speaker], "audio"?: true }`.
+    /// Output: JSON `ScriptDraft`. `cast` is present only when the episode
+    /// fixes it; `audio` only when the script will be spoken, and then the
+    /// draft's turns may carry beat marks, pace, nonverbal sounds and
+    /// callbacks.
     WriteScript,
 }
 
@@ -49,6 +61,13 @@ pub trait LlmProvider {
     fn fingerprint(&self) -> Value;
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion>;
+
+    /// Frees whatever the model holds on the GPU, when the run no longer
+    /// needs it. A *default method*: providers that hold nothing (most of
+    /// them) inherit this no-op and need not write one.
+    fn release(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The reply to [`LlmTask::ExtractClaims`].
@@ -127,6 +146,35 @@ pub struct DraftTurn {
     pub citations: Vec<ClaimId>,
     #[serde(default)]
     pub quotes: Vec<QuoteRef>,
+    /// Set on the first turn of each beat; the turns after it, up to the
+    /// next mark, belong to the same beat. Only asked for when the script
+    /// will be spoken. The script stage turns the marks into ranges, so the
+    /// model never counts turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat: Option<BeatKind>,
+    #[serde(default, skip_serializing_if = "Pace::is_normal")]
+    pub pace: Pace,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nonverbal: Vec<Nonverbal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_to: Option<usize>,
+}
+
+impl DraftTurn {
+    /// A plain turn: normal pace, no sounds, no callback.
+    fn plain(speaker: SpeakerId, text: String, emotion: Emotion) -> Self {
+        Self {
+            speaker,
+            text,
+            emotion,
+            citations: vec![],
+            quotes: vec![],
+            beat: None,
+            pace: Pace::Normal,
+            nonverbal: vec![],
+            callback_to: None,
+        }
+    }
 }
 
 /// The sentence of a chunk that the turn quotes verbatim. The model counts
@@ -203,20 +251,31 @@ impl FakeLlm {
         let sources: Vec<SourceText> = serde_json::from_value(input["sources"].clone())
             .map_err(|err| invalid_input(format!("sources: {err}")))?;
 
-        let host = SpeakerId("host".into());
-        let guest = SpeakerId("guest".into());
-        let cast = vec![
-            Speaker {
-                id: host.clone(),
-                name: "Ada".into(),
-                role: "host".into(),
-            },
-            Speaker {
-                id: guest.clone(),
-                name: "Ben".into(),
-                role: "co-host".into(),
-            },
-        ];
+        // A declared cast is used as given: the first speaker hosts, the
+        // second (or the first again, for a solo show) answers.
+        let declared: Vec<Speaker> = match input.get("cast") {
+            Some(cast) => serde_json::from_value(cast.clone())
+                .map_err(|err| invalid_input(format!("cast: {err}")))?,
+            None => Vec::new(),
+        };
+        let cast = if declared.is_empty() {
+            vec![
+                Speaker {
+                    id: SpeakerId("host".into()),
+                    name: "Ada".into(),
+                    role: "host".into(),
+                },
+                Speaker {
+                    id: SpeakerId("guest".into()),
+                    name: "Ben".into(),
+                    role: "co-host".into(),
+                },
+            ]
+        } else {
+            declared
+        };
+        let host = cast[0].id.clone();
+        let guest = cast.get(1).unwrap_or(&cast[0]).id.clone();
 
         let mut turns = vec![Self::opening(&host, topic, sources.first())];
         for (i, entry) in ledger.iter().enumerate() {
@@ -226,26 +285,56 @@ impl FakeLlm {
                 ClaimStatus::Contested { .. } => ("The sources disagree here", Emotion::Serious),
                 ClaimStatus::Unsupported => continue,
             };
+            let speaker = if i % 2 == 0 {
+                guest.clone()
+            } else {
+                host.clone()
+            };
             turns.push(DraftTurn {
-                speaker: if i % 2 == 0 {
-                    guest.clone()
-                } else {
-                    host.clone()
-                },
-                text: format!("{lead}: {}", entry.text),
-                emotion,
                 citations: vec![entry.id.clone()],
-                quotes: vec![],
+                ..DraftTurn::plain(speaker, format!("{lead}: {}", entry.text), emotion)
             });
         }
-        turns.push(DraftTurn {
-            speaker: host,
-            text: "That's all for today.".into(),
-            emotion: Emotion::Neutral,
-            citations: vec![],
-            quotes: vec![],
+        turns.push(DraftTurn::plain(
+            host.clone(),
+            "That's all for today.".into(),
+            Emotion::Neutral,
+        ));
+        let mut draft = ScriptDraft { cast, turns };
+        if input.get("audio") == Some(&Value::Bool(true)) {
+            Self::direct_for_audio(&mut draft, &host);
+        }
+        Ok(draft)
+    }
+
+    /// Adds one of each audio direction: beat marks (the opening, the claims
+    /// as banter, the sign-off), a quick reply with the host's "mm-hm" over
+    /// it, and a sign-off that pauses and calls back to the opening.
+    fn direct_for_audio(draft: &mut ScriptDraft, host: &SpeakerId) {
+        let n = draft.turns.len();
+        let opening = &mut draft.turns[0];
+        opening.beat = Some(if opening.quotes.is_empty() {
+            BeatKind::Narration
+        } else {
+            BeatKind::QuoteReading
         });
-        Ok(ScriptDraft { cast, turns })
+        // Turns 1..n-1 are the claims, if the ledger had any usable ones.
+        if n > 2 {
+            let reply = &mut draft.turns[1];
+            reply.beat = Some(BeatKind::Banter);
+            reply.pace = Pace::Quick;
+            reply.nonverbal.push(Nonverbal {
+                kind: NonverbalKind::Backchannel {
+                    text: "Mm-hm.".into(),
+                },
+                by: host.clone(),
+                at: NonverbalAt::Over,
+            });
+        }
+        let sign_off = &mut draft.turns[n - 1];
+        sign_off.beat = Some(BeatKind::Transition);
+        sign_off.pace = Pace::LongPause;
+        sign_off.callback_to = Some(0);
     }
 
     fn opening(host: &SpeakerId, topic: &str, first_source: Option<&SourceText>) -> DraftTurn {
@@ -258,19 +347,14 @@ impl FakeLlm {
         });
         match quote {
             Some(quote_ref) => DraftTurn {
-                speaker: host.clone(),
-                text: format!("Today: {topic}. It begins with this: {{{{quote:0}}}}"),
-                emotion: Emotion::Curious,
-                citations: vec![],
                 quotes: vec![quote_ref],
+                ..DraftTurn::plain(
+                    host.clone(),
+                    format!("Today: {topic}. It begins with this: {{{{quote:0}}}}"),
+                    Emotion::Curious,
+                )
             },
-            None => DraftTurn {
-                speaker: host.clone(),
-                text: format!("Today: {topic}."),
-                emotion: Emotion::Curious,
-                citations: vec![],
-                quotes: vec![],
-            },
+            None => DraftTurn::plain(host.clone(), format!("Today: {topic}."), Emotion::Curious),
         }
     }
 }
@@ -291,7 +375,11 @@ impl LlmProvider for FakeLlm {
     fn fingerprint(&self) -> Value {
         // Bump when the fake's behaviour changes.
         // 3: the opening turn says `{{quote:0}}` instead of typing the sentence.
-        json!({ "provider": "fake", "version": 3 })
+        // 4: a declared cast in the script request is used.
+        // 5: a script request for audio gets beats, pace, a backchannel and
+        //    a callback.
+        // 6: beats are marked on the turns that begin them.
+        json!({ "provider": "fake", "version": 6 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {

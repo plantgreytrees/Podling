@@ -1,0 +1,50 @@
+# Podling's TTS worker. The server and the `fake` backend use only the standard
+# library; each model backend is an extra with its own dependencies:
+#
+#   uv sync --extra qwen
+#   uv run --extra qwen podling-tts --backend qwen --run-dir <dir>
+#
+# Licences of every direct dependency are listed in README.md.
+
+[project]
+name = "podling-tts"
+version = "0.1.0"
+description = "Podling's text-to-speech worker: a TTS model behind a local HTTP protocol"
+requires-python = ">=3.11,<3.12"
+license = "Apache-2.0"
+dependencies = []
+
+[project.optional-dependencies]
+qwen = [
+  "qwen-tts==0.1.1",
+  "torch>=2.8.0",
+  # qwen-tts imports torchaudio; it must come from the same CUDA build as torch.
+  "torchaudio>=2.8.0",
+  "numpy>=2.1,<3",
+  "huggingface-hub>=0.24.7",
+]
+
+[project.scripts]
+podling-tts = "podling_tts.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["podling_tts"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchaudio = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

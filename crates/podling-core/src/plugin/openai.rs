@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::http::{Transport, TransportConfig, config_error};
 use super::llm::{Completion, CompletionRequest, LlmProvider};
+use super::ollama::OllamaUnload;
 use crate::error::{ProviderFailure, Result};
 
 pub use super::http::MAX_RESPONSE_BYTES;
@@ -32,6 +33,8 @@ pub struct OpenAiCompat {
     model: String,
     temperature: Option<f32>,
     max_output_tokens: Option<u32>,
+    /// Set by `unload_after = true`.
+    unload: Option<OllamaUnload>,
 }
 
 impl OpenAiCompat {
@@ -55,11 +58,14 @@ impl OpenAiCompat {
             temperature,
             timeout_secs,
             max_output_tokens,
+            unload_after,
         } = config
         else {
             return Err(config_error("not an open_ai_compat configuration"));
         };
 
+        // `&env`: a reference to a closure is itself callable, so both
+        // transports can borrow the one lookup instead of each taking it.
         let transport = Transport::new(
             &TransportConfig {
                 section: "llm",
@@ -68,8 +74,13 @@ impl OpenAiCompat {
                 api_key_env: api_key_env.as_deref(),
                 timeout_secs: *timeout_secs,
             },
-            env,
+            &env,
         )?;
+        let unload = unload_after
+            .then(|| {
+                OllamaUnload::new("llm", PLUGIN, base_url, model, api_key_env.as_deref(), &env)
+            })
+            .transpose()?;
         if model.trim().is_empty() {
             return Err(config_error("llm.model must not be empty"));
         }
@@ -86,6 +97,7 @@ impl OpenAiCompat {
             model: model.clone(),
             temperature: *temperature,
             max_output_tokens: *max_output_tokens,
+            unload,
         })
     }
 
@@ -93,6 +105,9 @@ impl OpenAiCompat {
     /// set this to nearly nothing.
     pub fn with_retry_backoff(mut self, backoff: Duration) -> Self {
         self.transport.set_retry_backoff(backoff);
+        if let Some(unload) = &mut self.unload {
+            unload.set_retry_backoff(backoff);
+        }
         self
     }
 
@@ -157,6 +172,10 @@ impl LlmProvider for OpenAiCompat {
             text: reply.content,
         })
     }
+
+    fn release(&self) -> Result<()> {
+        self.unload.as_ref().map_or(Ok(()), OllamaUnload::release)
+    }
 }
 
 struct Reply {
@@ -199,6 +218,7 @@ mod tests {
             temperature: Some(0.2),
             timeout_secs: None,
             max_output_tokens: Some(512),
+            unload_after: false,
         }
     }
 

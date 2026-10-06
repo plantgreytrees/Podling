@@ -26,6 +26,12 @@ pub trait EmbeddingProvider {
 
     /// One vector per text, in the same order.
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+
+    /// Frees whatever the model holds on the GPU; a no-op by default, as for
+    /// [`LlmProvider::release`](super::LlmProvider::release).
+    fn release(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Calls `provider` and checks what came back: one vector per text, all of

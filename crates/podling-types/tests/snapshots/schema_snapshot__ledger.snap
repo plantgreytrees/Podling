@@ -34,7 +34,8 @@ expression: schema
         "claims",
         "ledger",
         "script",
-        "analysis"
+        "analysis",
+        "audio"
       ]
     },
     "ChunkId": {

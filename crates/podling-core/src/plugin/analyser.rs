@@ -1,6 +1,6 @@
 //! Analysers: opt-in checks that read a finished script and report findings.
 
-use podling_types::{Document, Finding, Script, Severity};
+use podling_types::{Document, Finding, Script, Severity, Turn};
 
 use crate::text::quotations;
 
@@ -82,10 +82,65 @@ impl Analyser for QuoteVerifier {
     }
 }
 
+/// Warns on a turn that states a figure (any word with a digit: a year, a
+/// count, a distance) but cites no claim. Banter is told to add no facts;
+/// this catches the ones it adds anyway. Digits inside a quote don't count:
+/// the quote is the source's own words.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UncitedFigures;
+
+impl UncitedFigures {
+    /// The first word of `turn` outside its quotes that contains a digit.
+    fn figure(turn: &Turn) -> Option<String> {
+        let mut text = turn.text.clone();
+        for quote in &turn.quotes {
+            text = text.replace(quote.text(), " ");
+        }
+        text.split_whitespace()
+            .find(|word| word.chars().any(|c| c.is_ascii_digit()))
+            .map(|word| word.trim_matches(|c: char| !c.is_alphanumeric()).to_owned())
+    }
+}
+
+impl Analyser for UncitedFigures {
+    fn id(&self) -> &str {
+        "uncited_figures"
+    }
+
+    fn analyse(&self, script: &Script, _documents: &[Document]) -> Vec<Finding> {
+        let mut findings: Vec<Finding> = script
+            .turns()
+            .iter()
+            .enumerate()
+            .filter(|(_, turn)| turn.citations.is_empty())
+            .filter_map(|(i, turn)| {
+                let figure = Self::figure(turn)?;
+                Some(Finding {
+                    analyser: self.id().to_owned(),
+                    severity: Severity::Warning,
+                    turn: Some(i),
+                    message: format!("turn states {figure:?} but cites no claim"),
+                })
+            })
+            .collect();
+        if findings.is_empty() {
+            findings.push(Finding {
+                analyser: self.id().to_owned(),
+                severity: Severity::Info,
+                turn: None,
+                message: "every turn that states a figure cites a claim".into(),
+            });
+        }
+        findings
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use podling_types::{Emotion, Quote, SourceRef, Speaker, SpeakerId, TextSpan, Turn};
+    use podling_types::{
+        ClaimId, Emotion, Pace, Quote, SourceRef, Speaker, SpeakerId, TextSpan, Turn,
+    };
 
     fn doc() -> Document {
         let source = SourceRef {
@@ -103,15 +158,71 @@ mod tests {
                 name: "H".into(),
                 role: "host".into(),
             }],
-            vec![Turn {
-                speaker: SpeakerId("h".into()),
-                text: text.into(),
-                emotion: Emotion::Neutral,
-                citations: vec![],
-                quotes: vec![quote],
-            }],
+            vec![turn(text, vec![quote], vec![])],
         )
         .unwrap()
+    }
+
+    fn turn(text: &str, quotes: Vec<Quote>, citations: Vec<ClaimId>) -> Turn {
+        Turn {
+            speaker: SpeakerId("h".into()),
+            text: text.into(),
+            emotion: Emotion::Neutral,
+            citations,
+            quotes,
+            pace: Pace::Normal,
+            nonverbal: vec![],
+            callback_to: None,
+        }
+    }
+
+    fn script_of(turns: Vec<Turn>) -> Script {
+        Script::new(
+            vec![Speaker {
+                id: SpeakerId("h".into()),
+                name: "H".into(),
+                role: "host".into(),
+            }],
+            turns,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_uncited_year_is_a_warning_on_its_turn() {
+        let script = script_of(vec![
+            turn("It was a hot summer.", vec![], vec![]),
+            turn("Back in 1908, mind you!", vec![], vec![]),
+        ]);
+        let findings = UncitedFigures.analyse(&script, &[]);
+        assert_eq!(severities(&findings), vec![Severity::Warning]);
+        assert_eq!(findings[0].turn, Some(1));
+        assert!(findings[0].message.contains("\"1908\""), "{findings:?}");
+    }
+
+    #[test]
+    fn cited_figures_and_quoted_figures_pass() {
+        let d = Document::new(
+            SourceRef {
+                connector: "t".into(),
+                locator: "a".into(),
+                independence_group: "g".into(),
+            },
+            "A",
+            "It fell in 1908.",
+        );
+        let quote = Quote::from_document(&d, TextSpan::new(0, 16).unwrap()).unwrap();
+        let script = script_of(vec![
+            turn(
+                "It flattened 2,000 square kilometres.",
+                vec![],
+                vec![podling_types::Claim::id_for("x")],
+            ),
+            turn("The report: \"It fell in 1908.\"", vec![quote], vec![]),
+            turn("No figures here, just one wild story.", vec![], vec![]),
+        ]);
+        let findings = UncitedFigures.analyse(&script, &[d]);
+        assert_eq!(severities(&findings), vec![Severity::Info]);
     }
 
     fn severities(findings: &[Finding]) -> Vec<Severity> {

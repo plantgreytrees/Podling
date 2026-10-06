@@ -19,7 +19,12 @@ pub fn export_schemas(out: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run(episode: &Path, out: &Path, cache_dir: Option<&Path>) -> Result<()> {
+pub fn run(
+    episode: &Path,
+    out: &Path,
+    cache_dir: Option<&Path>,
+    sidecars: Option<&Path>,
+) -> Result<()> {
     let text = fs::read_to_string(episode)
         .with_context(|| format!("reading episode file {}", episode.display()))?;
     let spec: EpisodeSpec =
@@ -27,7 +32,13 @@ pub fn run(episode: &Path, out: &Path, cache_dir: Option<&Path>) -> Result<()> {
     let base_dir = episode.parent().unwrap_or(Path::new("."));
     let cache = cache_dir.map(DiskCache::new);
 
-    let report = pipeline::run(&spec, base_dir, cache.as_ref(), out)
+    let report = match sidecars {
+        Some(profiles) => {
+            pipeline::run_with_sidecars(&spec, profiles, base_dir, cache.as_ref(), out)
+        }
+        None => pipeline::run(&spec, base_dir, cache.as_ref(), out),
+    };
+    let report = report
         .map_err(|err| explain(&spec, &err))
         .with_context(|| format!("running episode {:?}", spec.title))?;
 
@@ -45,6 +56,9 @@ pub fn run(episode: &Path, out: &Path, cache_dir: Option<&Path>) -> Result<()> {
         );
     }
     println!("artifacts written to {}", out.display());
+    if let Some(audio) = &report.audio {
+        println!("episode audio: {}", audio.display());
+    }
 
     if report.error_findings > 0 {
         bail!(
@@ -130,9 +144,11 @@ pub fn cache_stats(cache_dir: &Path) -> Result<()> {
         .stats()
         .with_context(|| format!("reading cache {}", cache_dir.display()))?;
     println!(
-        "{} entries, {} bytes in {}",
+        "{} entries, {} bytes; {} audio blobs, {} bytes; in {}",
         stats.entries,
         stats.bytes,
+        stats.blobs,
+        stats.blob_bytes,
         cache_dir.display()
     );
     Ok(())
