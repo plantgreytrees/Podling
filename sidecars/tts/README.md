@@ -61,6 +61,34 @@ Free the GPU first. The worker checks free VRAM before it loads and refuses with
 ollama stop <model>      # or let Podling do it: unload_after = true in [llm]/[embedding]
 ```
 
+## Pronunciation
+
+When the model says a name wrong, respell it. Put the names you always want
+respelt in `pronounce.toml` beside the `sidecars.toml` in use (with
+`--sidecars /x/sidecars.toml`, that is `/x/pronounce.toml`):
+
+```toml
+[pronounce]
+# The respelling only:
+Kulik = "Koolick"
+# Or with what Whisper writes when the name is said right, so the speech
+# check does not count it as a mistake:
+Vanavara = { say = "Vanavahra", heard = ["Vanavarra", "Vana Vara"] }
+```
+
+An episode can add or override names in `[tts.pronounce]`, in the same form;
+the episode wins per name. No file is no lexicon; a file that does not parse
+stops the run before any stage, naming the file.
+
+- Use it for names only, each respelt as one plain word with no hyphens. In
+  the word test, respelling ordinary words made them worse.
+- A name matches as a whole word, with its case. "Kulik" is respelt in
+  "Kulik's", not in "Kuliks" or "kulik".
+- **The worker never sees the lexicon.** Podling sends the respelt text as the
+  turn's `text`, and nothing else in the request changes. The script, the
+  quotes and the speech check keep the real name, so the protocol and the
+  adapter version are unchanged.
+
 ## Protocol v1
 
 Every route lives under `/v1/podling`, and every body is JSON. A request with an unknown field,

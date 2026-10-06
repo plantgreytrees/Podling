@@ -78,6 +78,14 @@ sidecar = "qwen"
 takes = 2
 max_retries = 2
 
+# Names the model says wrong, respelt for it alone: the script, the quotes and
+# the speech check keep the real name. Names only, each one plain word with no
+# hyphens. `heard` lists what Whisper writes for the name said right. These
+# override the user-level pronounce.toml beside sidecars.toml.
+# [tts.pronounce]
+# Kulik = "Koolick"
+# Vanavara = { say = "Vanavahra", heard = ["Vanavarra"] }
+
 # Whisper base.en on the CPU. A chunk passes at 8% word error rate or less,
 # with every quote heard word for word.
 [asr]

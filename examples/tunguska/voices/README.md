@@ -6,7 +6,8 @@ licence, which Podling copies into `audio.json`. Only CC0 or CC-BY clips go
 here: many voice datasets are non-commercial (Kyutai's Expresso and EARS
 voices, for example, are CC-BY-NC), and a cloned voice carries its clip's
 terms. Podling enforces this: an episode whose clip licence is not exactly
-`CC0-1.0`, `CC-BY-3.0` or `CC-BY-4.0` is refused when it is read.
+`CC0-1.0`, `CC-BY-3.0`, `CC-BY-4.0` or `LicenseRef-Podling-Generated` (a
+self-designed voice, below) is refused when it is read.
 
 | File | Speaker | Clip | Licence | Source |
 |---|---|---|---|---|
@@ -36,3 +37,23 @@ The transcripts in `episode-tts.toml` are the clips' own (from the archive's
 `.normalized.txt` files). If you swap in another voice, change the transcript
 and the licence with it: the TTS model conditions on both the sound and the
 words.
+
+## Self-designed voices
+
+When no recorded clip fits a speaker, design one from a description with the
+offline tool in [`scripts/voice_design/`](../../../scripts/voice_design/README.md)
+(Qwen3-TTS VoiceDesign, Apache-2.0). It writes the clip, its transcript and
+`<clip>.wav.provenance.json`, and prints the `voice = {...}` line to paste
+into the speaker's `[[cast]]` entry:
+
+```toml
+voice = { reference = "voices/designed-host.wav", transcript = "The forest was flattened for two thousand square kilometres.", licence = "LicenseRef-Podling-Generated" }
+```
+
+Podling accepts `LicenseRef-Podling-Generated` only with a valid provenance
+file beside the clip (`designed-host.wav.provenance.json`: `model`,
+`weights_commit`, `design_prompt`, `seed`, `tool_version`). Without one, the
+run stops before any stage, naming the speaker and the missing file.
+
+Whether a designed clip may carry an open licence is not decided yet, so
+designed clips stay on the machine that made them and are not committed.
