@@ -252,11 +252,12 @@ fn stance_precision_report() {
     // The current rule's figures, pinned exactly: a rule change that moves
     // any of them, for better or worse, must update them here on purpose,
     // with the printed before/after as its justification. VERSION 7 traded
-    // c18 (a count the model reads as a subset, see `holds_both_ways`) for
-    // n21 n33 n34 n37 t02.
+    // c18 (a count the model reads as a subset, see `holds_both_ways`) and t03
+    // (the contradiction sits in a sentence without a number) for n21 n33 n34
+    // n37 t02.
     let pinned = |c: &Counts| (c.tp, c.fp, c.missed, c.false_positives.join(" "));
     assert_eq!(pinned(&after.supports), (14, 0, 5, String::new()));
-    assert_eq!(pinned(&after.contradicts), (26, 2, 1, "n35 n36".to_owned()));
+    assert_eq!(pinned(&after.contradicts), (26, 2, 2, "n35 n36".to_owned()));
 
     // The off-subject windows the model over-calls get no stance at all.
     for (pair, scored) in pairs().iter().zip(&scores().pairs) {

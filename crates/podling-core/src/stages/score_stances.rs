@@ -309,7 +309,10 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
 /// he took on board 712 persons" (0.997), but the claim doesn't contradict
 /// that sentence (0.010), while "706 persons were saved." does both ways
 /// (0.997 / 0.995). The cost: a count the model reads as a subset ("8 million
-/// fir trunks" of "80 million trees") is no longer a contradiction.
+/// fir trunks" of "80 million trees") is no longer a contradiction, and neither is
+/// one stated in a numberless sentence of a numbered window ("Kulik never
+/// reached the site. The expedition set off in 1927."): the claim is read only
+/// against the numbered sentences.
 fn holds_both_ways(evidence: &StanceEvidence<'_>) -> bool {
     if numbers(evidence.claim).is_empty() || numbers(evidence.premise).is_empty() {
         return true;
@@ -888,6 +891,94 @@ mod tests {
                 "{text}: {status:?}"
             );
         }
+        // Two forward pairs, then one reverse pair for each claim.
+        assert_eq!(two_way.pairs.get(), 4);
+    }
+
+    #[test]
+    fn reverse_scores_go_to_their_own_candidate() {
+        const X: &str = "The boats took on board 712 persons.";
+        const Y: &str = "The boats took on board 20 persons.";
+        const S1: &str = "The boats took on board 706 persons.";
+        const S2: &str = "The boats took on board 705 persons.";
+        /// Forward: X and Y are contradicted by every window holding S1.
+        /// Reverse: only X against S2 contradicts. Records each batch.
+        #[derive(Default)]
+        struct Scripted(std::cell::RefCell<Vec<Vec<(String, String)>>>);
+        impl NliProvider for Scripted {
+            fn id(&self) -> &str {
+                "scripted"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+                self.0.borrow_mut().push(
+                    pairs
+                        .iter()
+                        .map(|p| (p.premise.to_owned(), p.hypothesis.to_owned()))
+                        .collect(),
+                );
+                Ok(pairs
+                    .iter()
+                    .map(|p| {
+                        let forward = [X, Y].contains(&p.hypothesis) && p.premise.contains(S1);
+                        let reverse = (p.premise, p.hypothesis) == (X, S2);
+                        let c = if forward || reverse { 1.0 } else { 0.0 };
+                        NliScores {
+                            entailment: 0.0,
+                            neutral: 1.0 - c,
+                            contradiction: c,
+                        }
+                    })
+                    .collect())
+            }
+        }
+        // Group b's windows are S1, "S1 S2" (two numbered sentences) and S2.
+        let window = format!("{S1} {S2}");
+        let mut input = input(&[("a", X), ("y", Y), ("b", &window)]);
+        input.claims.retain(|c| [X, Y].contains(&c.text()));
+        for claim in [X, Y] {
+            for premise in [S1, window.as_str()] {
+                let v = FakeEmbedding.embed(&[claim, premise]).unwrap();
+                let similarity = PerMille::from_probability(cosine(&v[0], &v[1]));
+                assert!(
+                    similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM,
+                    "{claim} / {premise}: {similarity:?}"
+                );
+            }
+        }
+
+        let nli = Scripted::default();
+        let claims = run(&nli, &input);
+        // X holds only through the two-sentence window, whose reverse score
+        // is the higher of its two sentences; Y's reverse scores are all low.
+        assert!(matches!(
+            status_of(&claims, X).0,
+            ClaimStatus::Contested { .. }
+        ));
+        assert!(matches!(
+            status_of(&claims, Y).0,
+            ClaimStatus::SingleSource { .. }
+        ));
+        // Two batches: forward, then the reverse pairs of the four
+        // contradicting candidates (each claim against S1 and "S1 S2").
+        let batches = nli.0.into_inner();
+        assert_eq!(batches.len(), 2);
+        let mut reverse = batches[1].clone();
+        reverse.sort();
+        let pair = |p: &str, h: &str| (p.to_owned(), h.to_owned());
+        assert_eq!(
+            reverse,
+            vec![
+                pair(Y, S2),
+                pair(Y, S1),
+                pair(Y, S1),
+                pair(X, S2),
+                pair(X, S1),
+                pair(X, S1),
+            ]
+        );
     }
 
     #[test]

@@ -401,18 +401,21 @@ evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are s
   boats he took on board 712 persons" scores 0.997 forward but 0.010 back, while
   "706 persons were saved." scores 0.997 / 0.995. The cost: a count the model reads as
   a subset ("80 million trees" against "8 million fir trunks", 0.000 back) is no
-  longer a contradiction;
+  longer a contradiction, and neither is one the window states in a sentence without a
+  number: the claim is read back only against the numbered sentences, so "Kulik reached
+  the site in 1927." against "Kulik never reached the site. The expedition set off in
+  1927." scores 1.000 forward but 0.002 back;
 - else nothing.
 
-**Measured precision.** `tests/stance_precision.rs` runs the rule on 84 hand-labelled
+**Measured precision.** `tests/stance_precision.rs` runs the rule on 85 hand-labelled
 pairs scored once by the real models, both ways (`tests/fixtures/stance_pairs/`); the
 test pins the current rule's counts and false-positive ids exactly, so any rule change
 must update them on purpose, and
 `cargo test -p podling-core --test stance_precision -- --nocapture report` prints the
 before/after table. VERSION 7: supports precision 100% / recall 73.7%, contradicts
-92.9% / 96.3% (false positives n35 n36, pronouns meaning another noun; missed c18, the
-subset count above); the VERSION 2 rule (thresholds only) gives contradicts 79.4% /
-100% (seven false positives). VERSION 6 (no two-way check) had 86.7% / 100% on the
+92.9% / 92.9% (false positives n35 n36, pronouns meaning another noun; missed c18, the
+subset count above, and t03, the numberless contradicting sentence); the VERSION 2 rule
+(thresholds only) gives contradicts 80.0% / 100% (seven false positives). VERSION 6 (no two-way check) had 86.7% / 100% on the
 first 82 pairs, with four false positives (n34 n35 n36 n37, all pronouns meaning another
 noun); the two-way check removes n34 and n37, and t02, the lifeboat pair, added since.
 VERSION 3's stricter rule (the number's own sentence must share a word) cost
