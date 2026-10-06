@@ -545,6 +545,35 @@ is derived, never random (`BLAKE3(chunk ‖ take)`), so a rerun asks for the sam
 takes and finds them cached. Backchannels said over another speaker's turn are
 synthesised as separate short clips for the second track (`synthesize_overlays`).
 
+**Names and spellings.** A name the TTS model says wrong can be respelt.
+[`lexicon.rs`](../crates/podling-core/src/lexicon.rs) reads the user-level
+`pronounce.toml` beside the `sidecars.toml` in use, and lays the episode's
+`[tts.pronounce]` over it, the episode winning per name. An entry is
+`Kulik = "Koolick"`, or `Kulik = { say = "Koolick", heard = ["Koolik"] }`. The
+lexicon is for names only: in the word test, respelling ordinary words made
+them worse. It has two uses, kept apart:
+- *Respellings, for the model only.* `spoken()` in
+  [`synthesize.rs`](../crates/podling-core/src/stages/synthesize.rs) is the one
+  place a `SpokenTurn` gets `say_as`. A name matches as a whole word, with the
+  same case, longest name first, in the turn's own text. The wire turn sends
+  `say_as`, or `text` when there is none (`wire_turns` in
+  [`plugin/sidecar_tts.rs`](../crates/podling-core/src/plugin/sidecar_tts.rs)).
+  `said()`, the quotes and the speech check keep the original words, so the
+  worker, its backends and `ADAPTER_VERSION` are unchanged. A turn with no name
+  in it has `say_as = None`, which is left out of its cache key, so an empty
+  lexicon changes no key. Editing one respelling re-synthesises only the chunks
+  that name it. Each chunk's respelt names are logged at `debug`.
+- *Heard variants, for the check only.* `heard` lists what Whisper may write
+  for a name. `HeardVariants` reads those words in the transcript as the name,
+  so a correctly spoken name is not a word error. It never touches what the
+  chunk is expected to say.
+
+The check also folds British spellings into American ones (`kilometres` and
+`kilometers` are the same word), since Whisper writes American. The fold is an
+explicit word-pair table (`BRITISH_TO_AMERICAN` in
+[`verify_audio.rs`](../crates/podling-core/src/stages/verify_audio.rs)), with
+no suffix rules, so `acre` and `genre` stay as they are.
+
 **Blob cache.** Each take is one `synthesize_chunk` entry; its key covers the
 turns, the voices' file hashes, any context audio, the take and the TTS
 fingerprint, so editing one turn re-synthesises one chunk. The entry holds a
@@ -564,9 +593,19 @@ with `ebur128`, and written as 16-bit `episode.wav`. `[mix] encode = "opus"`
 or `"mp3"` adds a copy made by `ffmpeg` (argv, no shell; a missing `ffmpeg` is a
 `Config` error). `audio.json` records every chunk's seed, take and check, the
 episode's loudness and length, and each voice's licence. A clip's licence
-must be one of `VOICE_LICENCES` (`CC0-1.0`, `CC-BY-3.0`, `CC-BY-4.0`;
+must be one of `VOICE_LICENCES` (`CC0-1.0`, `CC-BY-3.0`, `CC-BY-4.0`, or
+`LicenseRef-Podling-Generated`;
 [`episode.rs`](../crates/podling-types/src/episode.rs)); any other is refused
 when the episode is read.
+
+A `LicenseRef-Podling-Generated` clip is one the user designed with the
+offline tool in [`scripts/voice_design/`](../scripts/voice_design/README.md),
+which is never a sidecar and never run by the pipeline. Such a clip needs
+`<clip>.provenance.json` beside it (`model`, `weights_commit`,
+`design_prompt`, `seed`, `tool_version`; `VoiceProvenance` in `episode.rs`), so
+it can be told from a recording and made again. `Voices::resolve` in
+`synthesize.rs` checks this with the other clips, before any stage runs, and
+refuses a missing or invalid file with an error naming the speaker and the path.
 
 ## Why a claim ledger, not debating agents
 
