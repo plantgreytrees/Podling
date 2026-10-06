@@ -10,10 +10,13 @@
 > `score_stances` VERSION 7 refuses a number-against-number contradiction
 > whose premise names the claim's subject only in sentences without a number,
 > and one the NLI model doesn't also find with claim and premise swapped (see
-> `docs/architecture.md`, score_stances). On 84 labelled pairs, contradicts
-> precision is 92.9% (VERSION 2: 79.4%) at recall 96.3%; c18, a count the
-> model reads as a subset, is the approved cost (`docs/plans/stance-two-way.md`,
-> Report). The lifeboat case is addressed and the live check below has been
+> `docs/architecture.md`, score_stances). On 85 labelled pairs, contradicts
+> precision is 92.9% (VERSION 2: 80.0%) at recall 92.9%. Two misses: c18, a
+> count the model reads as a subset (the approved cost), and t03, a
+> contradiction stated in a sentence without a number inside a numbered
+> window, found by `/scrutinise` and not yet decided on: the claim is read
+> back only against the numbered sentences (`docs/plans/stance-two-way.md`
+> and `docs/plans/scrutinise-stance-two-way.md`, Reports). The lifeboat case is addressed and the live check below has been
 > run: cold runs (llama3.1:8b) show "706 persons were saved." Contested and
 > "The vessel was provided with lifeboats for 1,176 persons." single-source on
 > Titanic, and 0 Contested of 9 claims on Tunguska. One known limit remains: a
