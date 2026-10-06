@@ -1,5 +1,6 @@
 ---
 slug: phase2-llm-provider
+craftsman_version: 2.1.0
 goal: "`podling run` can use a real OpenAI-compatible model (Ollama, llama.cpp, OpenAI and similar) to extract claims and write the script, with quotes still copied verbatim from the sources."
 classification: "in-scope (CLAUDE.md:8 names OpenAI-compatible HTTP as the LLM provider route; docs/architecture.md lists it as deferred to a later phase)"
 tracker_rows: ["TRACKER#9", "TRACKER#10", "TRACKER#11", "TRACKER#12"]

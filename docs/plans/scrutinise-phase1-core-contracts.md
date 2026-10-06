@@ -1,5 +1,6 @@
 ---
 slug: scrutinise-phase1-core-contracts
+craftsman_version: 2.1.0
 goal: Identical sources in different groups still corroborate, `cache clear` can never delete non-cache files, and scripts cannot cite claims that aren't in the ledger.
 classification: in-scope   # fixes to phase1-core-contracts, found by /scrutinise on 5a1824d..6a48665
 tracker_rows: ["TRACKER#8"]

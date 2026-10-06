@@ -1,5 +1,6 @@
 ---
 slug: scrutinise-phase5-tts-audio
+craftsman_version: 2.1.0
 goal: "Fix the four Warnings /scrutinise found in Phase 5 audio: backchannels pass speech-recognition, the TTS cache key follows the weights, voice clips must be CC0/CC-BY, and the TTS sidecar's whole process tree is stopped, even after the worker itself has died (round 2)."
 classification: in-scope   # /scrutinise phase5-tts-audio round 1 (range 773ee71..e234ed8) , round 2 (range e234ed8..4a75676) and round 3 (range 4a75676..ea75403: 0 Critical, 0 Warning, 4 Suggestions folded into unit 8); hard rules in docs/plans/phase5-tts-audio.md and .claude/CLAUDE.md "Licensing", "Hardware target"
 tracker_rows: [TRACKER#scrutinise-phase5-tts-audio/1, TRACKER#scrutinise-phase5-tts-audio/2, TRACKER#scrutinise-phase5-tts-audio/3, TRACKER#scrutinise-phase5-tts-audio/4, TRACKER#scrutinise-phase5-tts-audio/5, TRACKER#scrutinise-phase5-tts-audio/6, TRACKER#scrutinise-phase5-tts-audio/7, TRACKER#scrutinise-phase5-tts-audio/8]

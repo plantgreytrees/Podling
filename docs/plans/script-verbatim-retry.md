@@ -1,5 +1,6 @@
 ---
 slug: script-verbatim-retry
+craftsman_version: 2.1.0
 goal: A model that paraphrases a quote, or puts its own words in quotation marks, is told exactly what to fix and retried once, instead of the episode failing at analysis.
 classification: in-scope   # follow-up from the live llama3.1:8b run after scrutinise-phase2-llm-provider (2 quote_verifier errors)
 tracker_rows: [TRACKER#script-verbatim-retry/1]

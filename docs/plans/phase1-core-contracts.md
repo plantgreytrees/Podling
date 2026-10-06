@@ -1,5 +1,6 @@
 ---
 slug: phase1-core-contracts
+craftsman_version: 2.1.0
 goal: "`podling run` produces a fully cached, schema-validated episode artifact set (documents → chunks → claims → ledger → script → analysis) offline with a fake LLM."
 classification: in-scope   # .claude/CLAUDE.md "Decisions (2026-09-29)" — Rust core, plugin kinds, claim ledger, artifacts-as-JSON-Schema, content-hash cache
 tracker_rows: ["TRACKER#phase1-core-contracts::1", "TRACKER#phase1-core-contracts::2", "TRACKER#phase1-core-contracts::3", "TRACKER#phase1-core-contracts::4", "TRACKER#phase1-core-contracts::5", "TRACKER#phase1-core-contracts::6", "TRACKER#phase1-core-contracts::7"]

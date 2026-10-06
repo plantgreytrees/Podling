@@ -1,1 +1,8 @@
-{}
+{
+  "stopGate": {
+    "commands": {
+      "Cargo.toml": "cargo test --quiet",
+      "pyproject.toml": "uv run --directory sidecars/tts pytest -q"
+    }
+  }
+}

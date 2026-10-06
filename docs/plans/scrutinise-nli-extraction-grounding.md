@@ -1,5 +1,6 @@
 ---
 slug: scrutinise-nli-extraction-grounding
+craftsman_version: 2.1.0
 goal: A faithful claim about the end of a very long source sentence is no longer dropped by ground_claims, and the CLI cache test covers the new stage.
 classification: in-scope   # findings of /craftsman:scrutinise over f12b046..be10c28
 tracker_rows: [TRACKER#scrutinise-nli-extraction-grounding/1]

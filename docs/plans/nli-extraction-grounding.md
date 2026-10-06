@@ -1,5 +1,6 @@
 ---
 slug: nli-extraction-grounding
+craftsman_version: 2.1.0
 goal: With [embedding]+[nli] set, a claim is kept only where the NLI model finds its own chunk entails it, so distortions built from the chunk's own words ("Kulik led" for "Kulik joined") are dropped and counted; without them nothing changes.
 classification: in-scope   # docs/architecture.md:167 and docs/handoff.md:54 list this as the planned follow-up
 tracker_rows: [TRACKER#nli-extraction-grounding/1, TRACKER#nli-extraction-grounding/2, TRACKER#nli-extraction-grounding/3, TRACKER#nli-extraction-grounding/4, TRACKER#nli-extraction-grounding/5]
