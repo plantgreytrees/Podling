@@ -209,10 +209,54 @@ impl Report {
     }
 }
 
+/// The VERSION 2 rule, kept so every run prints what the change bought.
+fn decide_v2(evidence: &StanceEvidence<'_>) -> Option<Stance> {
+    if evidence.entailment.get() >= 800 {
+        Some(Stance::Supports)
+    } else if evidence.contradiction.get() >= 950 && evidence.similarity.get() >= 600 {
+        Some(Stance::Contradicts)
+    } else {
+        None
+    }
+}
+
 #[test]
 fn stance_precision_report() {
-    let current = Report::of(decide);
-    current.print("score_stances rule on the labelled pair set");
+    let before = Report::of(decide_v2);
+    let after = Report::of(decide);
+    before.print("before: VERSION 2 rule on the labelled pair set");
+    after.print("after: score_stances::decide on the labelled pair set");
+
+    let mut better = false;
+    for (name, b, a) in [
+        ("supports", &before.supports, &after.supports),
+        ("contradicts", &before.contradicts, &after.contradicts),
+    ] {
+        let (b, a) = (b.precision().unwrap(), a.precision().unwrap());
+        assert!(a >= b, "{name} precision fell: {b:.3} -> {a:.3}");
+        better |= a > b;
+    }
+    assert!(better, "no stance's precision improved");
+
+    let kulik = pairs()
+        .into_iter()
+        .zip(scores().pairs)
+        .find(|(p, _)| {
+            p.claim == "Kulik reached the site in 1927."
+                && p.premise == "No impact crater was found."
+        })
+        .unwrap();
+    let (pair, scored) = &kulik;
+    assert_ne!(
+        decide(&StanceEvidence {
+            claim: &pair.claim,
+            premise: &pair.premise,
+            similarity: scored.similarity_pm,
+            entailment: scored.entailment_pm,
+            contradiction: scored.contradiction_pm,
+        }),
+        Some(Stance::Contradicts)
+    );
 }
 
 /// Scores every pair with the real NLI model and embedder, the way the stage
