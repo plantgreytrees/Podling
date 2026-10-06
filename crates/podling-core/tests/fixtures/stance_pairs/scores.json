@@ -517,6 +517,41 @@
       "similarity_pm": 741,
       "entailment_pm": 0,
       "contradiction_pm": 997
+    },
+    {
+      "id": "c22",
+      "text_hash": "afac4989465bdd4fd0e3ed93c09d6946ba8e3f010710625cdd4e52cd2312982f",
+      "similarity_pm": 845,
+      "entailment_pm": 0,
+      "contradiction_pm": 1000
+    },
+    {
+      "id": "c23",
+      "text_hash": "78b2d7608df4d14dc072d7939064b2bec47a81e1758951a631712e78fda502f4",
+      "similarity_pm": 860,
+      "entailment_pm": 0,
+      "contradiction_pm": 995
+    },
+    {
+      "id": "c24",
+      "text_hash": "cb2059c2d0e7b6a8217af258843609ae61633cde82c861dc32005c82d2149daa",
+      "similarity_pm": 799,
+      "entailment_pm": 0,
+      "contradiction_pm": 999
+    },
+    {
+      "id": "n34",
+      "text_hash": "2c88a465ee2cb46d143f2c80a3f2b9364aa26fd6963897fc7b99c34e5a4ae31d",
+      "similarity_pm": 698,
+      "entailment_pm": 0,
+      "contradiction_pm": 963
+    },
+    {
+      "id": "n35",
+      "text_hash": "48651597094607cfcfa547a145e688915b274b2fd1343f9bd0cedf14fdc3709f",
+      "similarity_pm": 701,
+      "entailment_pm": 0,
+      "contradiction_pm": 998
     }
   ]
 }

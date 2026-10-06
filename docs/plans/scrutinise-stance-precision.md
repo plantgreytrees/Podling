@@ -139,7 +139,7 @@ such pair is measured. S1 `:274-275` one incidental shared word passes, unpinned
 only against `decide_v2`. S3 `text.rs:9-11` `sentences` doc names only the fake provider
 and tests.
 
-- [ ] 2.1 W1 pairs: add to `pairs.json` c22 ("Kulik reached the site in 1927." / "Leonid
+- [x] 2.1 W1 pairs: add to `pairs.json` c22 ("Kulik reached the site in 1927." / "Leonid
   Kulik led the first expedition to the site. He got there in 1931."), c23 ("The explosion
   happened in June 1908." / "The explosion was enormous. It occurred in 1907."), c24 ("About
   80 million trees were flattened." / "The trees fell in a butterfly-shaped pattern. They
@@ -150,9 +150,9 @@ and tests.
   Leningrad in 1924."). Re-score live (module docs command).
   accept: `the_pair_set_is_well_formed` passes; old pairs' scores unchanged; fingerprint and
   embedding unchanged.
-- [ ] 2.2 Print the report for VERSION 4 on the extended set; record it in Report (round 2).
+- [x] 2.2 Print the report for VERSION 4 on the extended set; record it in Report (round 2).
   accept: printed with `-- --nocapture report`.
-- [ ] 2.3 Only if 2.2 shows a contradicts miss among c22–c24: candidate (d) a numbered
+- [x] 2.3 Only if 2.2 shows a contradicts miss among c22–c24: candidate (d) a numbered
   sentence opening with a pronoun (he/she/it/they/this) continues the previous sentence's
   subject. Report its contradicts TP/FP/FN (n34/n35 measure the precision cost); adopt it
   only at ≥ VERSION 4 precision and ≥ recall, else keep VERSION 4 and record the trade-off.
@@ -160,18 +160,18 @@ and tests.
   `a_number_about_something_else_does_not_contradict`. If adopted: VERSION 4 → 5 with a
   one-line reason; no threshold moved.
   accept: chosen rule's figures printed; pre-existing tests unchanged; `cargo test --workspace` green.
-- [ ] 2.4 S1: unit test pinning that one incidental shared word in the numbered sentence
+- [x] 2.4 S1: unit test pinning that one incidental shared word in the numbered sentence
   keeps the model's call (n29 shape: "Kulik's expedition reached the site in June 1927."
   vs "The explosion happened in June 1908." with contradiction ≥ CONTRADICT_PM → Contradicts).
   accept: test passes and names the trade-off in a comment.
-- [ ] 2.5 S2: `docs/architecture.md` "Measured precision" says the test fails if a rule
+- [x] 2.5 S2: `docs/architecture.md` "Measured precision" says the test fails if a rule
   change lowers precision or recall *relative to the VERSION 2 rule*; pair count and figures
   updated to the 2.2/2.3 report; the pronoun trade-off recorded next to the rule.
   accept: doc figures equal the printed report.
-- [ ] 2.6 S3: `text.rs` `sentences` doc names the stance gate as a consumer and the
+- [x] 2.6 S3: `text.rs` `sentences` doc names the stance gate as a consumer and the
   abbreviation limitation ("Dr. Kulik" splits).
   accept: `cargo doc`-visible comment updated; no behaviour change.
-- [ ] 2.7 Fill "Report (round 2)" below.
+- [x] 2.7 Fill "Report (round 2)" below.
 
 ## Report
 Pair set: 62 → 73 pairs (c17–c21 reworded/plural-subject numeric contradictions; n29–n33
@@ -210,7 +210,37 @@ No threshold moved. S1 (one incidental word such as "june" passes the gate) rema
 possible in principle; n29 shows the model doesn't over-call it on this set.
 
 ## Report (round 2)
-(filled by 2.7)
+Pair set: 73 → 78 pairs (c22–c24 pronoun-reference numeric contradictions; n34–n35 windows
+whose pronoun means another noun). Re-scored live; the 73 old pairs' scores, the NLI
+fingerprint and the embedding model came back unchanged (scores.json diff is insertions only).
+New scores (similarity / contradiction): c22 845/1000, c23 860/995, c24 799/999,
+n34 698/963, n35 701/998.
+
+`cargo test -p podling-core --test stance_precision -- --nocapture report`:
+
+```
+before: VERSION 2 rule on the labelled pair set
+  contradicts  24   4   0      85.7%  100.0%  n21 n33 n34 n35
+VERSION 4 (no pronoun carry-over), same set:
+  contradicts  22   0   2     100.0%   91.7%   -> W1 confirmed (c22, c23 refused); recall check failed it
+after: score_stances::decide (VERSION 5)
+  supports     14   0   5     100.0%   73.7%
+  contradicts  24   2   0      92.3%  100.0%  n34 n35
+```
+
+c24 already passed VERSION 4 (its numbered sentence shares "million" with the claim). c22 and
+c23 were refused because the pronoun sentence shares no word. Candidate (d), adopted as
+VERSION 5: a sentence opening with he/she/it/they/this/these also names the previous
+sentence's subject words. It recovers c22 and c23 and also lets n34 ("They" = herders) and n35
+("It" = Petrograd) through. Word overlap cannot resolve which noun a pronoun means, so no word
+rule separates c22/c23 from n34/n35.
+
+Deviation from 2.3 as written ("adopt only at ≥ VERSION 4 precision"): VERSION 4 fails the
+recall guard (91.7% < VERSION 2's 100%), and keeping it would mean weakening that test, which
+the constraints forbid. VERSION 5 holds recall at 100% and still raises contradicts precision
+over VERSION 2 (85.7% → 92.3%). A false Contradicts sends the claim to the adjudicator; a
+dropped one silently leaves it Corroborated/SingleSource. Supports unchanged; no threshold
+moved.
 
 ## Verification background
 - Gate: `crates/podling-core/src/stages/score_stances.rs` `numbers_share_the_subject` (~259),
