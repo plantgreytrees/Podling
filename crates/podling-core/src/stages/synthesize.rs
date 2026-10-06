@@ -19,8 +19,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use podling_types::{
-    BeatKind, CastMember, ChunkRecord, ContentHash, Emotion, NonverbalAt, NonverbalKind, PerMille,
-    Script, SpeakerId, VoiceCredit, VoiceRef,
+    BeatKind, CastMember, ChunkRecord, ContentHash, Emotion, GENERATED_VOICE_LICENCE, NonverbalAt,
+    NonverbalKind, PerMille, Script, SpeakerId, VoiceCredit, VoiceProvenance, VoiceRef,
+    provenance_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -28,6 +29,7 @@ use serde_json::{Value, json};
 use crate::audio::{Pcm, WavFormat};
 use crate::cache::{BlobStore, DiskCache};
 use crate::error::{CoreError, Result};
+use crate::lexicon::{HeardVariants, Respellings};
 use crate::plugin::{
     AsrProvider, ChunkContext, ChunkRequest, SpokenTurn, Transcript, TtsProvider,
     synthesize_checked,
@@ -73,6 +75,9 @@ impl Voices {
                     path.display()
                 ),
             })?;
+            if voice.licence() == GENERATED_VOICE_LICENCE {
+                check_provenance(&member.id, &path)?;
+            }
             let resolved = VoiceRef::new(&path, voice.transcript(), voice.licence())
                 .expect("checked when the episode was parsed");
             voices.keys.insert(
@@ -90,6 +95,14 @@ impl Voices {
             });
         }
         Ok(voices)
+    }
+
+    /// Who speaks, saying the names in `respellings` as respelt.
+    pub fn speaking<'a>(&'a self, respellings: &'a Respellings) -> Speech<'a> {
+        Speech {
+            voices: self,
+            respellings,
+        }
     }
 
     /// Who the voices came from, for the audio manifest.
@@ -117,6 +130,35 @@ impl Voices {
         }
         Ok(keys)
     }
+}
+
+/// A [`GENERATED_VOICE_LICENCE`] clip must have its provenance beside it, so
+/// a designed voice can be told from a copied one and made again.
+fn check_provenance(speaker: &SpeakerId, clip: &Path) -> Result<()> {
+    let path = provenance_path(clip);
+    let problem = match fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<VoiceProvenance>(&text) {
+            Ok(_) => return Ok(()),
+            Err(err) => format!("is not valid ({err})"),
+        },
+        Err(err) => format!("cannot be read ({err})"),
+    };
+    Err(CoreError::Config {
+        message: format!(
+            "the voice of speaker {:?} has licence {GENERATED_VOICE_LICENCE:?}, so it needs \
+             its provenance at {}, which {problem}; make the clip with scripts/voice_design/",
+            speaker.0,
+            path.display()
+        ),
+    })
+}
+
+/// Who speaks in which voice, and how they say the names the TTS model gets
+/// wrong. Built by [`Voices::speaking`].
+#[derive(Debug, Clone, Copy)]
+pub struct Speech<'a> {
+    pub voices: &'a Voices,
+    pub respellings: &'a Respellings,
 }
 
 /// What a chunk's audio depends on, apart from the take: the chunk id.
@@ -347,10 +389,13 @@ pub struct Takes {
     pub max_wer_pm: PerMille,
 }
 
-/// The recogniser that checks each take, and how many takes to try.
+/// The recogniser that checks each take, how many takes to try, and what
+/// the recogniser may write for a name.
 pub struct Verification<'a> {
     pub asr: &'a mut dyn AsrProvider,
     pub takes: Takes,
+    /// Read as the names they stand for when a take is checked.
+    pub heard: &'a HeardVariants,
 }
 
 /// One take of a chunk, synthesised and checked.
@@ -389,9 +434,12 @@ impl Take {
 /// [`Takes::banter`] takes from the start and keeps the best. A chunk that
 /// never passes keeps its best take and is marked unverified. Both stages
 /// are cached per take, so a rerun makes no TTS or ASR calls at all.
+///
+/// A name in `speech`'s respellings reaches the TTS model respelt; the take
+/// is still checked against the name.
 pub fn synthesize_script(
     script: &Script,
-    voices: &Voices,
+    speech: Speech<'_>,
     tts: &mut dyn TtsProvider,
     verification: Verification<'_>,
     blobs: &BlobStore,
@@ -405,7 +453,15 @@ pub fn synthesize_script(
         multi_speaker = capabilities.multi_speaker,
         "chunks planned"
     );
-    let Verification { asr, takes } = verification;
+    let Verification {
+        asr,
+        takes,
+        heard: variants,
+    } = verification;
+    let Speech {
+        voices,
+        respellings,
+    } = speech;
     let synthesize = SynthesizeChunk::new(tts, voices, blobs);
     let transcribe = TranscribeChunk::new(asr, blobs);
     let beats = script.beats();
@@ -413,9 +469,16 @@ pub fn synthesize_script(
     let mut rates: BTreeMap<SpeakerId, Vec<f64>> = BTreeMap::new();
     let mut chunks: Vec<SynthesizedChunk> = Vec::with_capacity(plan.len());
     for planned in &plan {
-        let turns = spoken(script, &planned.pieces);
+        let turns = spoken(script, &planned.pieces, respellings);
+        let respelt: Vec<&str> = turns
+            .iter()
+            .flat_map(|t| respellings.names_in(&t.text))
+            .collect();
+        if !respelt.is_empty() {
+            tracing::debug!(turns = ?planned.turns().indices(), names = ?respelt, "names respelt");
+        }
         let (context, context_audio) = if capabilities.context {
-            context_for(script, planned, &plan, &chunks)
+            context_for(script, planned, &plan, &chunks, respellings)
         } else {
             (None, ContextAudio::default())
         };
@@ -461,7 +524,7 @@ pub fn synthesize_script(
                 expected: expected.clone(),
             };
             let transcript = cached(&transcribe, &heard, cache, report)?;
-            let check = Check::new(&expected, &quotes, &transcript);
+            let check = Check::new(&expected, &quotes, &transcript, variants);
             let passed = check.passes(takes.max_wer_pm);
             tracing::info!(
                 turns = ?planned.turns().indices(),
@@ -639,7 +702,11 @@ fn quotes_in(script: &Script, pieces: &[Piece]) -> Vec<String> {
 /// their words goes with the piece that starts the turn, one after with the
 /// piece that ends it; sounds over the turn, or by someone else, are left to
 /// the assembler.
-fn spoken(script: &Script, pieces: &[Piece]) -> Vec<SpokenTurn> {
+///
+/// The only place `say_as` is set: a piece naming someone in `respellings`
+/// gets the respelt text for the model, and its `text` keeps the name.
+/// Backchannels are never respelt.
+fn spoken(script: &Script, pieces: &[Piece], respellings: &Respellings) -> Vec<SpokenTurn> {
     pieces
         .iter()
         .map(|piece| {
@@ -649,9 +716,11 @@ fn spoken(script: &Script, pieces: &[Piece]) -> Vec<SpokenTurn> {
                 NonverbalAt::After => piece.ends_turn(script),
                 NonverbalAt::Over => false,
             };
+            let text = piece.text(script);
             SpokenTurn {
                 speaker: turn.speaker.clone(),
-                text: piece.text(script).to_owned(),
+                text: text.to_owned(),
+                say_as: respellings.respell(text),
                 emotion: turn.emotion,
                 nonverbal: turn
                     .nonverbal
@@ -672,6 +741,7 @@ fn context_for(
     planned: &PlannedChunk,
     plan: &[PlannedChunk],
     done: &[SynthesizedChunk],
+    respellings: &Respellings,
 ) -> (Option<ContextSpec>, ContextAudio) {
     let previous = done.len().checked_sub(1).and_then(|i| plan.get(i));
     let (Some(previous), Some(made)) = (previous, done.last()) else {
@@ -684,7 +754,7 @@ fn context_for(
         .rposition(|p| p.beat != last_beat)
         .map_or(0, |i| i + 1);
     let mut spec = ContextSpec {
-        turns: spoken(script, &previous.pieces[from..]),
+        turns: spoken(script, &previous.pieces[from..], respellings),
         callbacks: Vec::new(),
     };
     let mut audio = ContextAudio {
@@ -718,7 +788,8 @@ fn context_for(
             .iter()
             .rposition(|p| p.turn == target)
             .expect("found");
-        spec.callbacks.extend(spoken(script, &pieces[first..=last]));
+        spec.callbacks
+            .extend(spoken(script, &pieces[first..=last], respellings));
         audio.callbacks.push(done[c].clip(first..last + 1));
     }
     (Some(spec), audio)
@@ -819,6 +890,7 @@ mod tests {
         Verification {
             asr,
             takes: takes(),
+            heard: HeardVariants::none(),
         }
     }
 
@@ -833,7 +905,7 @@ mod tests {
         let run = |report: &mut RunReport| {
             synthesize_script(
                 &script,
-                &f.voices,
+                f.voices.speaking(Respellings::none()),
                 &mut FakeTts::default(),
                 checked(&mut FakeAsr::default()),
                 &f.blobs,
@@ -873,7 +945,7 @@ mod tests {
         let mut report = RunReport::default();
         let chunks = synthesize_script(
             &script,
-            &f.voices,
+            f.voices.speaking(Respellings::none()),
             &mut FakeTts::default(),
             checked(&mut FakeAsr::default()),
             &f.blobs,
@@ -932,7 +1004,7 @@ mod tests {
         // The TTS says the backchannel in line, so that is what is heard.
         let chunks = synthesize_script(
             &script,
-            &f.voices,
+            f.voices.speaking(Respellings::none()),
             &mut FakeTts::default(),
             checked(&mut Hears("Mm-hm. One two three four five.")),
             &f.blobs,
@@ -1009,6 +1081,152 @@ mod tests {
         );
     }
 
+    /// `ada` with a [`GENERATED_VOICE_LICENCE`] clip, and its provenance
+    /// file holding `provenance` when given.
+    fn generated_voice(dir: &Path, provenance: Option<&str>) -> (CastMember, PathBuf) {
+        let mut member = cast_member(dir, "ada", b"designed");
+        member.voice = VoiceRef::new("ada.wav", "Hello there.", GENERATED_VOICE_LICENCE).unwrap();
+        let path = provenance_path(&dir.join("ada.wav"));
+        if let Some(provenance) = provenance {
+            fs::write(&path, provenance).unwrap();
+        }
+        (member, path)
+    }
+
+    fn config_message(err: CoreError) -> String {
+        match err {
+            CoreError::Config { message } => message,
+            other => panic!("expected a Config error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_generated_voice_without_its_provenance_is_refused_naming_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (member, path) = generated_voice(dir.path(), None);
+        let message = config_message(Voices::resolve(&[member], dir.path()).unwrap_err());
+        assert!(
+            message.contains("\"ada\"") && message.contains(&path.display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("scripts/voice_design/"), "{message}");
+    }
+
+    #[test]
+    fn a_generated_voice_with_bad_provenance_is_refused() {
+        for bad in [
+            "not json",
+            r#"{"model": "m", "weights_commit": "c", "design_prompt": "p", "seed": 1}"#,
+            r#"{"model": "", "weights_commit": "c", "design_prompt": "p", "seed": 1,
+                "tool_version": "0.1.0"}"#,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (member, path) = generated_voice(dir.path(), Some(bad));
+            let message = config_message(Voices::resolve(&[member], dir.path()).unwrap_err());
+            assert!(message.contains(&path.display().to_string()), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_generated_voice_with_its_provenance_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let provenance = r#"{"model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+            "weights_commit": "abc123", "design_prompt": "a warm, low voice",
+            "seed": 7, "tool_version": "0.1.0"}"#;
+        let (member, _) = generated_voice(dir.path(), Some(provenance));
+        let voices = Voices::resolve(&[member], dir.path()).unwrap();
+        assert_eq!(voices.credits()[0].licence, GENERATED_VOICE_LICENCE);
+    }
+
+    /// FakeTts that notes each turn it is asked to say, as `(text, say_as)`.
+    #[derive(Default)]
+    struct Told {
+        inner: FakeTts,
+        turns: Vec<(String, Option<String>)>,
+    }
+
+    impl TtsProvider for Told {
+        fn id(&self) -> &str {
+            "told"
+        }
+        fn fingerprint(&self) -> Value {
+            self.inner.fingerprint()
+        }
+        fn capabilities(&self) -> &crate::plugin::TtsCapabilities {
+            self.inner.capabilities()
+        }
+        fn synthesize(&mut self, request: &ChunkRequest<'_>) -> Result<crate::plugin::ChunkAudio> {
+            let told = request
+                .turns
+                .iter()
+                .map(|t| (t.text.clone(), t.say_as.clone()));
+            self.turns.extend(told);
+            self.inner.synthesize(request)
+        }
+    }
+
+    /// FakeAsr that notes what each chunk was expected to say.
+    #[derive(Default)]
+    struct Expecting {
+        inner: FakeAsr,
+        expected: Vec<String>,
+    }
+
+    impl AsrProvider for Expecting {
+        fn id(&self) -> &str {
+            "expecting"
+        }
+        fn fingerprint(&self) -> Value {
+            self.inner.fingerprint()
+        }
+        fn transcribe(&mut self, request: &AsrRequest<'_>) -> Result<Transcript> {
+            self.expected.extend(request.expected.iter().cloned());
+            self.inner.transcribe(request)
+        }
+    }
+
+    #[test]
+    fn only_the_model_gets_the_respelling() {
+        let f = fixture();
+        let script = script(&[
+            ("ada", "Kulik went north."),
+            ("ben", "Why north?"),
+            ("ada", "The Kuliks went later."),
+        ]);
+        let say = podling_types::Pronunciation::new("Koolick", Vec::new()).unwrap();
+        let lexicon = podling_types::Lexicon::new([("Kulik".to_owned(), say)].into()).unwrap();
+        let respellings = Respellings::new(&lexicon);
+        let mut tts = Told::default();
+        let mut asr = Expecting::default();
+        let mut report = RunReport::default();
+        let chunks = synthesize_script(
+            &script,
+            f.voices.speaking(&respellings),
+            &mut tts,
+            checked(&mut asr),
+            &f.blobs,
+            None,
+            &mut report,
+        )
+        .unwrap();
+
+        let said = |text: &str, say_as: Option<&str>| (text.to_owned(), say_as.map(str::to_owned));
+        assert_eq!(
+            tts.turns,
+            [
+                said("Kulik went north.", Some("Koolick went north.")),
+                said("Why north?", None),
+                said("The Kuliks went later.", None),
+            ]
+        );
+        // The speech check, and what is said, keep the name.
+        assert_eq!(
+            asr.expected,
+            ["Kulik went north.", "Why north?", "The Kuliks went later."]
+        );
+        assert!(chunks.iter().all(|c| c.record.verified));
+    }
+
     /// `n` distinct words, `w0 w1 …`, ten to a sentence.
     fn words(prefix: &str, n: usize) -> String {
         let words: Vec<String> = (0..n)
@@ -1066,7 +1284,7 @@ mod tests {
         let mut report = RunReport::default();
         let chunks = synthesize_script(
             script,
-            &f.voices,
+            f.voices.speaking(Respellings::none()),
             tts,
             checked(&mut FakeAsr::default()),
             &f.blobs,
@@ -1217,8 +1435,8 @@ mod tests {
         let script = Script::new(cast, vec![turn]).unwrap();
         let plan = plan_chunks(&script, FakeTts::default().capabilities());
         assert_eq!(plan.len(), 2, "400 words is cut in two");
-        let first = spoken(&script, &plan[0].pieces);
-        let last = spoken(&script, &plan[1].pieces);
+        let first = spoken(&script, &plan[0].pieces, Respellings::none());
+        let last = spoken(&script, &plan[1].pieces, Respellings::none());
         let kinds =
             |t: &SpokenTurn| -> Vec<NonverbalAt> { t.nonverbal.iter().map(|n| n.at).collect() };
         assert_eq!(kinds(&first[0]), [NonverbalAt::Before]);
@@ -1236,7 +1454,7 @@ mod tests {
         let mut report = RunReport::default();
         let chunks = synthesize_script(
             script,
-            &f.voices,
+            f.voices.speaking(Respellings::none()),
             tts,
             checked(asr),
             &f.blobs,

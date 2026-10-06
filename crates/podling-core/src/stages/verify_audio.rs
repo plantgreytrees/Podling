@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use crate::audio::Pcm;
 use crate::cache::BlobStore;
 use crate::error::{CoreError, Result};
+use crate::lexicon::HeardVariants;
 use crate::plugin::{AsrProvider, AsrRequest, Transcript, transcribe_checked};
 use crate::stage::Stage;
 
@@ -24,8 +25,10 @@ use crate::stage::Stage;
 pub const ANALYSER: &str = "verify_audio";
 
 /// `text` as comparable words: lower case, no punctuation, apostrophes
-/// dropped ("it's" → "its"), and numbers as digits, whether written as
-/// digits ("1,908", "30th") or spelled out ("nineteen oh eight", "thirtieth").
+/// dropped ("it's" → "its"), British spellings in their American form
+/// ("kilometres" → "kilometers", as Whisper writes them), and numbers as
+/// digits, whether written as digits ("1,908", "30th") or spelled out
+/// ("nineteen oh eight", "thirtieth").
 pub fn words(text: &str) -> Vec<String> {
     let lower = text.to_lowercase().replace(['’', '‘'], "'");
     let mut cleaned = String::with_capacity(lower.len());
@@ -49,8 +52,88 @@ pub fn words(text: &str) -> Vec<String> {
     let tokens: Vec<&str> = cleaned
         .split_whitespace()
         .map(strip_ordinal_suffix)
+        .map(american_spelling)
         .collect();
     spell_numbers_as_digits(&tokens)
+}
+
+/// British spellings and the American ones Whisper writes for them, word by
+/// word. An explicit list, not suffix rules: "-re" → "-er" would turn "acre"
+/// into "acer" and "genre" into "gener".
+const BRITISH_TO_AMERICAN: [(&str, &str); 64] = [
+    ("aluminium", "aluminum"),
+    ("analyse", "analyze"),
+    ("analysed", "analyzed"),
+    ("armour", "armor"),
+    ("behaviour", "behavior"),
+    ("behaviours", "behaviors"),
+    ("catalogue", "catalog"),
+    ("centimetre", "centimeter"),
+    ("centimetres", "centimeters"),
+    ("centre", "center"),
+    ("centred", "centered"),
+    ("centres", "centers"),
+    ("colour", "color"),
+    ("coloured", "colored"),
+    ("colours", "colors"),
+    ("defence", "defense"),
+    ("favour", "favor"),
+    ("favourite", "favorite"),
+    ("favours", "favors"),
+    ("fibre", "fiber"),
+    ("fibres", "fibers"),
+    ("grey", "gray"),
+    ("harbour", "harbor"),
+    ("harbours", "harbors"),
+    ("honour", "honor"),
+    ("honoured", "honored"),
+    ("honours", "honors"),
+    ("humour", "humor"),
+    ("jewellery", "jewelry"),
+    ("kilometre", "kilometer"),
+    ("kilometres", "kilometers"),
+    ("labour", "labor"),
+    ("litre", "liter"),
+    ("litres", "liters"),
+    ("manoeuvre", "maneuver"),
+    ("manoeuvres", "maneuvers"),
+    ("metre", "meter"),
+    ("metres", "meters"),
+    ("millimetre", "millimeter"),
+    ("millimetres", "millimeters"),
+    ("neighbour", "neighbor"),
+    ("neighbouring", "neighboring"),
+    ("neighbours", "neighbors"),
+    ("organisation", "organization"),
+    ("organise", "organize"),
+    ("organised", "organized"),
+    ("plough", "plow"),
+    ("programme", "program"),
+    ("programmes", "programs"),
+    ("realise", "realize"),
+    ("realised", "realized"),
+    ("recognise", "recognize"),
+    ("recognised", "recognized"),
+    ("rumour", "rumor"),
+    ("rumours", "rumors"),
+    ("sceptical", "skeptical"),
+    ("theatre", "theater"),
+    ("theatres", "theaters"),
+    ("travelled", "traveled"),
+    ("traveller", "traveler"),
+    ("travellers", "travelers"),
+    ("travelling", "traveling"),
+    ("vapour", "vapor"),
+    ("vapours", "vapors"),
+];
+
+/// `token`'s American spelling, when it is a British one in
+/// [`BRITISH_TO_AMERICAN`]; anything else unchanged.
+fn american_spelling(token: &str) -> &str {
+    BRITISH_TO_AMERICAN
+        .iter()
+        .find(|(british, _)| *british == token)
+        .map_or(token, |(_, american)| american)
 }
 
 /// "30th" → "30"; anything else unchanged.
@@ -322,10 +405,16 @@ pub struct Check {
 }
 
 impl Check {
-    /// Compares `transcript` with the chunk's turn texts and its quotes.
-    pub fn new(expected: &[String], quotes: &[String], transcript: &Transcript) -> Self {
+    /// Compares `transcript` with the chunk's turn texts and its quotes,
+    /// reading each of `variants` in the transcript as the name it stands for.
+    pub fn new(
+        expected: &[String],
+        quotes: &[String],
+        transcript: &Transcript,
+        variants: &HeardVariants,
+    ) -> Self {
         let reference: Vec<String> = expected.iter().flat_map(|t| words(t)).collect();
-        let heard = words(&transcript.text());
+        let heard = variants.apply(words(&transcript.text()));
         Self {
             wer_pm: wer_pm(&reference, &heard),
             quote_misses: quote_misses(quotes, &heard),
@@ -567,6 +656,58 @@ mod tests {
     }
 
     #[test]
+    fn british_and_american_spellings_are_the_same_words() {
+        let reference = w("Trees fell for kilometres around the centre, grey with ash.");
+        let heard = w("Trees fell for kilometers around the center, gray with ash.");
+        assert_eq!(reference, heard);
+        assert_eq!(wer_pm(&reference, &heard).get(), 0);
+        // Only listed words fold: "-re" words that are not British spellings
+        // stay as they are.
+        assert_eq!(w("acre genre"), ["acre", "genre"]);
+        assert_eq!(w("Acres of genres"), ["acres", "of", "genres"]);
+        // A quote in British spelling is heard in American spelling.
+        let quotes = ["the centre of the blast".to_owned()];
+        assert!(quote_misses(&quotes, &w("at the center of the blast")).is_empty());
+    }
+
+    #[test]
+    fn the_spelling_table_is_sorted_british_and_never_maps_a_word_to_itself() {
+        let british: Vec<&str> = BRITISH_TO_AMERICAN.iter().map(|(b, _)| *b).collect();
+        assert!(british.windows(2).all(|p| p[0] < p[1]), "keep it sorted");
+        for (b, a) in BRITISH_TO_AMERICAN {
+            assert_ne!(b, a);
+            // An American spelling is never itself folded again.
+            assert_eq!(american_spelling(a), a);
+        }
+    }
+
+    #[test]
+    fn a_heard_variant_of_a_name_is_no_word_error() {
+        use podling_types::{Lexicon, Pronunciation};
+
+        let lexicon = Lexicon::new(
+            [(
+                "Kulik".to_owned(),
+                Pronunciation::new("Koolick", vec!["Koolik".into()]).unwrap(),
+            )]
+            .into(),
+        )
+        .unwrap();
+        let variants = HeardVariants::new(&lexicon);
+        let expected = ["Kulik led the expedition.".to_owned()];
+        let quotes = ["Kulik led the expedition".to_owned()];
+        let heard = transcript("Koolik led the expedition.");
+
+        let check = Check::new(&expected, &quotes, &heard, &variants);
+        assert_eq!(check.wer_pm.get(), 0);
+        assert!(check.quote_misses.is_empty());
+
+        let unknown = Check::new(&expected, &quotes, &heard, HeardVariants::none());
+        assert!(unknown.wer_pm.get() > 0);
+        assert_eq!(unknown.quote_misses, quotes);
+    }
+
+    #[test]
     fn numbers_read_the_same_however_they_are_written() {
         let year = ["in", "1908"];
         assert_eq!(w("in 1908"), year);
@@ -618,12 +759,22 @@ mod tests {
         let quotes = ["the sky split in two".to_owned()];
         let limit = PerMille::new(80).unwrap();
 
-        let heard = Check::new(&expected, &quotes, &transcript(&expected[0]));
+        let heard = Check::new(
+            &expected,
+            &quotes,
+            &transcript(&expected[0]),
+            HeardVariants::none(),
+        );
         assert!(heard.passes(limit));
 
         // One word misheard inside the quote: 1 error in 26 words, 39‰ rounded up.
         let misheard = expected[0].replace("split", "spit");
-        let check = Check::new(&expected, &quotes, &transcript(&misheard));
+        let check = Check::new(
+            &expected,
+            &quotes,
+            &transcript(&misheard),
+            HeardVariants::none(),
+        );
         assert_eq!(check.wer_pm.get(), 39);
         assert_eq!(check.quote_misses, quotes);
         assert!(!check.passes(limit), "the quote fails it on its own");
