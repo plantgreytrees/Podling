@@ -298,12 +298,19 @@ fn beats_from_marks(marks: impl Iterator<Item = Option<BeatKind>>) -> Vec<Beat> 
 
 /// When words the model typed in quotation marks are a quotation listed in
 /// `sources`, says how to reference it, so the retry need not guess. Empty
-/// otherwise.
+/// otherwise. A long `typed` arrives cut short and ending in `…`, so it
+/// matches a quotation that starts with what is left.
 fn quoted_part_hint(typed: &str, chunks: &[Chunk]) -> String {
+    let matches = |quotation: &str| {
+        quotation == typed
+            || typed
+                .strip_suffix('…')
+                .is_some_and(|head| !head.is_empty() && quotation.starts_with(head))
+    };
     for (source, chunk) in chunks.iter().enumerate() {
         for (sentence, range) in sentences(chunk.text()).into_iter().enumerate() {
             let parts = quotations(&chunk.text()[range]);
-            if let Some(part) = parts.iter().position(|p| *p == typed) {
+            if let Some(part) = parts.iter().position(|p| matches(p)) {
                 return format!(
                     "; those words are in `sources`: reference them with \
                      {{\"source\": {source}, \"sentence\": {sentence}, \"part\": {part}}}"
@@ -558,6 +565,55 @@ mod tests {
             &doc.text()[span.start()..span.end()],
             "Iceberg right ahead."
         );
+    }
+
+    #[test]
+    fn a_turn_quoting_a_part_speaks_only_the_quotation() {
+        let (doc, chunk) = lookout();
+        let reply = json!({
+            "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
+            "turns": [{
+                "speaker": "host", "text": "The lookout called: {{quote:0}}",
+                "emotion": "neutral", "citations": [],
+                "quotes": [{ "source": 0, "sentence": 1, "part": 0 }],
+            }],
+        });
+        let script = build_script(
+            &reply.to_string(),
+            &empty_input(vec![doc.clone()], vec![chunk]),
+        )
+        .unwrap();
+        let turn = &script.turns()[0];
+        assert_eq!(
+            turn.text,
+            "The lookout called: \u{201C}Iceberg right ahead.\u{201D}"
+        );
+        let span = turn.quotes[0].span();
+        assert_eq!(
+            &doc.text()[span.start()..span.end()],
+            "Iceberg right ahead."
+        );
+    }
+
+    #[test]
+    fn a_long_typed_quotation_cut_short_still_gets_its_reference() {
+        let long = "Every boat must be filled before it is lowered, and the women and \
+                    children go first, whatever the cost";
+        let doc = document(&format!("# Orders\n\nThe officer shouted, \"{long}.\""));
+        let chunk =
+            Chunk::from_document(&doc, TextSpan::new(10, doc.text().len()).unwrap(), vec![])
+                .unwrap();
+        let shown = source_texts(std::slice::from_ref(&chunk), std::slice::from_ref(&doc));
+        let quotation = &shown[0].sentences[0].quoted[0];
+        // What `PlaceholderError::Typed` carries for a long span: 80 chars and `…`.
+        let echoed: String = quotation.chars().take(80).chain(['…']).collect();
+        assert!(quotation.chars().count() > 80);
+        let hint = quoted_part_hint(&echoed, std::slice::from_ref(&chunk));
+        assert!(
+            hint.contains(r#"{"source": 0, "sentence": 0, "part": 0}"#),
+            "{hint}"
+        );
+        assert_eq!(quoted_part_hint("…", std::slice::from_ref(&chunk)), "");
     }
 
     #[test]

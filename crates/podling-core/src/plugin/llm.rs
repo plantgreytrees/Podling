@@ -816,6 +816,37 @@ mod tests {
     }
 
     #[test]
+    fn a_reply_cut_off_on_every_attempt_is_invalid_output_not_a_provider_error() {
+        struct AlwaysCut(std::cell::Cell<usize>);
+        impl LlmProvider for AlwaysCut {
+            fn id(&self) -> &str {
+                "always_cut"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+                self.0.set(self.0.get() + 1);
+                Err(CoreError::Provider {
+                    plugin: "always_cut".into(),
+                    kind: ProviderFailure::CutOff,
+                    message: "cut off at the token limit".into(),
+                })
+            }
+        }
+        let llm = AlwaysCut(Default::default());
+        let req = request(LlmTask::ExtractClaims, json!({}));
+        let err = complete_validated(&llm, "s", &req, parse_object).unwrap_err();
+        assert_eq!(llm.0.get(), DEFAULT_ATTEMPTS.get());
+        match err {
+            CoreError::InvalidProviderOutput { message, .. } => {
+                assert!(message.contains("after 2 attempts"), "{message}");
+            }
+            other => panic!("expected InvalidProviderOutput, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn the_fake_adjudicator_cites_both_sides_and_takes_none() {
         let claim = podling_types::Claim::new("The blast was in 1908.");
         let input = json!({

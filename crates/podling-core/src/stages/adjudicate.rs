@@ -534,29 +534,47 @@ mod tests {
         assert_eq!(verdicts.as_slice()[0].fallback(), None);
     }
 
+    /// Fails every call with `kind`, counting the calls.
+    struct Failing(crate::error::ProviderFailure, Cell<usize>);
+    impl LlmProvider for Failing {
+        fn id(&self) -> &str {
+            "failing"
+        }
+        fn fingerprint(&self) -> Value {
+            Value::Null
+        }
+        fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+            self.1.set(self.1.get() + 1);
+            Err(CoreError::Provider {
+                plugin: "failing".into(),
+                kind: self.0,
+                message: "no reply".into(),
+            })
+        }
+    }
+
     #[test]
     fn a_provider_failure_fails_the_stage() {
-        struct Down(Cell<usize>);
-        impl LlmProvider for Down {
-            fn id(&self) -> &str {
-                "down"
-            }
-            fn fingerprint(&self) -> Value {
-                Value::Null
-            }
-            fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
-                self.0.set(self.0.get() + 1);
-                Err(CoreError::Provider {
-                    plugin: "down".into(),
-                    kind: crate::error::ProviderFailure::Unreachable,
-                    message: "refused".into(),
-                })
-            }
-        }
-        let llm = Down(Cell::new(0));
+        let llm = Failing(crate::error::ProviderFailure::Unreachable, Cell::new(0));
         let err = Adjudicate { llm: &llm }.run(&input()).unwrap_err();
         assert!(matches!(err, CoreError::Provider { .. }), "{err}");
-        assert_eq!(llm.0.get(), 1, "transport errors are not retried here");
+        assert_eq!(llm.1.get(), 1, "transport errors are not retried here");
+    }
+
+    #[test]
+    fn replies_cut_off_every_time_become_an_unresolved_fallback() {
+        let llm = Failing(crate::error::ProviderFailure::CutOff, Cell::new(0));
+        let verdicts = Adjudicate { llm: &llm }.run(&input()).unwrap();
+        assert_eq!(llm.1.get(), 2, "one try and one retry");
+        let verdict = &verdicts.as_slice()[0];
+        assert_eq!(verdict.favours(), Favours::Unresolved);
+        assert!(
+            verdict
+                .fallback()
+                .is_some_and(|r| r.contains("shorter JSON object")),
+            "{:?}",
+            verdict.fallback()
+        );
     }
 
     #[test]
