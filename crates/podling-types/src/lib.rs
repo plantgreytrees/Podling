@@ -15,6 +15,7 @@ pub mod ledger;
 pub mod quote;
 pub mod schema;
 pub mod script;
+pub mod verdict;
 
 pub use analysis::{AnalysisReport, Finding, Severity};
 pub use audio::{AudioManifest, ChunkRecord, EmptyTurnRange, EpisodeAudio, TurnRange, VoiceCredit};
@@ -32,3 +33,4 @@ pub use script::{
     Beat, BeatKind, Emotion, Nonverbal, NonverbalAt, NonverbalKind, Pace, Script, ScriptError,
     Speaker, Turn,
 };
+pub use verdict::{EvidenceRef, Favours, InvalidVerdict, MAX_EXPLANATION_CHARS, Verdict, Verdicts};

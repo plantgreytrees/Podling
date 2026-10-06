@@ -50,6 +50,9 @@ pub enum ProviderFailure {
     /// No answer: connection refused, DNS failure, TLS error and the like.
     Unreachable,
     TimedOut,
+    /// The reply stopped at the output token limit before it was finished.
+    /// The LLM stages treat it as a rejected reply, not a failure.
+    CutOff,
     /// Anything else, such as a reply too large or not shaped like the API.
     Other,
 }

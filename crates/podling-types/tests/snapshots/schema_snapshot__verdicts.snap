@@ -1,0 +1,170 @@
+---
+source: crates/podling-types/tests/schema_snapshot.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envelope",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "#/$defs/Verdicts"
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "body"
+  ],
+  "$defs": {
+    "ArtifactKind": {
+      "type": "string",
+      "enum": [
+        "episode",
+        "documents",
+        "chunks",
+        "claims",
+        "ledger",
+        "verdicts",
+        "script",
+        "analysis",
+        "audio"
+      ]
+    },
+    "ChunkId": {
+      "description": "Identifies a chunk by its document and span.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "ClaimId": {
+      "description": "Identifies a claim by its normalised text.",
+      "$ref": "#/$defs/ContentHash"
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "EvidenceRef": {
+      "description": "One piece of a claim's evidence, named by what identifies it: its chunk,\nits stance and, for NLI evidence, the premise span it was judged on.",
+      "type": "object",
+      "properties": {
+        "chunk": {
+          "$ref": "#/$defs/ChunkId"
+        },
+        "premise": {
+          "description": "The `EvidenceBasis::Nli` premise span, in the chunk's document. Absent\nfor evidence without one (extracted from the chunk, or merged).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextSpan"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stance": {
+          "$ref": "#/$defs/Stance"
+        }
+      },
+      "required": [
+        "chunk",
+        "stance"
+      ]
+    },
+    "Favours": {
+      "description": "Which side of a Contested claim the sources favour.",
+      "oneOf": [
+        {
+          "description": "The evidence that supports the claim is the stronger.",
+          "type": "string",
+          "const": "supporting"
+        },
+        {
+          "description": "The evidence that contradicts the claim is the stronger.",
+          "type": "string",
+          "const": "contradicting"
+        },
+        {
+          "description": "The sources don't settle it, or the adjudicator gave no usable answer.",
+          "type": "string",
+          "const": "unresolved"
+        }
+      ]
+    },
+    "Stance": {
+      "type": "string",
+      "enum": [
+        "supports",
+        "contradicts"
+      ]
+    },
+    "TextSpan": {
+      "description": "A half-open byte range `[start, end)` into a document's text.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "Verdict": {
+      "description": "The adjudicator's reading of one Contested claim.",
+      "type": "object",
+      "properties": {
+        "cites": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "claim": {
+          "$ref": "#/$defs/ClaimId"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "fallback": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "favours": {
+          "$ref": "#/$defs/Favours"
+        }
+      },
+      "required": [
+        "claim",
+        "favours",
+        "explanation",
+        "cites"
+      ]
+    },
+    "Verdicts": {
+      "description": "Every verdict of a run, at most one per claim, ordered by claim id. Written\nas a bare JSON array.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Verdict"
+      }
+    }
+  }
+}

@@ -1,12 +1,13 @@
 //! The pipeline stages, and the premise windows the NLI stages share.
 //! [`crate::pipeline::run`] calls the stages in this order: ingest, chunk,
 //! extract_claims, then (with `[embedding]` and `[nli]`) ground_claims,
-//! cluster_claims and score_stances, then ledger, script and analyse, then
-//! (with `[tts]`) the chunks are planned, synthesize_chunk and
-//! transcribe_chunk run once per take of each chunk until one passes, the
-//! sounds one speaker makes over another's turn are synthesised on their own,
-//! and the episode is assembled.
+//! cluster_claims and score_stances, then ledger, adjudicate (which calls the
+//! LLM only for Contested claims), script and analyse, then (with `[tts]`)
+//! the chunks are planned, synthesize_chunk and transcribe_chunk run once per
+//! take of each chunk until one passes, the sounds one speaker makes over
+//! another's turn are synthesised on their own, and the episode is assembled.
 
+pub mod adjudicate;
 pub mod analyse;
 pub mod assemble;
 pub mod chunk;
@@ -22,6 +23,7 @@ pub mod synthesize;
 pub mod verify_audio;
 pub mod windows;
 
+pub use adjudicate::{Adjudicate, AdjudicateInput};
 pub use analyse::{Analyse, AnalyseInput};
 pub use chunk::ChunkDocuments;
 pub use cluster_claims::ClusterClaims;

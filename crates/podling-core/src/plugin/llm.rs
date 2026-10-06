@@ -1,13 +1,15 @@
 //! Text-generation providers and the output shapes they must produce.
 
 use podling_types::{
-    BeatKind, ChunkId, ClaimId, ClaimStatus, Emotion, Ledger, Nonverbal, NonverbalAt,
-    NonverbalKind, Pace, Speaker, SpeakerId,
+    BeatKind, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Nonverbal, NonverbalAt,
+    NonverbalKind, Pace, Speaker, SpeakerId, Stance, Verdicts,
 };
+use std::num::NonZeroUsize;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ProviderFailure, Result};
 use crate::text::sentences;
 
 /// Version of the stage prompts and the input shapes they describe. Part of
@@ -23,7 +25,18 @@ use crate::text::sentences;
 ///    sounds and callbacks.
 /// 6: beats are marked on the turn that begins each one (`beat`), not listed
 ///    as index ranges: llama3.1:8b wrote inclusive ends for exclusive ones.
-pub const PROMPT_VERSION: u32 = 6;
+/// 7: a Contested claim's ledger entry carries the adjudicator's verdict
+///    ([`LedgerVerdict`]).
+/// 8: script sources are numbered ([`SourceText::source`]) and a quote names
+///    a source number, not a chunk id, which llama3.1:8b cited as a claim. A
+///    sentence lists the quotations inside it (`quoted`), and a quote may name
+///    one of them (`part`).
+pub const PROMPT_VERSION: u32 = 8;
+
+/// Version of the adjudicator's prompt and input shape, in its cache key only.
+/// Kept apart from [`PROMPT_VERSION`] so a change to the adjudicator doesn't
+/// re-run claim extraction.
+pub const ADJUDICATE_PROMPT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +51,9 @@ pub enum LlmTask {
     /// draft's turns may carry beat marks, pace, nonverbal sounds and
     /// callbacks.
     WriteScript,
+    /// Input: `{ "claim": AdjudicationClaim, "evidence": [AdjudicationEvidence] }`
+    /// for one Contested claim. Output: a JSON [`VerdictDraft`].
+    AdjudicateClaim,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -45,6 +61,11 @@ pub struct CompletionRequest {
     pub task: LlmTask,
     pub instructions: String,
     pub input: Value,
+    /// The most tokens this reply may have, for a task whose answer is small:
+    /// a model stuck repeating itself is cut off instead of running until the
+    /// timeout, and the cut-off reply is rejected like any other bad one. A
+    /// provider with its own `max_output_tokens` uses the lower of the two.
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,11 +112,23 @@ pub struct LedgerClaim {
     pub id: ClaimId,
     pub text: String,
     pub status: ClaimStatus,
+    /// The adjudicator's verdict, on Contested claims only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<LedgerVerdict>,
+}
+
+/// A verdict as the script model sees it. Its evidence references are left
+/// out for the same reason the claim's evidence is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerVerdict {
+    pub favours: Favours,
+    pub explanation: String,
 }
 
 impl LedgerClaim {
-    /// The ledger's claims, in ledger order.
-    pub fn from_ledger(ledger: &Ledger) -> Vec<Self> {
+    /// The ledger's claims, in ledger order, each with its verdict if it has
+    /// one.
+    pub fn from_ledger(ledger: &Ledger, verdicts: &Verdicts) -> Vec<Self> {
         ledger
             .entries()
             .iter()
@@ -103,16 +136,56 @@ impl LedgerClaim {
                 id: entry.claim.id().clone(),
                 text: entry.claim.text().to_owned(),
                 status: entry.status.clone(),
+                verdict: verdicts.get(entry.claim.id()).map(|v| LedgerVerdict {
+                    favours: v.favours(),
+                    explanation: v.explanation().to_owned(),
+                }),
             })
             .collect()
     }
+}
+
+/// The Contested claim shown to the model in [`LlmTask::AdjudicateClaim`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdjudicationClaim {
+    pub id: ClaimId,
+    pub text: String,
+}
+
+/// One piece of the claim's evidence, numbered so the verdict can cite it by
+/// `n` instead of by its (hash-shaped) chunk id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdjudicationEvidence {
+    /// Position in the claim's evidence list, counting from 0.
+    pub n: usize,
+    pub stance: Stance,
+    /// Title of the evidence's source document.
+    pub source: String,
+    pub independence_group: String,
+    /// The passage the stance rests on: the NLI premise, the merged wording,
+    /// or the chunk the claim was extracted from.
+    pub text: String,
+}
+
+/// The reply to [`LlmTask::AdjudicateClaim`]. The stage checks it against the
+/// claim's evidence before it becomes a `Verdict`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerdictDraft {
+    pub claim: ClaimId,
+    pub favours: Favours,
+    pub explanation: String,
+    /// `n` of each piece of evidence the verdict rests on.
+    pub cites: Vec<usize>,
 }
 
 /// One chunk of source text as shown to the model in [`LlmTask::WriteScript`],
 /// split into numbered sentences so a quote can be pointed at by number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceText {
-    pub chunk: ChunkId,
+    /// The chunk's position in the request's `sources`, counting from 0. The
+    /// model sees no chunk id: a second kind of hash-shaped id next to the
+    /// claim ids got cited as a claim.
+    pub source: usize,
     /// Title of the chunk's document, for the model's orientation.
     pub title: String,
     pub sentences: Vec<NumberedSentence>,
@@ -123,6 +196,10 @@ pub struct SourceText {
 pub struct NumberedSentence {
     pub sentence: usize,
     pub text: String,
+    /// The quotations inside the sentence (`text::quotations`), in order: a
+    /// [`QuoteRef::part`] counts over these. Left out when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quoted: Vec<String>,
 }
 
 /// A script as returned by [`LlmTask::WriteScript`]. Quotes are *references*
@@ -177,47 +254,98 @@ impl DraftTurn {
     }
 }
 
-/// The sentence of a chunk that the turn quotes verbatim. The model counts
+/// The sentence of a source that the turn quotes verbatim. The model counts
 /// sentences far more reliably than bytes; the script stage turns this into a
 /// span and copies the words out of the source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuoteRef {
-    pub chunk: ChunkId,
+    /// [`SourceText::source`] of the quoted chunk.
+    pub source: usize,
     /// Counting from 0, as in [`SourceText`].
     pub sentence: usize,
+    /// Quote only this quotation inside the sentence, counting from 0 over
+    /// [`NumberedSentence::quoted`]; the whole sentence when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<usize>,
 }
 
-/// Runs `request` and checks the reply with `validate` (parse it, resolve its
-/// references, whatever the stage needs). If the reply is rejected, asks once
-/// more with the rejection reason appended to the instructions, then gives up
-/// with [`CoreError::InvalidProviderOutput`]. Transport failures are not
-/// retried here: the provider has its own policy.
+/// The most characters of a rejection reason that are shown to the model or
+/// stored. A reason can quote part of the model's reply (serde names an
+/// unknown variant in full), so it is bounded.
+pub const MAX_REASON_CHARS: usize = 500;
+
+/// `reason`, cut to [`MAX_REASON_CHARS`] with a trailing `…` if it was longer.
+pub fn reason_excerpt(reason: &str) -> String {
+    match reason.char_indices().nth(MAX_REASON_CHARS) {
+        Some((end, _)) => format!("{}…", &reason[..end]),
+        None => reason.to_owned(),
+    }
+}
+
+/// Attempts per request in [`complete_validated`]: one retry.
+pub const DEFAULT_ATTEMPTS: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+
+/// [`complete_validated_with`] with [`DEFAULT_ATTEMPTS`].
 pub fn complete_validated<T>(
     llm: &dyn LlmProvider,
     stage: &'static str,
     request: &CompletionRequest,
     validate: impl Fn(&str) -> std::result::Result<T, String>,
 ) -> Result<T> {
-    let first = llm.complete(request)?;
-    let reason = match validate(&first.text) {
-        Ok(value) => return Ok(value),
-        Err(reason) => reason,
-    };
-    tracing::warn!(stage, %reason, "provider output rejected; asking once more");
+    complete_validated_with(llm, stage, request, DEFAULT_ATTEMPTS, validate)
+}
 
-    let excerpt: String = reason.chars().take(500).collect();
-    let retry = CompletionRequest {
-        instructions: format!(
-            "{}\n\nYour previous reply was rejected: {excerpt}\nReply again with the corrected JSON object only.",
-            request.instructions
-        ),
-        ..request.clone()
-    };
-    let second = llm.complete(&retry)?;
-    validate(&second.text).map_err(|message| CoreError::InvalidProviderOutput {
-        stage,
-        message: format!("{message} (after 2 attempts)"),
-    })
+/// Runs `request` and checks the reply with `validate` (parse it, resolve its
+/// references, whatever the stage needs). While a reply is rejected and
+/// attempts remain, asks again with every rejection so far ([`reason_excerpt`]
+/// of each) appended to the instructions, so a fix for one mistake is less
+/// likely to bring back an earlier one; then gives up with
+/// [`CoreError::InvalidProviderOutput`] naming the last reason. Transport
+/// failures are not retried here: the provider has its own policy.
+pub fn complete_validated_with<T>(
+    llm: &dyn LlmProvider,
+    stage: &'static str,
+    request: &CompletionRequest,
+    attempts: NonZeroUsize,
+    validate: impl Fn(&str) -> std::result::Result<T, String>,
+) -> Result<T> {
+    let mut rejections: Vec<String> = Vec::new();
+    let mut current = request.clone();
+    loop {
+        // A reply cut off at the token limit is a bad reply like any other.
+        let checked = match llm.complete(&current) {
+            Ok(reply) => validate(&reply.text),
+            Err(err) if err.provider_failure() == Some(ProviderFailure::CutOff) => {
+                Err(format!("{err}; reply with a shorter JSON object"))
+            }
+            Err(err) => return Err(err),
+        };
+        let reason = match checked {
+            Ok(value) => return Ok(value),
+            Err(reason) => reason,
+        };
+        rejections.push(reason_excerpt(&reason));
+        if rejections.len() == attempts.get() {
+            return Err(CoreError::InvalidProviderOutput {
+                stage,
+                message: format!("{reason} (after {} attempts)", attempts.get()),
+            });
+        }
+        tracing::warn!(stage, %reason, "provider output rejected; asking again");
+        let listed: Vec<String> = rejections
+            .iter()
+            .enumerate()
+            .map(|(n, r)| format!("{}. {r}", n + 1))
+            .collect();
+        current = CompletionRequest {
+            instructions: format!(
+                "{}\n\nYour previous replies were rejected, for these reasons; avoid all of them:\n{}\nReply again with the corrected JSON object only.",
+                request.instructions,
+                listed.join("\n")
+            ),
+            ..request.clone()
+        };
+    }
 }
 
 /// A deterministic, offline stand-in for a real model.
@@ -290,9 +418,20 @@ impl FakeLlm {
             } else {
                 host.clone()
             };
+            // A claim copied from a source sentence can carry its quotation
+            // marks, and a turn must not type quotations, so they are dropped.
+            let claim: String = entry
+                .text
+                .chars()
+                .filter(|c| !matches!(c, '"' | '\u{201C}' | '\u{201D}'))
+                .collect();
+            let text = match &entry.verdict {
+                Some(verdict) => format!("{lead}: {claim} {}", verdict.explanation),
+                None => format!("{lead}: {claim}"),
+            };
             turns.push(DraftTurn {
                 citations: vec![entry.id.clone()],
-                ..DraftTurn::plain(speaker, format!("{lead}: {}", entry.text), emotion)
+                ..DraftTurn::plain(speaker, text, emotion)
             });
         }
         turns.push(DraftTurn::plain(
@@ -337,12 +476,42 @@ impl FakeLlm {
         sign_off.callback_to = Some(0);
     }
 
+    /// Never takes a side: cites the first piece of evidence on each side and
+    /// says the sources disagree.
+    fn adjudicate(input: &Value) -> Result<VerdictDraft> {
+        let claim: AdjudicationClaim = serde_json::from_value(input["claim"].clone())
+            .map_err(|err| invalid_input(format!("claim: {err}")))?;
+        let evidence: Vec<AdjudicationEvidence> = serde_json::from_value(input["evidence"].clone())
+            .map_err(|err| invalid_input(format!("evidence: {err}")))?;
+        let first = |stance| evidence.iter().find(|e| e.stance == stance);
+        let sides: Vec<&AdjudicationEvidence> = [Stance::Supports, Stance::Contradicts]
+            .into_iter()
+            .filter_map(first)
+            .collect();
+        let explanation = match sides.as_slice() {
+            [supporting, contradicting] => format!(
+                "The {} source and the {} source give different accounts, and the sources \
+                 do not settle which is right.",
+                supporting.independence_group, contradicting.independence_group
+            ),
+            _ => "The sources give different accounts, and they do not settle which is right."
+                .to_owned(),
+        };
+        Ok(VerdictDraft {
+            claim: claim.id,
+            favours: Favours::Unresolved,
+            explanation,
+            cites: sides.iter().map(|e| e.n).collect(),
+        })
+    }
+
     fn opening(host: &SpeakerId, topic: &str, first_source: Option<&SourceText>) -> DraftTurn {
         let quote = first_source.and_then(|source| {
             let first = source.sentences.first()?;
             Some(QuoteRef {
-                chunk: source.chunk.clone(),
+                source: source.source,
                 sentence: first.sentence,
+                part: None,
             })
         });
         match quote {
@@ -379,7 +548,10 @@ impl LlmProvider for FakeLlm {
         // 5: a script request for audio gets beats, pace, a backchannel and
         //    a callback.
         // 6: beats are marked on the turns that begin them.
-        json!({ "provider": "fake", "version": 6 })
+        // 7: answers `AdjudicateClaim`; a judged claim's turn adds the
+        //    verdict's explanation, and quotation marks are dropped from claims.
+        // 8: quotes name a source number.
+        json!({ "provider": "fake", "version": 8 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
@@ -388,6 +560,7 @@ impl LlmProvider for FakeLlm {
                 serde_json::to_string(&Self::extract_claims(&request.input)?)?
             }
             LlmTask::WriteScript => serde_json::to_string(&Self::write_script(&request.input)?)?,
+            LlmTask::AdjudicateClaim => serde_json::to_string(&Self::adjudicate(&request.input)?)?,
         };
         Ok(Completion { text })
     }
@@ -396,14 +569,26 @@ impl LlmProvider for FakeLlm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use podling_types::{Chunk, Claim, Document, SourceRef, TextSpan};
+    use podling_types::Claim;
 
     fn request(task: LlmTask, input: Value) -> CompletionRequest {
         CompletionRequest {
             task,
             instructions: String::new(),
             input,
+            max_tokens: None,
         }
+    }
+
+    #[test]
+    fn a_reason_excerpt_is_cut_on_a_character_boundary() {
+        assert_eq!(reason_excerpt("short"), "short");
+        let exact = "é".repeat(MAX_REASON_CHARS);
+        assert_eq!(reason_excerpt(&exact), exact);
+        let long = "é".repeat(MAX_REASON_CHARS + 3);
+        let cut = reason_excerpt(&long);
+        assert_eq!(cut.chars().count(), MAX_REASON_CHARS + 1);
+        assert!(cut.ends_with("é…"));
     }
 
     #[test]
@@ -430,17 +615,9 @@ mod tests {
 
     #[test]
     fn write_script_quotes_the_first_sentence_by_reference() {
-        let source = SourceRef {
-            connector: "t".into(),
-            locator: "a".into(),
-            independence_group: "g".into(),
-        };
-        let doc = Document::new(source, "A", "# Title\n\nA flash was seen. Then a boom.");
-        let chunk = Chunk::from_document(&doc, TextSpan::new(9, doc.text().len()).unwrap(), vec![])
-            .unwrap();
         let ledger = Ledger::from_claims([Claim::new("A flash was seen.")]);
         let sources = json!([{
-            "chunk": chunk.id(),
+            "source": 0,
             "title": "A",
             "sentences": [
                 { "sentence": 0, "text": "A flash was seen." },
@@ -449,7 +626,7 @@ mod tests {
         }]);
         let input = json!({
             "topic": "Tunguska",
-            "ledger": LedgerClaim::from_ledger(&ledger),
+            "ledger": LedgerClaim::from_ledger(&ledger, &Verdicts::default()),
             "sources": sources,
         });
 
@@ -460,8 +637,9 @@ mod tests {
         assert_eq!(
             draft.turns[0].quotes,
             vec![QuoteRef {
-                chunk: chunk.id().clone(),
-                sentence: 0
+                source: 0,
+                sentence: 0,
+                part: None,
             }]
         );
         // The fake points at the sentence and never types it.
@@ -520,7 +698,9 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[0], req);
         assert!(
-            seen[1].instructions.contains("previous reply was rejected"),
+            seen[1]
+                .instructions
+                .contains("previous replies were rejected"),
             "{}",
             seen[1].instructions
         );
@@ -538,6 +718,33 @@ mod tests {
             "{err}"
         );
         assert_eq!(llm.seen.borrow().len(), 2);
+    }
+
+    #[test]
+    fn with_three_attempts_the_third_reply_sees_both_rejections() {
+        let llm = Scripted::new(&["nonsense", "[1]", r#"{"ok":true}"#]);
+        let req = request(LlmTask::WriteScript, json!({}));
+        let three = NonZeroUsize::new(3).unwrap();
+        let value = complete_validated_with(&llm, "s", &req, three, parse_object).unwrap();
+        assert_eq!(value["ok"], true);
+
+        let seen = llm.seen.borrow();
+        assert_eq!(seen.len(), 3);
+        let third = &seen[2].instructions;
+        assert!(third.starts_with(&req.instructions), "{third}");
+        assert!(third.contains("1. expected ident"), "{third}");
+        assert!(third.contains("2. not an object"), "{third}");
+        assert_eq!(seen[2].input, req.input, "only the instructions change");
+    }
+
+    #[test]
+    fn three_attempts_that_all_fail_error_after_exactly_three_calls() {
+        let llm = Scripted::new(&["a", "b", "c", r#"{"ok":true}"#]);
+        let req = request(LlmTask::WriteScript, json!({}));
+        let three = NonZeroUsize::new(3).unwrap();
+        let err = complete_validated_with(&llm, "s", &req, three, parse_object).unwrap_err();
+        assert!(err.to_string().contains("after 3 attempts"), "{err}");
+        assert_eq!(llm.seen.borrow().len(), 3);
     }
 
     #[test]
@@ -565,6 +772,106 @@ mod tests {
         let req = request(LlmTask::ExtractClaims, json!({}));
         let err = complete_validated(&Down, "s", &req, parse_object).unwrap_err();
         assert!(matches!(err, CoreError::Provider { .. }));
+    }
+
+    #[test]
+    fn a_reply_cut_off_at_the_token_limit_is_retried_as_a_rejection() {
+        /// Cut off on the first call, a good object on the second.
+        struct CutOnce(std::cell::RefCell<Vec<CompletionRequest>>);
+        impl LlmProvider for CutOnce {
+            fn id(&self) -> &str {
+                "cut_once"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
+                let mut seen = self.0.borrow_mut();
+                seen.push(request.clone());
+                if seen.len() == 1 {
+                    return Err(CoreError::Provider {
+                        plugin: "cut_once".into(),
+                        kind: ProviderFailure::CutOff,
+                        message: "cut off at the token limit".into(),
+                    });
+                }
+                Ok(Completion {
+                    text: r#"{"ok":true}"#.into(),
+                })
+            }
+        }
+        let llm = CutOnce(Default::default());
+        let req = request(LlmTask::ExtractClaims, json!({}));
+        let value = complete_validated(&llm, "s", &req, parse_object).unwrap();
+        assert_eq!(value["ok"], true);
+        let seen = llm.0.borrow();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[1]
+                .instructions
+                .contains("reply with a shorter JSON object"),
+            "{}",
+            seen[1].instructions
+        );
+    }
+
+    #[test]
+    fn a_reply_cut_off_on_every_attempt_is_invalid_output_not_a_provider_error() {
+        struct AlwaysCut(std::cell::Cell<usize>);
+        impl LlmProvider for AlwaysCut {
+            fn id(&self) -> &str {
+                "always_cut"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+                self.0.set(self.0.get() + 1);
+                Err(CoreError::Provider {
+                    plugin: "always_cut".into(),
+                    kind: ProviderFailure::CutOff,
+                    message: "cut off at the token limit".into(),
+                })
+            }
+        }
+        let llm = AlwaysCut(Default::default());
+        let req = request(LlmTask::ExtractClaims, json!({}));
+        let err = complete_validated(&llm, "s", &req, parse_object).unwrap_err();
+        assert_eq!(llm.0.get(), DEFAULT_ATTEMPTS.get());
+        match err {
+            CoreError::InvalidProviderOutput { message, .. } => {
+                assert!(message.contains("after 2 attempts"), "{message}");
+            }
+            other => panic!("expected InvalidProviderOutput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_fake_adjudicator_cites_both_sides_and_takes_none() {
+        let claim = podling_types::Claim::new("The blast was in 1908.");
+        let input = json!({
+            "claim": { "id": claim.id(), "text": claim.text() },
+            "evidence": [
+                { "n": 0, "stance": "supports", "source": "A", "independence_group": "a", "text": "1908." },
+                { "n": 1, "stance": "supports", "source": "A", "independence_group": "a", "text": "1908!" },
+                { "n": 2, "stance": "contradicts", "source": "B", "independence_group": "b", "text": "1907." },
+            ],
+        });
+        let reply = FakeLlm
+            .complete(&request(LlmTask::AdjudicateClaim, input))
+            .unwrap();
+        let draft: VerdictDraft = serde_json::from_str(&reply.text).unwrap();
+        assert_eq!(&draft.claim, claim.id());
+        assert_eq!(draft.favours, Favours::Unresolved);
+        assert_eq!(draft.cites, vec![0, 2]);
+        assert!(
+            draft
+                .explanation
+                .starts_with("The a source and the b source give different accounts"),
+            "{}",
+            draft.explanation
+        );
+        assert!(!draft.explanation.contains('"'));
     }
 
     #[test]

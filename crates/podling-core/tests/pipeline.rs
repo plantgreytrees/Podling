@@ -8,14 +8,17 @@ use podling_core::plugin::{
     Completion, CompletionRequest, FakeLlm, LedgerClaim, LlmProvider, LlmTask, SourceText,
 };
 use podling_core::{CoreError, DiskCache, GroundingCounts, RunReport, pipeline};
-use podling_types::{Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script};
+use podling_types::{
+    Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script, Stance, Verdicts,
+};
 use serde_json::{Value, json};
 
-const STAGES: [&str; 6] = [
+const STAGES: [&str; 7] = [
     "ingest",
     "chunk",
     "extract_claims",
     "ledger",
+    "adjudicate",
     "script",
     "analyse",
 ];
@@ -92,7 +95,9 @@ fn writes_every_artifact_in_a_versioned_envelope() {
 /// what the pipeline wrote before the NLI stages existed
 /// (`tests/fixtures/golden`, written at commit 0b0d1ff by
 /// `podling run --episode tests/fixtures/episode.toml --no-cache`). Only the
-/// envelope's `schema_version` may differ.
+/// envelope's `schema_version` may differ. Artifacts added since (the
+/// adjudicator's verdicts) have no golden; nothing is Contested without NLI,
+/// so the verdicts are empty.
 #[test]
 fn no_nli_config_writes_todays_artifacts() {
     let tmp = tempfile::tempdir().unwrap();
@@ -104,7 +109,9 @@ fn no_nli_config_writes_todays_artifacts() {
         !out.join("audio.json").exists(),
         "an episode without [tts] must not write audio"
     );
-    for kind in text_artifacts() {
+    let golden_kinds =
+        text_artifacts().filter(|kind| *kind != podling_types::ArtifactKind::Verdicts);
+    for kind in golden_kinds {
         let name = format!("{}.json", kind.as_str());
         let golden = fs::read_to_string(fixtures().join("golden").join(&name)).unwrap();
         let golden = golden.replacen("\"schema_version\": 2,", &current, 1);
@@ -114,6 +121,8 @@ fn no_nli_config_writes_todays_artifacts() {
             "{name} differs from tests/fixtures/golden"
         );
     }
+    let verdicts: Verdicts = read_body(&out, "verdicts");
+    assert!(verdicts.as_slice().is_empty());
 }
 
 /// Phase 5's half of the golden test above: without `[tts]` no audio stage
@@ -215,7 +224,10 @@ fn editing_a_source_invalidates_ingest_and_everything_downstream() {
     fs::write(&report_path, edited).unwrap();
 
     let after = pipeline::run(&spec, &base, Some(&cache), &out).unwrap();
-    assert_eq!(hits(&after), STAGES.map(|id| (id, false)).to_vec());
+    // Early cutoff: still nothing Contested, so the adjudicator's input is
+    // unchanged and its (empty) output is reused.
+    let expected = STAGES.map(|id| (id, id == "adjudicate"));
+    assert_eq!(hits(&after), expected.to_vec());
 }
 
 #[test]
@@ -332,20 +344,23 @@ impl LlmProvider for Replay {
                 let sources: Vec<SourceText> =
                     serde_json::from_value(request.input["sources"].clone()).unwrap();
                 for source in sources.iter().filter(|s| !s.sentences.is_empty()) {
-                    let id = serde_json::to_value(&source.chunk).unwrap();
+                    // The quotes go too: a source number is a JSON number.
                     script = script.replace(
-                        &format!("{{{{chunk:{}}}}}", source.title),
-                        id.as_str().unwrap(),
+                        &format!("\"{{{{source:{}}}}}\"", source.title),
+                        &source.source.to_string(),
                     );
                 }
                 // `{{quote:N}}` is meant to stay: the script stage fills it in.
-                for unfilled in ["{{claim:", "{{chunk:"] {
+                for unfilled in ["{{claim:", "{{source:"] {
                     assert!(
                         !script.contains(unfilled),
                         "unfilled {unfilled} in {script}"
                     );
                 }
                 script
+            }
+            LlmTask::AdjudicateClaim => {
+                panic!("the replayed fixture has no Contested claim to adjudicate")
             }
         };
         Ok(Completion { text })
@@ -520,6 +535,7 @@ fn a_contradicting_source_contests_both_claims() {
             "cluster_claims",
             "score_stances",
             "ledger",
+            "adjudicate",
             "script",
             "analyse",
         ]
@@ -601,8 +617,11 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
 /// (see "The five bump rules" in docs/architecture.md) updates its line here:
 /// Phase 5 bumped `PROMPT_VERSION` (4, then 5, then 6), the fake LLM (4, then
 /// 5, then 6) and `script` (8, then 9, then 10), so the two LLM stages moved;
-/// ledger and analyse, fed the same data, did not.
-const NO_NLI_KEYS: [(&str, &str); 6] = [
+/// ledger and analyse, fed the same data, did not. Phase 4 added `adjudicate`
+/// and bumped `PROMPT_VERSION` to 7, the fake LLM to 7 and `script` to 11 (its
+/// input gained the verdicts), so the LLM stages moved again; analyse's key,
+/// a hash of the script it reads, shows the script itself did not change.
+const NO_NLI_KEYS: [(&str, &str); 7] = [
     (
         "ingest",
         "5bbf36eb1044c6336e376993c584a8e9a5377d0e50b6e91614ec17a97869be78",
@@ -613,15 +632,19 @@ const NO_NLI_KEYS: [(&str, &str); 6] = [
     ),
     (
         "extract_claims",
-        "ea574dcaff7a1f081913114f89738f1b7d190e7df3ec9422b708880ec44d0555",
+        "404b5da9403d6e27c9ff4b11b1bc8b38f26813fa53c310abe775721782292c36",
     ),
     (
         "ledger",
         "2a120f337669852c147ed39b55abd8e02f1ba7f56425832d78ae4c399cb3ee28",
     ),
     (
+        "adjudicate",
+        "63e7aba9e26e90018988bd4112af3bf17b3665b8d4ee3bef2da2eb2836d9479f",
+    ),
+    (
         "script",
-        "a438078e4f7d5e9f4ed1c5e4d272cb24af899e4bbfe1d40d94294e2bfe3fee82",
+        "db0ce133885efec5041e02d4656058624f94d5da17074c53d0380fb7682dd875",
     ),
     (
         "analyse",
@@ -722,4 +745,117 @@ fn the_rejection_count_survives_a_cache_hit() {
     assert!(hits(&second).contains(&("ground_claims", true)));
     assert_eq!(second.grounding, first.grounding);
     assert_eq!(second.grounding.unwrap().dropped_claims, 1);
+}
+
+// --- The adjudicator ---------------------------------------------------------
+
+/// Answers like `FakeLlm` and counts the adjudication requests.
+#[derive(Default)]
+struct CountingAdjudications(std::cell::Cell<usize>);
+
+impl LlmProvider for CountingAdjudications {
+    fn id(&self) -> &str {
+        "counting"
+    }
+
+    fn fingerprint(&self) -> Value {
+        FakeLlm.fingerprint()
+    }
+
+    fn complete(&self, request: &CompletionRequest) -> Result<Completion, CoreError> {
+        if request.task == LlmTask::AdjudicateClaim {
+            self.0.set(self.0.get() + 1);
+        }
+        FakeLlm.complete(request)
+    }
+}
+
+/// Runs the fixture episode in `base` with a counting fake, and returns the
+/// number of adjudication requests with the run's ledger and verdicts.
+fn run_counting(base: &Path, out: &Path) -> (usize, Ledger, Verdicts) {
+    let llm = CountingAdjudications::default();
+    pipeline::run_with_llm(&spec(base), &llm, base, None, out).unwrap();
+    (
+        llm.0.get(),
+        read_body(out, "ledger"),
+        read_body(out, "verdicts"),
+    )
+}
+
+#[test]
+fn no_contested_claims_means_no_adjudicator_call() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Grounding on with a paraphrase corroborated, and no grounding at all.
+    let bases = [fixtures().join("paraphrase"), fixtures()];
+    for (i, base) in bases.iter().enumerate() {
+        let (calls, ledger, verdicts) = run_counting(base, &tmp.path().join(i.to_string()));
+        assert!(
+            !ledger
+                .entries()
+                .iter()
+                .any(|e| matches!(e.status, ClaimStatus::Contested { .. }))
+        );
+        assert_eq!(calls, 0, "{base:?}");
+        assert!(verdicts.as_slice().is_empty());
+    }
+}
+
+#[test]
+fn contradiction_fixture_has_one_verdict_per_contested_claim() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (calls, ledger, verdicts) = run_counting(&fixtures().join("contradiction"), tmp.path());
+    let contested: Vec<_> = ledger
+        .entries()
+        .iter()
+        .filter(|e| matches!(e.status, ClaimStatus::Contested { .. }))
+        .map(|e| e.claim.id())
+        .collect();
+    assert_eq!(contested.len(), 2);
+    assert_eq!(calls, contested.len(), "one request per Contested claim");
+    let judged: Vec<_> = verdicts.as_slice().iter().map(|v| v.claim()).collect();
+    assert_eq!(judged, contested);
+    for verdict in verdicts.as_slice() {
+        let stances: Vec<Stance> = verdict.cites().iter().map(|c| c.stance).collect();
+        assert!(stances.contains(&Stance::Supports), "{verdict:?}");
+        assert!(stances.contains(&Stance::Contradicts), "{verdict:?}");
+        assert_eq!(verdict.fallback(), None);
+    }
+}
+
+#[test]
+fn a_cached_run_makes_no_adjudicator_call() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = fixtures().join("contradiction");
+    let cache = DiskCache::new(tmp.path().join("cache"));
+    let out = tmp.path().join("out");
+    let first = CountingAdjudications::default();
+    pipeline::run_with_llm(&spec(&base), &first, &base, Some(&cache), &out).unwrap();
+    assert_eq!(first.0.get(), 2);
+
+    let second = CountingAdjudications::default();
+    let report = pipeline::run_with_llm(&spec(&base), &second, &base, Some(&cache), &out).unwrap();
+    assert_eq!(second.0.get(), 0);
+    assert!(
+        report
+            .stages
+            .iter()
+            .any(|s| s.id == "adjudicate" && s.cache_hit)
+    );
+}
+
+#[test]
+fn the_contradiction_script_mentions_the_disagreement() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, _, verdicts) = run_counting(&fixtures().join("contradiction"), tmp.path());
+    let script: Script = read_body(tmp.path(), "script");
+    assert!(!verdicts.as_slice().is_empty());
+    for verdict in verdicts.as_slice() {
+        let turn = script
+            .turns()
+            .iter()
+            .find(|t| t.citations.contains(verdict.claim()))
+            .unwrap_or_else(|| panic!("no turn cites {}", verdict.claim()));
+        assert!(turn.text.contains("disagree"), "{}", turn.text);
+        assert!(turn.text.contains(verdict.explanation()), "{}", turn.text);
+    }
 }

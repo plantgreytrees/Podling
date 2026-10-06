@@ -35,9 +35,11 @@ pub use asr::{AsrProvider, AsrRequest, FakeAsr, Segment, Transcript, transcribe_
 pub use cross_encoder::CrossEncoderNli;
 pub use embedding::{EmbeddingProvider, FakeEmbedding, cosine, embed_checked};
 pub use llm::{
-    ClaimDraft, ClaimsDraft, Completion, CompletionRequest, DraftTurn, FakeLlm, LedgerClaim,
-    LlmProvider, LlmTask, NumberedSentence, PROMPT_VERSION, QuoteRef, ScriptDraft, SourceText,
-    complete_validated,
+    ADJUDICATE_PROMPT_VERSION, AdjudicationClaim, AdjudicationEvidence, ClaimDraft, ClaimsDraft,
+    Completion, CompletionRequest, DEFAULT_ATTEMPTS, DraftTurn, FakeLlm, LedgerClaim,
+    LedgerVerdict, LlmProvider, LlmTask, MAX_REASON_CHARS, NumberedSentence, PROMPT_VERSION,
+    QuoteRef, ScriptDraft, SourceText, VerdictDraft, complete_validated, complete_validated_with,
+    reason_excerpt,
 };
 pub use nli::{FakeNli, NliPair, NliProvider, NliScores, score_checked};
 pub use openai::OpenAiCompat;
