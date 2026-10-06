@@ -99,10 +99,12 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
 
 All three LLM stages call the model through
 [`complete_validated`](../crates/podling-core/src/plugin/llm.rs). If a reply fails
-those checks, the model is asked once more with the reason appended to the
-instructions, cut to 500 characters (`reason_excerpt`), since a reason can quote
-part of the reply. A second failure is the error, so a stage makes at most two calls per
-chunk, script or Contested claim. The adjudicator alone turns that error into a
+those checks, the model is asked again with every rejection so far listed after the
+instructions, each cut to 500 characters (`reason_excerpt`), since a reason can quote
+part of the reply. Extraction and adjudication get two attempts (`DEFAULT_ATTEMPTS`)
+per chunk or Contested claim; the script gets three (`SCRIPT_ATTEMPTS`), because
+live, llama3.1:8b often fixed the rejected mistake on a retry and made a new one.
+The last failure is the error. The adjudicator alone turns that error into a
 verdict instead of failing (see [Adjudicating Contested claims](#adjudicating-contested-claims)). Transport failures are not retried there, because the provider
 has its own policy (below).
 
@@ -225,7 +227,7 @@ LLM task replies with an object (claim extraction returns `{ "claims": [...] }`)
 | Key | Read once from the variable named by `api_key_env`. Named but unset or empty is a `Config` error before any request. Sent only as `Authorization: Bearer`. Its `Debug` prints `[redacted]`, and error excerpts and logs never contain it. |
 | URL | Must be `http://` or `https://`, with no credentials, query or fragment. A key over plain `http` to a non-local host logs a warning. Redirects are off, so the header can't follow one to another host. |
 | Limits | Per-request timeout (default 120 s); response bodies over 4 MiB are rejected while being read; an error body is quoted up to 512 bytes. |
-| Retries | A 429 or 5xx is retried twice (0.5 s, then 1 s). A timeout, a 4xx or a transport error is not. Separately, `complete_validated` re-asks once when a reply fails validation. |
+| Retries | A 429 or 5xx is retried twice (0.5 s, then 1 s). A timeout, a 4xx or a transport error is not. Separately, `complete_validated` re-asks when a reply fails validation (once, or twice for the script). |
 | Errors | `CoreError::Provider` carries a `ProviderFailure` kind (`Http(status)`, `Unreachable`, `TimedOut`, `Other`); `CoreError::provider()` finds it and the failing plugin through stage wrappers. The CLI picks its fix hint from the kind, never from the message wording, and takes the URL, model and key variable from `[embedding]` when the plugin is `open_ai_compat_embeddings`, otherwise from `[llm]`. |
 | Observability | One `tracing` span per request with the model, elapsed ms, attempts and token usage. Never the key or the prompt text. |
 | TLS | rustls with the bundled web PKI roots, no OpenSSL. The added licences are permissive (Apache-2.0/MIT/ISC/BSD-3/CDLA-Permissive-2.0). |

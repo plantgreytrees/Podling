@@ -4,6 +4,8 @@ use podling_types::{
     BeatKind, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Nonverbal, NonverbalAt,
     NonverbalKind, Pace, Speaker, SpeakerId, Stance, Verdicts,
 };
+use std::num::NonZeroUsize;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -270,38 +272,63 @@ pub fn reason_excerpt(reason: &str) -> String {
     }
 }
 
-/// Runs `request` and checks the reply with `validate` (parse it, resolve its
-/// references, whatever the stage needs). If the reply is rejected, asks once
-/// more with the rejection reason ([`reason_excerpt`]) appended to the
-/// instructions, then gives up
-/// with [`CoreError::InvalidProviderOutput`]. Transport failures are not
-/// retried here: the provider has its own policy.
+/// Attempts per request in [`complete_validated`]: one retry.
+pub const DEFAULT_ATTEMPTS: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+
+/// [`complete_validated_with`] with [`DEFAULT_ATTEMPTS`].
 pub fn complete_validated<T>(
     llm: &dyn LlmProvider,
     stage: &'static str,
     request: &CompletionRequest,
     validate: impl Fn(&str) -> std::result::Result<T, String>,
 ) -> Result<T> {
-    let first = llm.complete(request)?;
-    let reason = match validate(&first.text) {
-        Ok(value) => return Ok(value),
-        Err(reason) => reason,
-    };
-    tracing::warn!(stage, %reason, "provider output rejected; asking once more");
+    complete_validated_with(llm, stage, request, DEFAULT_ATTEMPTS, validate)
+}
 
-    let excerpt = reason_excerpt(&reason);
-    let retry = CompletionRequest {
-        instructions: format!(
-            "{}\n\nYour previous reply was rejected: {excerpt}\nReply again with the corrected JSON object only.",
-            request.instructions
-        ),
-        ..request.clone()
-    };
-    let second = llm.complete(&retry)?;
-    validate(&second.text).map_err(|message| CoreError::InvalidProviderOutput {
-        stage,
-        message: format!("{message} (after 2 attempts)"),
-    })
+/// Runs `request` and checks the reply with `validate` (parse it, resolve its
+/// references, whatever the stage needs). While a reply is rejected and
+/// attempts remain, asks again with every rejection so far ([`reason_excerpt`]
+/// of each) appended to the instructions, so a fix for one mistake is less
+/// likely to bring back an earlier one; then gives up with
+/// [`CoreError::InvalidProviderOutput`] naming the last reason. Transport
+/// failures are not retried here: the provider has its own policy.
+pub fn complete_validated_with<T>(
+    llm: &dyn LlmProvider,
+    stage: &'static str,
+    request: &CompletionRequest,
+    attempts: NonZeroUsize,
+    validate: impl Fn(&str) -> std::result::Result<T, String>,
+) -> Result<T> {
+    let mut rejections: Vec<String> = Vec::new();
+    let mut current = request.clone();
+    loop {
+        let reply = llm.complete(&current)?;
+        let reason = match validate(&reply.text) {
+            Ok(value) => return Ok(value),
+            Err(reason) => reason,
+        };
+        rejections.push(reason_excerpt(&reason));
+        if rejections.len() == attempts.get() {
+            return Err(CoreError::InvalidProviderOutput {
+                stage,
+                message: format!("{reason} (after {} attempts)", attempts.get()),
+            });
+        }
+        tracing::warn!(stage, %reason, "provider output rejected; asking again");
+        let listed: Vec<String> = rejections
+            .iter()
+            .enumerate()
+            .map(|(n, r)| format!("{}. {r}", n + 1))
+            .collect();
+        current = CompletionRequest {
+            instructions: format!(
+                "{}\n\nYour previous replies were rejected, for these reasons; avoid all of them:\n{}\nReply again with the corrected JSON object only.",
+                request.instructions,
+                listed.join("\n")
+            ),
+            ..request.clone()
+        };
+    }
 }
 
 /// A deterministic, offline stand-in for a real model.
@@ -652,7 +679,9 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[0], req);
         assert!(
-            seen[1].instructions.contains("previous reply was rejected"),
+            seen[1]
+                .instructions
+                .contains("previous replies were rejected"),
             "{}",
             seen[1].instructions
         );
@@ -670,6 +699,33 @@ mod tests {
             "{err}"
         );
         assert_eq!(llm.seen.borrow().len(), 2);
+    }
+
+    #[test]
+    fn with_three_attempts_the_third_reply_sees_both_rejections() {
+        let llm = Scripted::new(&["nonsense", "[1]", r#"{"ok":true}"#]);
+        let req = request(LlmTask::WriteScript, json!({}));
+        let three = NonZeroUsize::new(3).unwrap();
+        let value = complete_validated_with(&llm, "s", &req, three, parse_object).unwrap();
+        assert_eq!(value["ok"], true);
+
+        let seen = llm.seen.borrow();
+        assert_eq!(seen.len(), 3);
+        let third = &seen[2].instructions;
+        assert!(third.starts_with(&req.instructions), "{third}");
+        assert!(third.contains("1. expected ident"), "{third}");
+        assert!(third.contains("2. not an object"), "{third}");
+        assert_eq!(seen[2].input, req.input, "only the instructions change");
+    }
+
+    #[test]
+    fn three_attempts_that_all_fail_error_after_exactly_three_calls() {
+        let llm = Scripted::new(&["a", "b", "c", r#"{"ok":true}"#]);
+        let req = request(LlmTask::WriteScript, json!({}));
+        let three = NonZeroUsize::new(3).unwrap();
+        let err = complete_validated_with(&llm, "s", &req, three, parse_object).unwrap_err();
+        assert!(err.to_string().contains("after 3 attempts"), "{err}");
+        assert_eq!(llm.seen.borrow().len(), 3);
     }
 
     #[test]

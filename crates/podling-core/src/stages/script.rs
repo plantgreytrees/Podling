@@ -1,6 +1,7 @@
 //! Asks the LLM for a script and turns its quote references into real quotes.
 
 use std::collections::BTreeSet;
+use std::num::NonZeroUsize;
 
 use podling_types::{
     Beat, BeatKind, Chunk, ClaimId, Document, Ledger, Pace, Quote, Script, Speaker, TextSpan, Turn,
@@ -12,7 +13,7 @@ use serde_json::{Value, json};
 use crate::error::Result;
 use crate::plugin::{
     CompletionRequest, LedgerClaim, LlmProvider, LlmTask, NumberedSentence, PROMPT_VERSION,
-    QuoteRef, ScriptDraft, SourceText, complete_validated,
+    QuoteRef, ScriptDraft, SourceText, complete_validated_with,
 };
 use crate::stage::Stage;
 use crate::text::{fill_quote_placeholders, quotations, sentences};
@@ -87,7 +88,8 @@ impl Stage for WriteScript<'_> {
     //     is told to explain the disagreement with it. A chunk id cited as a
     //     claim is named as such in the rejection, so the retry can correct it.
     // 12: sources are numbered and a quote names a source number, so the
-    //     model sees no chunk id; every judged Contested claim must be cited.
+    //     model sees no chunk id; every judged Contested claim must be cited;
+    //     up to `SCRIPT_ATTEMPTS` attempts, each retry listing every rejection.
     const VERSION: u32 = 12;
     type Input = ScriptInput;
     type Output = Script;
@@ -134,11 +136,17 @@ impl Stage for WriteScript<'_> {
                  e.g. OLLAMA_CONTEXT_LENGTH=16384"
             );
         }
-        complete_validated(self.llm, Self::ID, &request, |text| {
+        complete_validated_with(self.llm, Self::ID, &request, SCRIPT_ATTEMPTS, |text| {
             build_script(text, input)
         })
     }
 }
+
+/// Attempts at a script before the stage fails. A script has more rules to
+/// break than any other reply, and live, llama3.1:8b often fixed the rejected
+/// mistake on a retry and made a new one, so it gets one more than the
+/// [`DEFAULT_ATTEMPTS`](crate::plugin::DEFAULT_ATTEMPTS) of the other stages.
+pub const SCRIPT_ATTEMPTS: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 
 /// Size above which the script request is likely to overflow a small default
 /// context window (about 6k tokens once the instructions are added).
@@ -724,18 +732,18 @@ mod tests {
     }
 
     #[test]
-    fn a_speaker_outside_the_declared_cast_fails_after_two_attempts() {
+    fn a_speaker_outside_the_declared_cast_fails_after_every_attempt() {
         let llm = Intruding(std::cell::Cell::new(0));
         let input = ScriptInput {
             cast: vec![speaker("ada", "Ada")],
             ..empty_input(vec![], vec![])
         };
         let err = WriteScript { llm: &llm }.run(&input).unwrap_err();
-        assert_eq!(llm.0.get(), 2);
+        assert_eq!(llm.0.get(), SCRIPT_ATTEMPTS.get());
         assert!(
             matches!(&err, CoreError::InvalidProviderOutput { stage: "script", message }
                 if message.contains("\"zed\", who is not in the cast; use only ada")
-                    && message.contains("after 2 attempts")),
+                    && message.contains("after 3 attempts")),
             "{err}"
         );
     }
@@ -878,7 +886,7 @@ mod tests {
     #[test]
     fn a_quote_with_no_placeholder_names_the_turn_and_the_placeholder() {
         let (err, calls) = rejected(PARAPHRASE);
-        assert_eq!(calls, 2);
+        assert_eq!(calls, SCRIPT_ATTEMPTS.get());
         let message = reason(&err);
         assert!(message.contains("turn 0"), "{message}");
         assert!(message.contains("{{quote:0}}"), "{message}");
@@ -887,7 +895,7 @@ mod tests {
     #[test]
     fn a_placeholder_with_no_quote_behind_it_is_rejected() {
         let (err, calls) = rejected("A witness said: {{quote:0}} and {{quote:1}}");
-        assert_eq!(calls, 2);
+        assert_eq!(calls, SCRIPT_ATTEMPTS.get());
         let message = reason(&err);
         assert!(
             message.contains("turn 0") && message.contains("{{quote:1}}"),
@@ -915,7 +923,7 @@ mod tests {
         let (err, calls) = rejected(
             "He said \"oops. {{quote:0}} Then \u{201C}every tree caught fire at once\u{201D} ended.",
         );
-        assert_eq!(calls, 2);
+        assert_eq!(calls, SCRIPT_ATTEMPTS.get());
         let message = reason(&err);
         assert!(message.contains("turn 0"), "{message}");
         assert!(message.contains("quotation mark"), "{message}");
@@ -924,7 +932,7 @@ mod tests {
     #[test]
     fn a_malformed_placeholder_is_rejected() {
         let (err, calls) = rejected("A witness said: {{quote:first}}");
-        assert_eq!(calls, 2);
+        assert_eq!(calls, SCRIPT_ATTEMPTS.get());
         assert!(reason(&err).contains("{{quote:first}}"), "{err}");
     }
 

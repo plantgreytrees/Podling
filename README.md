@@ -157,8 +157,9 @@ message. Cached outputs derived from your sources are stored under `--cache-dir`
 writes `{{quote:N}}` in a turn's text where each one goes. Podling copies the words
 from the source and puts them there, so the model never types a quotation. A citation
 of a claim that is not in the ledger, a quote of a sentence that doesn't exist, a
-placeholder with no quote behind it, or quoted words the model typed itself, is rejected. The model gets one
-retry with the reason, and then the run fails with an error naming the stage. A
+placeholder with no quote behind it, or quoted words the model typed itself, is rejected. The model is
+asked again with the reasons (twice for the script, once for every other stage), and
+then the run fails with an error naming the stage. A
 small local model may produce invalid JSON often, so pick an instruct model that
 handles JSON well. A rate-limited (429) or failing (5xx) server is retried twice.
 
