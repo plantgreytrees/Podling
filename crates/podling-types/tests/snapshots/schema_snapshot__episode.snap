@@ -330,6 +330,13 @@ expression: schema
       },
       "additionalProperties": false
     },
+    "Lexicon": {
+      "description": "Names and how to say them, e.g. `[tts.pronounce]` in an episode.\nNames are matched as whole words, case-sensitively.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Pronunciation"
+      }
+    },
     "LlmConfig": {
       "oneOf": [
         {
@@ -488,6 +495,39 @@ expression: schema
       "maximum": 1000,
       "minimum": 0
     },
+    "Pronunciation": {
+      "description": "How one name is said: the respelling the TTS model is given instead of\nthe name, and what speech recognition may write when it hears it.\n\nRespell names the model gets wrong, never common words (respelling one\nmade it worse in the word test). A respelling is one unhyphenated word\nper word of the name: a hyphen splits the word when spoken.",
+      "anyOf": [
+        {
+          "description": "The respelling only.",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/PronunciationTable"
+        }
+      ]
+    },
+    "PronunciationTable": {
+      "type": "object",
+      "properties": {
+        "heard": {
+          "description": "What speech recognition may write for the name; each is read as the\nname when the audio is checked.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "say": {
+          "description": "The respelling the TTS model is given.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "say"
+      ]
+    },
     "SourceSpec": {
       "oneOf": [
         {
@@ -549,6 +589,10 @@ expression: schema
               "default": 2,
               "maximum": 255,
               "minimum": 0
+            },
+            "pronounce": {
+              "description": "Names the model mispronounces, each with a respelling, as\n`[tts.pronounce]`. Merged over the user-level `pronounce.toml`\nbeside `sidecars.toml`; this list wins per name. The speech check\nand the quotes keep the original words.",
+              "$ref": "#/$defs/Lexicon"
             },
             "sidecar": {
               "description": "Profile name in `sidecars.toml`, e.g. `qwen3-tts`.",
