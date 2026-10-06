@@ -330,6 +330,7 @@ mod tests {
             sidecar: "qwen".into(),
             takes: 2,
             max_retries: 2,
+            pronounce: Default::default(),
         };
         let Err(CoreError::Config { message }) = build_tts(&sidecar, profiles) else {
             panic!("a missing profiles file must be a Config error");

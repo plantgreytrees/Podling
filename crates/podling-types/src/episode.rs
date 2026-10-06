@@ -3,6 +3,7 @@
 //! Contains no secrets. Plugins that need credentials will take the *name* of
 //! an environment variable, never the value.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
@@ -202,10 +203,17 @@ struct RawVoiceRef {
     licence: String,
 }
 
+/// The licence of a voice clip made by the user's own voice-design tool
+/// (`scripts/voice_design/`) rather than recorded from a person. Such a clip
+/// is accepted only with a provenance file beside it ([`provenance_path`]).
+pub const GENERATED_VOICE_LICENCE: &str = "LicenseRef-Podling-Generated";
+
 /// The SPDX ids a voice clip may carry: public domain or attribution only, so
 /// a cloned voice never brings non-commercial or share-alike terms into an
-/// episode. Matched exactly, so the error can name the id to write.
-pub const VOICE_LICENCES: [&str; 3] = ["CC0-1.0", "CC-BY-3.0", "CC-BY-4.0"];
+/// episode, or the user's own [`GENERATED_VOICE_LICENCE`]. Matched exactly,
+/// so the error can name the id to write.
+pub const VOICE_LICENCES: [&str; 4] =
+    ["CC0-1.0", "CC-BY-3.0", "CC-BY-4.0", GENERATED_VOICE_LICENCE];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VoiceRefError {
@@ -266,6 +274,219 @@ impl TryFrom<RawVoiceRef> for VoiceRef {
     }
 }
 
+/// Where the provenance of a generated voice clip lives: beside the clip,
+/// its whole file name followed by `.provenance.json`
+/// (`voices/host.wav` → `voices/host.wav.provenance.json`).
+pub fn provenance_path(clip: &Path) -> PathBuf {
+    let mut name = clip.as_os_str().to_owned();
+    name.push(".provenance.json");
+    PathBuf::from(name)
+}
+
+/// How a [`GENERATED_VOICE_LICENCE`] clip was made, written by the
+/// voice-design tool next to the clip. Enough to make the clip again, and to
+/// show it was designed rather than copied from a person.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawVoiceProvenance")]
+pub struct VoiceProvenance {
+    model: String,
+    weights_commit: String,
+    design_prompt: String,
+    seed: u64,
+    tool_version: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawVoiceProvenance {
+    /// The voice-design model, e.g. `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`.
+    model: String,
+    /// The model weights' revision (a Hugging Face commit).
+    weights_commit: String,
+    /// The description the voice was designed from.
+    design_prompt: String,
+    seed: u64,
+    /// The version of the tool that wrote the clip.
+    tool_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("voice provenance has an empty {0:?}")]
+pub struct EmptyProvenanceField(&'static str);
+
+impl VoiceProvenance {
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn weights_commit(&self) -> &str {
+        &self.weights_commit
+    }
+
+    pub fn design_prompt(&self) -> &str {
+        &self.design_prompt
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    pub fn tool_version(&self) -> &str {
+        &self.tool_version
+    }
+}
+
+impl TryFrom<RawVoiceProvenance> for VoiceProvenance {
+    type Error = EmptyProvenanceField;
+
+    fn try_from(raw: RawVoiceProvenance) -> Result<Self, Self::Error> {
+        let fields = [
+            ("model", &raw.model),
+            ("weights_commit", &raw.weights_commit),
+            ("design_prompt", &raw.design_prompt),
+            ("tool_version", &raw.tool_version),
+        ];
+        if let Some((name, _)) = fields.iter().find(|(_, value)| value.trim().is_empty()) {
+            return Err(EmptyProvenanceField(name));
+        }
+        Ok(Self {
+            model: raw.model,
+            weights_commit: raw.weights_commit,
+            design_prompt: raw.design_prompt,
+            seed: raw.seed,
+            tool_version: raw.tool_version,
+        })
+    }
+}
+
+/// How one name is said: the respelling the TTS model is given instead of
+/// the name, and what speech recognition may write when it hears it.
+///
+/// Respell names the model gets wrong, never common words (respelling one
+/// made it worse in the word test). A respelling is one unhyphenated word
+/// per word of the name: a hyphen splits the word when spoken.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "RawPronunciation")]
+pub struct Pronunciation {
+    say: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    heard: Vec<String>,
+}
+
+/// An entry is either just the respelling, `Kulik = "Koolick"`, or a table
+/// that also lists what speech recognition writes for the name,
+/// `Kulik = { say = "Koolick", heard = ["Koolik"] }`.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum RawPronunciation {
+    /// The respelling only.
+    Say(String),
+    Full(PronunciationTable),
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PronunciationTable {
+    /// The respelling the TTS model is given.
+    say: String,
+    /// What speech recognition may write for the name; each is read as the
+    /// name when the audio is checked.
+    #[serde(default)]
+    heard: Vec<String>,
+}
+
+/// A pronunciation entry with nothing in it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LexiconError {
+    #[error("a pronunciation entry has an empty name")]
+    EmptyName,
+    #[error("a pronunciation has an empty `say`")]
+    EmptySay,
+    #[error("a pronunciation has an empty `heard` entry")]
+    EmptyHeard,
+}
+
+impl Pronunciation {
+    pub fn new(say: impl Into<String>, heard: Vec<String>) -> Result<Self, LexiconError> {
+        let say = say.into();
+        if say.trim().is_empty() {
+            return Err(LexiconError::EmptySay);
+        }
+        if heard.iter().any(|h| h.trim().is_empty()) {
+            return Err(LexiconError::EmptyHeard);
+        }
+        Ok(Self { say, heard })
+    }
+
+    /// What the TTS model is given in place of the name.
+    pub fn say(&self) -> &str {
+        &self.say
+    }
+
+    /// What speech recognition may write for the name.
+    pub fn heard(&self) -> &[String] {
+        &self.heard
+    }
+}
+
+impl TryFrom<RawPronunciation> for Pronunciation {
+    type Error = LexiconError;
+
+    fn try_from(raw: RawPronunciation) -> Result<Self, Self::Error> {
+        match raw {
+            RawPronunciation::Say(say) => Self::new(say, Vec::new()),
+            RawPronunciation::Full(table) => Self::new(table.say, table.heard),
+        }
+    }
+}
+
+/// Names and how to say them, e.g. `[tts.pronounce]` in an episode.
+/// Names are matched as whole words, case-sensitively.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "BTreeMap<String, Pronunciation>")]
+pub struct Lexicon(BTreeMap<String, Pronunciation>);
+
+impl Lexicon {
+    pub fn new(entries: BTreeMap<String, Pronunciation>) -> Result<Self, LexiconError> {
+        if entries.keys().any(|name| name.trim().is_empty()) {
+            return Err(LexiconError::EmptyName);
+        }
+        Ok(Self(entries))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Pronunciation> {
+        self.0.get(name)
+    }
+
+    /// Every entry, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Pronunciation)> {
+        self.0.iter().map(|(name, p)| (name.as_str(), p))
+    }
+
+    /// `self` with every entry of `over` added, `over` winning per name.
+    pub fn overlaid(&self, over: &Lexicon) -> Lexicon {
+        let mut entries = self.0.clone();
+        entries.extend(over.0.iter().map(|(n, p)| (n.clone(), p.clone())));
+        Self(entries)
+    }
+}
+
+impl TryFrom<BTreeMap<String, Pronunciation>> for Lexicon {
+    type Error = LexiconError;
+
+    fn try_from(entries: BTreeMap<String, Pronunciation>) -> Result<Self, Self::Error> {
+        Self::new(entries)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TtsConfig {
@@ -283,6 +504,12 @@ pub enum TtsConfig {
         /// Extra attempts for a chunk that fails verification.
         #[serde(default = "default_max_retries")]
         max_retries: u8,
+        /// Names the model mispronounces, each with a respelling, as
+        /// `[tts.pronounce]`. Merged over the user-level `pronounce.toml`
+        /// beside `sidecars.toml`; this list wins per name. The speech check
+        /// and the quotes keep the original words.
+        #[serde(default, skip_serializing_if = "Lexicon::is_empty")]
+        pronounce: Lexicon,
     },
 }
 

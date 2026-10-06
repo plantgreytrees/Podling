@@ -210,6 +210,7 @@ fn audio_sections_parse_with_defaults_and_roundtrip() {
             sidecar: "qwen3-tts".into(),
             takes: 2,
             max_retries: 2,
+            pronounce: Lexicon::default(),
         })
     );
     assert_eq!(
@@ -275,6 +276,147 @@ fn a_voice_clip_must_be_cc0_or_cc_by() {
             && err.contains("CC-BY-4.0")
             && err.contains("not allowed"),
         "{err}"
+    );
+}
+
+#[test]
+fn the_only_licence_beyond_cc_is_the_generated_one() {
+    assert_eq!(
+        podling_types::episode::VOICE_LICENCES,
+        [
+            "CC0-1.0",
+            "CC-BY-3.0",
+            "CC-BY-4.0",
+            "LicenseRef-Podling-Generated"
+        ]
+    );
+    assert_eq!(GENERATED_VOICE_LICENCE, "LicenseRef-Podling-Generated");
+    let generated = AUDIO.replace(
+        "licence = \"CC0-1.0\"",
+        "licence = \"LicenseRef-Podling-Generated\"",
+    );
+    let spec: EpisodeSpec = toml::from_str(&format!("{EPISODE}{generated}")).unwrap();
+    assert_eq!(spec.cast[0].voice.licence(), GENERATED_VOICE_LICENCE);
+}
+
+/// `AUDIO` with `[tts.pronounce]` holding `entries`.
+fn with_pronounce(entries: &str) -> String {
+    format!("{EPISODE}{AUDIO}\n[tts.pronounce]\n{entries}\n")
+}
+
+#[test]
+fn pronounce_takes_a_respelling_or_a_table_with_heard_variants() {
+    let spec: EpisodeSpec = toml::from_str(&with_pronounce(
+        "Kulik = \"Koolick\"\n\"Le Mans\" = { say = \"Luh Mon\", heard = [\"lemon\", \"le mon\"] }",
+    ))
+    .unwrap();
+    let Some(TtsConfig::Sidecar { pronounce, .. }) = &spec.tts else {
+        panic!("expected a sidecar: {:?}", spec.tts);
+    };
+    assert_eq!(pronounce.len(), 2);
+    let kulik = pronounce.get("Kulik").unwrap();
+    assert_eq!((kulik.say(), kulik.heard()), ("Koolick", &[][..]));
+    let le_mans = pronounce.get("Le Mans").unwrap();
+    assert_eq!(le_mans.say(), "Luh Mon");
+    assert_eq!(le_mans.heard(), ["lemon", "le mon"]);
+    roundtrip(&spec);
+
+    // A table without `heard` is the respelling only.
+    let spec: EpisodeSpec =
+        toml::from_str(&with_pronounce("Kulik = { say = \"Koolick\" }")).unwrap();
+    let Some(TtsConfig::Sidecar { pronounce, .. }) = &spec.tts else {
+        panic!("expected a sidecar");
+    };
+    assert!(pronounce.get("Kulik").unwrap().heard().is_empty());
+}
+
+#[test]
+fn an_empty_pronounce_is_not_written_back() {
+    let spec: EpisodeSpec = toml::from_str(&format!("{EPISODE}{AUDIO}")).unwrap();
+    let json = serde_json::to_value(&spec).unwrap();
+    assert!(json["tts"].get("pronounce").is_none(), "{json}");
+}
+
+#[test]
+fn a_pronounce_entry_with_nothing_in_it_is_refused() {
+    for (entries, wanted) in [
+        ("\"\" = \"Koolick\"", "empty name"),
+        ("\" \" = \"Koolick\"", "empty name"),
+        ("Kulik = \"\"", "empty `say`"),
+        ("Kulik = { say = \"  \" }", "empty `say`"),
+        (
+            "Kulik = { say = \"Koolick\", heard = [\"\"] }",
+            "empty `heard`",
+        ),
+    ] {
+        let err = toml::from_str::<EpisodeSpec>(&with_pronounce(entries))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(wanted), "{entries}: {err}");
+    }
+    // A table form takes `say` and `heard` only.
+    assert!(
+        toml::from_str::<EpisodeSpec>(&with_pronounce("Kulik = { say = \"Koolick\", stress = 1 }"))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_later_lexicon_wins_per_name() {
+    let say = |s: &str| Pronunciation::new(s, Vec::new()).unwrap();
+    let user = Lexicon::new(
+        [
+            ("Kulik".into(), say("Koolick")),
+            ("Vanavara".into(), say("Vanavahra")),
+        ]
+        .into(),
+    )
+    .unwrap();
+    let episode = Lexicon::new([("Kulik".into(), say("Kooleek"))].into()).unwrap();
+    let merged = user.overlaid(&episode);
+    assert_eq!(merged.get("Kulik").unwrap().say(), "Kooleek");
+    assert_eq!(merged.get("Vanavara").unwrap().say(), "Vanavahra");
+    assert_eq!(
+        Lexicon::new([(" ".into(), say("x"))].into()),
+        Err(LexiconError::EmptyName)
+    );
+}
+
+const PROVENANCE: &str = r#"{
+  "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  "weights_commit": "0123abcd",
+  "design_prompt": "A warm, lively woman in her thirties.",
+  "seed": 1234,
+  "tool_version": "0.1.0"
+}"#;
+
+#[test]
+fn voice_provenance_needs_every_field() {
+    let provenance: VoiceProvenance = serde_json::from_str(PROVENANCE).unwrap();
+    assert_eq!(provenance.model(), "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign");
+    assert_eq!(provenance.weights_commit(), "0123abcd");
+    assert_eq!(
+        provenance.design_prompt(),
+        "A warm, lively woman in her thirties."
+    );
+    assert_eq!(provenance.seed(), 1234);
+    assert_eq!(provenance.tool_version(), "0.1.0");
+
+    let missing = PROVENANCE.replace("  \"seed\": 1234,\n", "");
+    assert!(serde_json::from_str::<VoiceProvenance>(&missing).is_err());
+    let unknown = PROVENANCE.replace("\"seed\"", "\"gain\": 2, \"seed\"");
+    let err = serde_json::from_str::<VoiceProvenance>(&unknown).unwrap_err();
+    assert!(err.to_string().contains("gain"), "{err}");
+    let empty = PROVENANCE.replace("0123abcd", " ");
+    let err = serde_json::from_str::<VoiceProvenance>(&empty).unwrap_err();
+    assert!(err.to_string().contains("weights_commit"), "{err}");
+}
+
+#[test]
+fn provenance_sits_beside_the_clip_under_its_whole_name() {
+    assert_eq!(
+        provenance_path(std::path::Path::new("voices/host.wav")),
+        std::path::Path::new("voices/host.wav.provenance.json")
     );
 }
 
