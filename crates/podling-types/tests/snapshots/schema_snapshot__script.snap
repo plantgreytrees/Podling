@@ -35,7 +35,42 @@ expression: schema
         "ledger",
         "verdicts",
         "script",
-        "analysis"
+        "analysis",
+        "audio"
+      ]
+    },
+    "Beat": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/BeatKind"
+        },
+        "turns": {
+          "$ref": "#/$defs/TurnRange"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "turns"
+      ]
+    },
+    "BeatKind": {
+      "description": "What a run of turns is doing. The chunk planner never splits a beat\nacross two chunks, so a joke and its answer are synthesised together.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "narration",
+            "quote_reading",
+            "transition"
+          ]
+        },
+        {
+          "description": "Quick back-and-forth between the hosts. Adds no new facts.",
+          "type": "string",
+          "const": "banter"
+        }
       ]
     },
     "ClaimId": {
@@ -62,6 +97,118 @@ expression: schema
         "somber"
       ]
     },
+    "Nonverbal": {
+      "description": "A sound that is not words: a laugh, or another speaker's \"mm-hm\".\n\n`kind` is flattened into this object, so it reads\n`{ \"kind\": \"backchannel\", \"text\": \"mm-hm\", \"by\": \"guest\", \"at\": \"over\" }`.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/NonverbalAt"
+        },
+        "by": {
+          "description": "Who makes the sound; must be in the cast.",
+          "$ref": "#/$defs/SpeakerId"
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "laugh"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "chuckle"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sigh"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A short listener response, e.g. \"mm-hm\" or \"right\".",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "backchannel"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        }
+      ],
+      "required": [
+        "by",
+        "at"
+      ]
+    },
+    "NonverbalAt": {
+      "description": "Where a nonverbal sound goes relative to its turn's words.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        {
+          "description": "On a second track, while the turn is spoken.",
+          "type": "string",
+          "const": "over"
+        }
+      ]
+    },
+    "Pace": {
+      "description": "The gap before a turn, for the assembler.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "quick",
+            "normal",
+            "long_pause"
+          ]
+        },
+        {
+          "description": "A deliberate pause, longer than normal.",
+          "type": "string",
+          "const": "beat"
+        },
+        {
+          "description": "Cuts in: starts before the previous turn has quite finished.",
+          "type": "string",
+          "const": "interrupt"
+        }
+      ]
+    },
     "Quote": {
       "description": "The unchecked wire shape. Deserialising can only check the quote's shape;\nwhether the words really appear in the source is checked against the\ndocument by the `QuoteVerifier` analyser.",
       "type": "object",
@@ -83,9 +230,16 @@ expression: schema
       ]
     },
     "Script": {
-      "description": "A validated script: the cast is non-empty with unique ids, and every turn\nis spoken by a cast member. Deserialisation runs the same checks.",
+      "description": "A validated script: the cast is non-empty with unique ids, every turn is\nspoken by a cast member, and the beats (if any) cover the turns in order.\nDeserialisation runs the same checks.",
       "type": "object",
       "properties": {
+        "beats": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Beat"
+          }
+        },
         "cast": {
           "type": "array",
           "items": {
@@ -151,6 +305,15 @@ expression: schema
     "Turn": {
       "type": "object",
       "properties": {
+        "callback_to": {
+          "description": "An earlier turn (by index) this one refers back to; its audio is given\nto the TTS as context so the callback sounds like one.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
         "citations": {
           "description": "Ledger claims this turn relies on.",
           "type": "array",
@@ -162,6 +325,16 @@ expression: schema
         "emotion": {
           "$ref": "#/$defs/Emotion",
           "default": "neutral"
+        },
+        "nonverbal": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Nonverbal"
+          }
+        },
+        "pace": {
+          "description": "The gap before this turn. Left out of the JSON when normal, so a\nscript written without audio in mind keeps its old shape.",
+          "$ref": "#/$defs/Pace"
         },
         "quotes": {
           "description": "Verbatim quotes spoken in this turn.",
@@ -181,6 +354,29 @@ expression: schema
       "required": [
         "speaker",
         "text"
+      ]
+    },
+    "TurnRange": {
+      "description": "A non-empty run of script turns, `start..end` (end exclusive).\n\nNot a `std::ops::Range`: a range may be empty or backwards, and serde\nwould accept either. Deserialisation runs the same check as\n[`TurnRange::new`], so an empty range can't be built at all.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "One past the index of the last turn.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "start": {
+          "description": "Index of the first turn.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
       ]
     }
   }

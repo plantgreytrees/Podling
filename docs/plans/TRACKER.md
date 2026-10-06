@@ -39,3 +39,45 @@
 | [phase4-adjudicator](./phase4-adjudicator.md) | 4 | titanic-example | examples/titanic | rust | normal | MERGED | 2026-10-04 |
 | [phase4-adjudicator](./phase4-adjudicator.md) | 5 | live-and-docs | docs | markdown | normal | PENDING | 2026-10-04 |
 | [scrutinise-phase4-adjudicator](./scrutinise-phase4-adjudicator.md) | 1 | fallback-reason-cap | crates/podling-core/src/stages/adjudicate.rs | rust | normal | MERGED | 2026-10-04 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 1 | tts-bakeoff | scripts/tts_bakeoff | python | normal | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 2 | audio-contracts | crates/podling-types | rust | normal | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 3 | tts-sidecar | sidecars/tts | python | high | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 4 | tts-provider | crates/podling-core/src/plugin | rust | high | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 5 | audio-e2e | crates/podling-core/src/stages | rust | normal | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 6 | script-beats | crates/podling-types/src/script.rs | rust | normal | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 7 | beat-chunker | crates/podling-core/src/stages/plan_chunks.rs | rust | normal | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 8 | asr-verify | crates/podling-core/src/plugin/whisper.rs | rust | normal | MERGED | 2026-10-05 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 9 | full-assembler | crates/podling-core/src/stages/assemble.rs | rust | normal | COMPLETE | 2026-10-06 |
+| [phase5-tts-audio](./phase5-tts-audio.md) | 10 | live-and-docs | examples/tunguska, docs | markdown | normal | COMPLETE | 2026-10-06 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 1 | windows-helper | crates/podling-core/src/stages/windows.rs | rust | normal | MERGED | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 2 | ground-claims-stage | crates/podling-core/src/stages/ground_claims.rs | rust | normal | MERGED | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 3 | pipeline-wiring | crates/podling-core/src/pipeline.rs, crates/podling-cli | rust | normal | MERGED | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 4 | live-check | examples/tunguska | rust | normal | MERGED | 2026-10-04 |
+| [nli-extraction-grounding](./nli-extraction-grounding.md) | 5 | docs | docs, README.md, examples/tunguska | markdown | normal | MERGED | 2026-10-04 |
+| [scrutinise-nli-extraction-grounding](./scrutinise-nli-extraction-grounding.md) | 1 | window-word-cap | crates/podling-core/src/stages, crates/podling-cli/tests | rust | normal | MERGED | 2026-10-04 |
+
+## Live ledger
+
+<!-- craftsman:ledger:begin -->
+<!-- Generated from the tracker ledger (.craftsman/tracker/events.jsonl) after every transition. Do not edit by hand: change a row with scripts/tracker.mjs. -->
+
+| plan | unit | module | status | evidence | updated |
+|---|---|---|---|---|---|
+| [phase1-core-contracts](./phase1-core-contracts.md) | 1 (ws-scaffold) | workspace-root | PENDING | — | 2026-09-29 |
+| [phase1-core-contracts](./phase1-core-contracts.md) | 2 (artifact-types) | crates/podling-types | PENDING | — | 2026-09-29 |
+| [phase1-core-contracts](./phase1-core-contracts.md) | 3 (content-cache) | crates/podling-core/src/cache.rs | PENDING | — | 2026-09-29 |
+| [phase1-core-contracts](./phase1-core-contracts.md) | 4 (plugin-contracts) | crates/podling-core/src/plugin | PENDING | — | 2026-09-29 |
+| [phase1-core-contracts](./phase1-core-contracts.md) | 5 (stage-pipeline) | crates/podling-core/src/pipeline | PENDING | — | 2026-09-29 |
+| [phase1-core-contracts](./phase1-core-contracts.md) | 6 (cli) | crates/podling-cli | PENDING | — | 2026-09-29 |
+| [phase1-core-contracts](./phase1-core-contracts.md) | 7 (docs) | docs | PENDING | — | 2026-09-29 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 1 (asr-expected-text) | crates/podling-core/src/stages/synthesize.rs | COMPLETE | all 1 acceptance criteria ticked; merge 61ca815 into worktree-phase5-tts-plan; … | 2026-10-05 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 2 (tts-weights-fingerprint) | sidecars/tts, crates/podling-core/src/plugin/sidecar_tts.rs | COMPLETE | all 1 acceptance criteria ticked; merge 4a75676 into worktree-phase5-tts-plan; … | 2026-10-05 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 3 (voice-licence-allowlist) | crates/podling-types/src/episode.rs | COMPLETE | all 1 acceptance criteria ticked; merge 93279f7 into worktree-phase5-tts-plan; … | 2026-10-05 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 4 (sidecar-process-group) | crates/podling-core/src/plugin/sidecar.rs | COMPLETE | all 1 acceptance criteria ticked; merge 985b12f into worktree-phase5-tts-plan; … | 2026-10-05 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 5 (audio-cleanups) | crates/podling-core/src/pipeline.rs | PENDING | — | 2026-10-05 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 6 (audio-dedupe) | crates/podling-core/src/plugin | PENDING | — | 2026-10-05 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 7 (sidecar-orphan-after-exit) | crates/podling-core/src/plugin/sidecar.rs | COMPLETE | all 1 acceptance criteria ticked; merge ea75403 (f5f9442) into worktree-phase5-… | 2026-10-05 |
+| [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 8 (sidecar-hardening) | crates/podling-core/src/plugin/sidecar.rs, sidecars/tts | PENDING | — | 2026-10-05 |
+| [phase5-tts-audio](../../phase5-tts-audio) | 5 | — | COMPLETE | all 2 acceptance criteria ticked; merge a90c25f into worktree-phase5-tts-plan; … | 2026-10-05 |
+
+<!-- craftsman:ledger:end -->

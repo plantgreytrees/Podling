@@ -1,13 +1,17 @@
 # Architecture
 
-> **Status:** current as of 2026-10-04. It covers Phase 1 (core contracts), the
+> **Status:** current as of 2026-10-06. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes, Phase 2 (the OpenAI-compatible LLM provider) and its
 > scrutinise fixes (unreferenced-quotation check, claim grounding, script input
 > size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
 > can name things from the title and headings, Phase 3 (embeddings and NLI
-> in the claim ledger), and Phase 4 (the Contested-claim adjudicator).
+> in the claim ledger), Phase 4 (the Contested-claim adjudicator) and Phase 5
+> (episode audio: TTS, speech-recognition checks, assembly) with its
+> `/scrutinise` fixes (backchannel-aware speech checks, a weights- and
+> adapter-aware TTS cache key, a voice licence allow-list, and stopping the
+> sidecar's whole process tree). Phase 5 was built before Phase 4.
 
-This document describes the state after Phase 4. Where the design
+This document describes the state after Phases 4 and 5. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
 
 ## Crates
@@ -34,6 +38,7 @@ needs concurrency, such as parallel TTS or streaming.
  ingest ─────────► Vec<Document>   BOM/CRLF normalised; duplicates within a group dropped
  chunk ──────────► Vec<Chunk>      split at Markdown headings (not inside code fences), then paragraphs (~800 words)
  extract_claims ─► Vec<Claim>      one LLM call per chunk; merged by ClaimId + Evidence
+ [ground_claims] ─► Grounded       evidence its own chunk doesn't entail (NLI) dropped and counted
  [cluster_claims] ► Vec<Claim>     paraphrases merged: mutual NLI entailment, equal numbers
  [score_stances] ─► Vec<Claim>     other groups' sentences checked by NLI: Supports / Contradicts
  ledger ─────────► Ledger          classify(): status from distinct independence groups
@@ -45,18 +50,30 @@ needs concurrency, such as parallel TTS or streaming.
                                    Quote::from_document copies the words and the stage fills the
                                    placeholder in; every citation must name a claim in the ledger
  analyse ────────► AnalysisReport  opt-in analysers, e.g. quote_verifier
+ ─ only with [tts] ─────────────────────────────────────────────────────────────
+ plan_chunks ────► Vec<PlannedChunk>  whole beats (dialogue model) or one turn each (per-turn model)
+ synthesize_chunk ► ChunkResult       one cache entry per chunk take; audio in the blob store
+ transcribe_chunk ► Transcript        Whisper on the CPU; WER and verbatim quotes decide the take
+ assemble ───────► episode.wav        gaps, crossfades, overlays, −16 LUFS, −1 dBTP; audio.json
+                                      lists every chunk, its check and each voice's licence
 ```
 
 [`pipeline::run`](../crates/podling-core/src/pipeline.rs) calls the stages in
-order. The two bracketed ones run only when the episode has both `[embedding]`
+order. The three bracketed ones run only when the episode has both `[embedding]`
 and `[nli]` (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli));
 without them nothing can be Contested, so `adjudicate` makes no call and writes an
 empty `verdicts.json`, and the other artifacts' bodies are byte for byte what they were
-before Phase 3 (only the envelope's `schema_version` has moved on). Each call goes through
+before Phase 3 (only the envelope's `schema_version` has moved on). The test
+`without_nli_the_cache_keys_are_unchanged`
+([`tests/pipeline.rs`](../crates/podling-core/tests/pipeline.rs)) pins the stages'
+cache keys, so only a deliberate bump moves one. Each call goes through
 [`stage::cached`](../crates/podling-core/src/stage.rs), which opens a
 `tracing` span `stage{id, version}`, logs `cache_hit` and `elapsed_ms`, and
 adds a `StageRecord` to the `RunReport`. Every artifact is written as
 `<out>/<kind>.json` inside an `Envelope { schema_version, kind, body }`.
+The audio stages run only when the episode has `[tts]` (see
+[Episode audio](#episode-audio)); without it every text artifact is the same
+as before Phase 5 apart from `schema_version`.
 
 Provider output is never trusted. The following are `InvalidProviderOutput` errors:
 - malformed JSON;
@@ -141,11 +158,20 @@ and are still cache hits.
    doesn't re-run claim extraction.
 5. **You changed an embedding or NLI provider's behaviour.** Rule 3 applies to
    them too: `EmbeddingProvider::fingerprint()` and `NliProvider::fingerprint()`
-   are in both grounding stages' cache keys. The fakes carry a `version` field to
+   are in all three grounding stages' cache keys (`ground_claims`, `cluster_claims`,
+   `score_stances`). The fakes carry a `version` field to
    bump; `OpenAiEmbeddings` has the base URL, model and a request version;
    `CrossEncoderNli` has a BLAKE3 hash of its three model files and a version.
    The stages' thresholds are in their fingerprints as well, so changing one
-   invalidates the cache on its own.
+   invalidates the cache on its own. The same goes for **TTS and ASR**:
+   `TtsProvider::fingerprint()` is the `synthesize_chunk` config, and
+   `AsrProvider::fingerprint()` the `transcribe_chunk` config. `SidecarTts`
+   takes protocol, backend, model, weights and adapter version from the
+   worker's `/health` (never the profile name, so renaming a profile keeps the
+   cache). `weights` is the hub snapshot's commit, or a `sha256:` over a
+   `--model-dir`'s weight and config files; change what a worker adapter asks
+   the model to say and bump its `ADAPTER_VERSION`. `CandleWhisper` has a BLAKE3 hash of its
+   weights, its decoding thresholds and a version. The fakes carry a `version`.
 
 ## Plugins
 
@@ -161,18 +187,23 @@ add one arm to the factory.
 | Provider (embeddings) | `EmbeddingProvider` | `FakeEmbedding`: BLAKE3-hashed bag of content words, 256 dimensions, so cosine measures shared words. `OpenAiEmbeddings`: `POST {base_url}/embeddings` (Ollama `nomic-embed-text`), 64 texts per request, on the same transport as `OpenAiCompat`. |
 | Provider (NLI) | `NliProvider` | `FakeNli`: one-way word containment, plus a changed number read as contradiction. `CrossEncoderNli`: `cross-encoder/nli-deberta-v3-base` (Apache-2.0) run natively with candle on the CPU, loaded from a local directory on first use. |
 | Source connector | `SourceConnector` | `LocalFilesConnector`: `.md`/`.txt` in one directory, symlinks confined to the root, 10 MiB cap. The locator is `<root as written in the episode>/<file name>`, so same-named files in different roots get distinct ids. |
-| Analyser | `Analyser` | `QuoteVerifier`: every quote matches its source span, the turn speaks it verbatim, and no other quoted span of three or more words appears in a turn |
+| Provider (TTS) | `TtsProvider` (`&mut self`) | `FakeTts`: sine tones, a pitch per speaker and a length per word, so the audio path runs offline. `SidecarTts`: a Python worker process (Qwen3-TTS 1.7B Base by default) started from a user-level profile; see [Episode audio](#episode-audio). |
+| Provider (ASR) | `AsrProvider` (`&mut self`) | `FakeAsr`: hears exactly what the script says; tests can make it mishear the first n calls. `CandleWhisper`: `openai/whisper-base.en` (MIT) with candle on the CPU, 30 s windows decoded in turn with the temperature fallback. |
+| Analyser | `Analyser` | `QuoteVerifier`: every quote matches its source span, the turn speaks it verbatim, and no other quoted span of three or more words appears in a turn. `UncitedFigures`: warns on a turn that states a number or a year with no citation. |
 
 Deferred to later phases:
 - Non-OpenAI-compatible LLM protocols, streaming, token budgeting. Until then
   `WriteScript` logs a warning when its input is over 24 KiB, because a small server
   context window truncates it silently; raise the server's context (for Ollama,
   `OLLAMA_CONTEXT_LENGTH`).
-- TTS and ASR provider traits.
+- The Dia2 dialogue adapter in the TTS worker. Not needed for now: in the
+  2026-10-06 listening pass it sounded near identical to per-turn Qwen (the
+  planner and ASR turn spans already handle a multi-speaker backend).
+- Pronunciation hints and expressive delivery: the Qwen 1.7B Base model is
+  voice-clone only, so the adapter drops each turn's `emotion`.
+- Synthesising chunks in parallel.
 - MCP source connectors.
 - PDF ingestion (Docling / pdfium).
-- Replacing the lexical grounding check in `extract_claims` with an NLI check
-  (see the grounding check below).
 
 ## The OpenAI-compatible provider
 
@@ -251,8 +282,11 @@ would get those matches for free. A number may come from the chunk, the title or
 itself is still shown only the chunk text. The model gets one retry with the reason,
 then the run fails naming the chunk. The check is lexical. It catches invention and
 knowledge pulled from the model's memory, and tolerates paraphrase. It does not catch
-a subtle distortion made with the passage's own words. The NLI provider could (does
-the chunk entail the claim?), and wiring it into this check is a follow-up.
+a subtle distortion made with the passage's own words. With `[embedding]` and `[nli]`
+set, the `ground_claims` stage catches those: it keeps a claim only where the NLI model
+finds that its own chunk entails it (see
+[Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli)). The lexical
+check stays in front of it either way, unchanged, as the exact-number gate.
 
 **The script sees a compact ledger.** The script request carries each claim's id,
 text and status only
@@ -263,8 +297,39 @@ text and status only
 
 Extraction keys claims by their exact text, so two sources stating one fact in
 different words give two SingleSource claims, and nothing can contradict anything.
-Two optional stages fix that. Both are pure producers of *evidence*: status still
+Its lexical grounding check also misses a distortion made from the chunk's own words.
+Three optional stages fix that. They only add or remove *evidence*: status still
 comes only from `classify()`, and no LLM is involved.
+
+**[`ground_claims`](../crates/podling-core/src/stages/ground_claims.rs)** runs first, on
+extraction's output. For each piece of evidence it asks whether the claim's own chunk
+entails the claim, and drops the evidence if not. A claim left with no evidence is
+dropped. This catches "Kulik led the expedition" from a chunk saying he *joined* it,
+which passes the lexical check because it shares most of its words with the chunk.
+- The premise is the best window of one or two consecutive sentences of the chunk,
+  not the whole chunk. A chunk at the 800-word cap is about 1000–1600 DeBERTa tokens,
+  over its 512, and even a short chunk fails: a faithful paraphrase of one sentence of
+  a four-sentence chunk scored 0.000 entailment against the chunk and 0.998 against
+  the sentence. The 4 windows most similar to the claim by embedding are scored.
+- No window is longer than 120 words (`MAX_WINDOW_WORDS` in
+  [`windows.rs`](../crates/podling-core/src/stages/windows.rs)). A longer sentence, such
+  as a list with no full stops, is split into overlapping 120-word slices. Without that,
+  DeBERTa cut the premise off at 512 tokens, and a faithful claim about item 117 of a
+  long list scored 0.617 where one about item 1 scored 0.965.
+- Each premise starts with the document title and the chunk's headings
+  (`"<title>. <heading>. <window>"`), because extraction rule 2 has the model name
+  what a heading names. Without that prefix such claims scored 0.000; with it, 0.997.
+- Entailment ≥ 0.800 (`GROUND_ENTAIL_PM`, separate from the stance stage's equal
+  `SUPPORT_ENTAIL_PM`) keeps the evidence. On the Tunguska sources faithful claims
+  scored 0.971 or more and distortions 0.003 or less.
+- A rejection is dropped and counted, never retried or fatal. Each one, with its
+  claim, chunk, best score and premise span, is part of the stage's cached output.
+  The pipeline logs them, also on a cache hit, and `RunReport::grounding` carries
+  the counts, which the CLI prints as `grounding: N claim(s) dropped, M evidence item(s) rejected`.
+- Known misses: a dropped hedge ("my shirt almost burned" → "the shirt burned", 0.994)
+  and a figure moved within the chunk (0.966). The lexical check stays in front as the
+  exact-number gate and rejects claims made only of title or heading words, which NLI
+  scores as entailed (0.996).
 
 **Evidence audit.** `Evidence` has an optional `basis`
 ([`claim.rs`](../crates/podling-types/src/claim.rs)). It is absent for plain
@@ -294,7 +359,7 @@ order, so the result doesn't depend on input order.
 
 **[`score_stances`](../crates/podling-core/src/stages/score_stances.rs)** reads each claim
 against other groups' sources. Premises are windows of one or two consecutive sentences,
-well under DeBERTa's 512 tokens. For each claim, only windows from groups that have no
+at most 120 words, well under DeBERTa's 512 tokens. For each claim, only windows from groups that have no
 evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are scored:
 - entailment ≥ 0.800: `Supports`;
 - else contradiction ≥ 0.950 **and** cosine ≥ 0.60: `Contradicts`. NLI models over-call
@@ -359,6 +424,104 @@ so it is never cached as a verdict.
 ids a small model once mistook for claim ids). The prompt says to give both
 accounts, say which side the sources favour or that it is unresolved, explain
 why, and never state either side as settled.
+
+## Episode audio
+
+With `[tts]` (which needs `[asr]` and `[[cast]]`; `check_audio` in
+[`plugin/mod.rs`](../crates/podling-core/src/plugin/mod.rs) rejects any other
+mix), `pipeline::run` goes on after the analysis report. Everything here is
+checked before the first stage runs: the voice clips, the sidecar profile, the
+Whisper files and `[mix]`. The model processes start only when they are needed.
+
+**One GPU model at a time.** The 8 GB card cannot hold the LLM and the TTS
+model together, so:
+1. With `unload_after = true` on `[llm]`/`[embedding]`, Podling asks Ollama to
+   free each model straight after its last stage
+   ([`plugin/ollama.rs`](../crates/podling-core/src/plugin/ollama.rs);
+   Ollama's native `keep_alive: 0`). A failed unload is a warning.
+2. The TTS provider is built just before synthesis and dropped just after, in
+   one block of `AudioPlan::make`
+   ([`pipeline.rs`](../crates/podling-core/src/pipeline.rs)). Dropping a
+   `SidecarTts` stops its worker process, the only reliable way to give the GPU
+   memory back.
+3. Whisper runs on the CPU, so it can check each chunk straight after it is made
+   without competing for the card.
+
+**The sidecar.** [`plugin/sidecar.rs`](../crates/podling-core/src/plugin/sidecar.rs)
+starts a worker; [`plugin/sidecar_tts.rs`](../crates/podling-core/src/plugin/sidecar_tts.rs)
+speaks to it.
+- *What runs.* The episode's `[tts] sidecar = "qwen"` names a profile. The program
+  and its arguments come only from the user-level `sidecars.toml`
+  (`$XDG_CONFIG_HOME/podling/` or `~/.config/podling/`, or `--sidecars`), never
+  from the episode file, which is meant to be shareable. It runs from an argv
+  (`std::process::Command`, no shell), with `--port 0 --run-dir <dir>` appended.
+- *Start-up.* The worker binds `127.0.0.1` and prints one JSON line,
+  `{"listening": "127.0.0.1:<port>", "protocol": 1}`; Podling waits up to 60 s
+  for it, then checks `GET /v1/podling/health` (protocol, backend, model,
+  weights, adapter, capabilities). Stderr goes to `<run dir>/sidecar.log`, whose tail
+  every start-up or transport error quotes.
+- *Requests.* `POST /v1/podling/synthesize` names the reference clips and an
+  output path inside the run directory Podling created; the worker writes a WAV
+  there and answers with its sample rate and turn spans. Audio moves through
+  files, so the HTTP bodies stay small. The full protocol is in
+  [`sidecars/tts/README.md`](../sidecars/tts/README.md).
+- *Shutdown.* `uv run` starts the model as a child, so stopping only the
+  worker could leave the GPU held. When the worker reports ready, Podling pins
+  each of its descendants with a pidfd, which keeps naming that process even
+  after its parent dies and a pid is reused (`Descendants` in `sidecar.rs`).
+  `Drop` adds a fresh scan when the worker still runs, sends SIGTERM to the
+  worker and every pinned process, waits up to 5 s (liveness is read from the
+  pidfds), then kills and reaps what is left; this also happens when the
+  worker has already died and left a child behind. The worker stays in
+  Podling's process group, so Ctrl-C still reaches it. A process started after
+  ready by a worker that then dies, or one that detaches before the ready
+  scan, is caught only by the worker's own parent watch
+  ([`server.py`](../sidecars/tts/podling_tts/server.py) `watch_parent`). The
+  run directory is deleted after it.
+
+**Chunks.** [`plan_chunks`](../crates/podling-core/src/stages/plan_chunks.rs)
+reads the backend's `TtsCapabilities`. A per-turn model (`multi_speaker: false`,
+Qwen) gets one turn per chunk; a dialogue model gets whole beats up to
+`max_chunk_secs`, never splitting a beat. Every chunk is conditioned on the
+pinned reference clip of each speaker, never on the previous chunk's output
+alone, so errors can't compound.
+
+**Checks and takes.** [`synthesize_script`](../crates/podling-core/src/stages/synthesize.rs)
+makes each chunk, and [`verify_audio`](../crates/podling-core/src/stages/verify_audio.rs)
+transcribes it. A take passes when its word error rate against what the chunk says is
+at most `max_wer_pm` (the turn text plus any backchannel its own speaker says
+in line before or after it, `SpokenTurn::said` in
+[`plugin/tts.rs`](../crates/podling-core/src/plugin/tts.rs)) and every quote is heard word for word (after
+normalising case, punctuation and numbers). Banter beats get `takes` takes and
+keep the best passing one. A failing chunk is made again with a new seed up to
+`max_retries` times; if it still fails it becomes an `Error` finding in the
+analysis report and the episode is still assembled, as with a misquote. A seed
+is derived, never random (`BLAKE3(chunk ‖ take)`), so a rerun asks for the same
+takes and finds them cached. Backchannels said over another speaker's turn are
+synthesised as separate short clips for the second track (`synthesize_overlays`).
+
+**Blob cache.** Each take is one `synthesize_chunk` entry; its key covers the
+turns, the voices' file hashes, any context audio, the take and the TTS
+fingerprint, so editing one turn re-synthesises one chunk. The entry holds a
+`ChunkResult` that names its audio by BLAKE3 hash; the bytes live in a
+content-addressed `BlobStore` (`<cache>/blobs/`, or `<out>/.blobs/` with
+`--no-cache`). An entry whose blob is missing is a **miss**, so clearing blobs
+can never leave a dangling reference. Transcripts are cached the same way
+(`transcribe_chunk`, keyed by the blob, the expected text and the ASR fingerprint).
+
+**Assembly.** [`assemble`](../crates/podling-core/src/stages/assemble.rs)
+resamples each chunk to 48 kHz mono (`rubato`), matches every chunk's loudness
+to the median, trims each turn's silence and lays the turns out with the gap
+its `pace` asks for (`[mix] gaps_ms`; `Interrupt` overlaps with an equal-power
+crossfade). Overlays go on a second track at −6 dB. The episode is then
+normalised to −16 LUFS integrated with a −1 dBTP true-peak limiter, measured
+with `ebur128`, and written as 16-bit `episode.wav`. `[mix] encode = "opus"`
+or `"mp3"` adds a copy made by `ffmpeg` (argv, no shell; a missing `ffmpeg` is a
+`Config` error). `audio.json` records every chunk's seed, take and check, the
+episode's loudness and length, and each voice's licence. A clip's licence
+must be one of `VOICE_LICENCES` (`CC0-1.0`, `CC-BY-3.0`, `CC-BY-4.0`;
+[`episode.rs`](../crates/podling-types/src/episode.rs)); any other is refused
+when the episode is read.
 
 ## Why a claim ledger, not debating agents
 

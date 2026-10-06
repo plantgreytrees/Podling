@@ -34,6 +34,20 @@ candle-nn = "0.11"
 candle-transformers = "0.11"
 # Only what loading a `tokenizer.json` needs: no progress bars, no training.
 tokenizers = { version = "0.22", default-features = false }
+# zlib compression, only to measure how repetitive a Whisper window is (its
+# loop guard). Pure Rust, MIT OR Zlib OR Apache-2.0.
+miniz_oxide = "0.8"
+
+# Audio (Phase 5): WAV read/write, and resampling the TTS model's native
+# rate to the episode's 48 kHz. Both pure Rust, MIT OR Apache-2.0.
+hound = "3.5"
+rubato = "5"
+# EBU R128 loudness and true peak (podcast loudness normalisation). MIT.
+ebur128 = "0.1"
+# Safe wrappers for signals: the TTS sidecar gets SIGTERM first, so a wrapper
+# such as `uv run` can pass it on. Already in the tree through tempfile.
+# `event` gives `poll`, which tells when a pidfd's process has exited.
+rustix = { version = "1", features = ["process", "event"] }
 
 tempfile = "3.27"
 assert_cmd = "2.2"

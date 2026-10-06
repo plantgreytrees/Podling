@@ -1,0 +1,264 @@
+{
+  "snapshot": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+  "clips": [
+    {
+      "path": "scripts/tts_bakeoff/out/qwen/chunk_000.wav",
+      "sha256": "3cff7b5b6b8d88dacecb19c8a86d19f3bcbf31d2556983026523c449d23d931c",
+      "text": "Welcome back. Today we are going to a forest in Central Siberia on a summer morning in 1908 when something came out of the sky and nobody could say what it was. And I have to admit, before we prepared this episode I thought I knew the story. Big explosion, flattened trees, done. It turns out almost every part of it is stranger than that. Let's start with the people who were there. About sixty kilometers from the center there was a small trading post called Vannavara. One man was sitting on his porch having breakfast, and he gave an account that has been quoted ever since. Go on, read it. He said, at breakfast the sky split in two, and then a little later in the same account fire covered the northern sky above the forest. The sky split in two, at breakfast. I think about my own breakfast, which is usually toast and a bit of panic about email, and I cannot imagine looking up and seeing that. Right. And remember how far away he was, 60 kilometers is roughly the distance from one city to the next. Whatever happened, it was so bright and so hot that he felt it on his skin from that distance. He describes the heat, doesn't he? He does. His words were, the heat was so strong that my shirt almost burned, he said he wanted to tear it off and then the shock wave arrived and threw him off his chair. So first the light, then the heat, then the blast. That order matters because light travels instantly, heat comes with it, and the pressure wave takes time to cross the distance. He was describing physics without knowing it.",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 10.0,
+          "text": "Welcome back. Today we are going to a forest in Central Siberia on a summer morning in 1908 when something came out of the sky and nobody could say what it was."
+        },
+        {
+          "start": 10.0,
+          "end": 22.0,
+          "text": "And I have to admit, before we prepared this episode I thought I knew the story. Big explosion, flattened trees, done. It turns out almost every part of it is stranger than that."
+        },
+        {
+          "start": 22.0,
+          "end": 24.44,
+          "text": "Let's start with the people who were there."
+        },
+        {
+          "start": 24.44,
+          "end": 28.96,
+          "text": "About sixty kilometers from the center there was a small trading post called Vannavara."
+        },
+        {
+          "start": 28.96,
+          "end": 33.08,
+          "text": "One man was sitting on his porch having breakfast, and he gave an account that has been quoted"
+        },
+        {
+          "start": 33.08,
+          "end": 34.32,
+          "text": "ever since."
+        },
+        {
+          "start": 34.32,
+          "end": 35.98,
+          "text": "Go on, read it."
+        },
+        {
+          "start": 35.98,
+          "end": 41.12,
+          "text": "He said, at breakfast the sky split in two, and then a little later in the same account"
+        },
+        {
+          "start": 41.12,
+          "end": 44.48,
+          "text": "fire covered the northern sky above the forest."
+        },
+        {
+          "start": 44.48,
+          "end": 47.28,
+          "text": "The sky split in two, at breakfast."
+        },
+        {
+          "start": 47.28,
+          "end": 52.16,
+          "text": "I think about my own breakfast, which is usually toast and a bit of panic about email, and"
+        },
+        {
+          "start": 52.16,
+          "end": 54.8,
+          "text": "I cannot imagine looking up and seeing that."
+        },
+        {
+          "start": 54.8,
+          "end": 55.8,
+          "text": "Right."
+        },
+        {
+          "start": 55.8,
+          "end": 59.96,
+          "text": "And remember how far away he was, 60 kilometers is roughly the distance from one city to the"
+        },
+        {
+          "start": 59.96,
+          "end": 60.96,
+          "text": "next."
+        },
+        {
+          "start": 60.96,
+          "end": 64.0,
+          "text": "Whatever happened, it was so bright and so hot that he felt it on his skin from that"
+        },
+        {
+          "start": 64.0,
+          "end": 65.5,
+          "text": "distance."
+        },
+        {
+          "start": 65.5,
+          "end": 67.8,
+          "text": "He describes the heat, doesn't he?"
+        },
+        {
+          "start": 67.8,
+          "end": 68.8,
+          "text": "He does."
+        },
+        {
+          "start": 68.8,
+          "end": 73.36,
+          "text": "His words were, the heat was so strong that my shirt almost burned, he said he wanted"
+        },
+        {
+          "start": 73.36,
+          "end": 78.12,
+          "text": "to tear it off and then the shock wave arrived and threw him off his chair."
+        },
+        {
+          "start": 78.12,
+          "end": 81.48,
+          "text": "So first the light, then the heat, then the blast."
+        },
+        {
+          "start": 81.48,
+          "end": 86.54,
+          "text": "That order matters because light travels instantly, heat comes with it, and the pressure wave"
+        },
+        {
+          "start": 86.54,
+          "end": 89.2,
+          "text": "takes time to cross the distance."
+        },
+        {
+          "start": 89.2,
+          "end": 91.2,
+          "text": "He was describing physics without knowing it."
+        }
+      ]
+    },
+    {
+      "path": "scripts/tts_bakeoff/out/qwen/chunk_003.wav",
+      "sha256": "8bdfb0d757488ee40a31010cca0aef06c92e60b6050a2c33998e482fadf9eefa",
+      "text": "Go on, you clearly want to list them. I really do. A tiny black hole passing through the earth. A chunk of antimatter. A natural gas eruption from under the forest. And inevitably, a crashed alien spacecraft, which turns up in Soviet science fiction from the 1940s onwards. And none of those survive contact with the evidence. A black hole should have left an exit event on the other side of the planet, and nobody saw one. Antimatter would leave a radiation signature that isn't there. Fair, though I will point out that the alien theory is still very popular on the internet. Many things are very popular on the internet. Touss\u00e9, let's talk about the energy because the numbers here are genuinely frightening. Estimates vary, but most lands somewhere between 10 and 15 megatons of TNT for comparison. The bomb dropped on Hiroshima in 1945 was about 15 kilotons, so Tunguska was something like a thousand times larger. a thousand times. And it happened over one of the emptiest places on earth. If the same object had arrived a few hours later, the rotation of the planet would have put a European capital underneath it. That claim gets repeated a lot, and I'd be careful with it. It depends on the exact path and the uncertainty is large. What we can say is that an event of this size over a city would have been a catastrophe. Okay, I'll take the correction. It is still the reason people care about Tunguska today, though. is. Tunguska is the largest impact event in recorded history, and it is the reference point every time someone asks how often an object like that hits us. The usual answer is somewhere between once every few hundred years and once every thousand or so.",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.0,
+          "text": "Go on, you clearly want to list them."
+        },
+        {
+          "start": 2.0,
+          "end": 6.0,
+          "text": "I really do. A tiny black hole passing through the earth."
+        },
+        {
+          "start": 6.0,
+          "end": 10.0,
+          "text": "A chunk of antimatter. A natural gas eruption from under the forest."
+        },
+        {
+          "start": 10.0,
+          "end": 17.0,
+          "text": "And inevitably, a crashed alien spacecraft, which turns up in Soviet science fiction from the 1940s onwards."
+        },
+        {
+          "start": 17.0,
+          "end": 20.0,
+          "text": "And none of those survive contact with the evidence."
+        },
+        {
+          "start": 20.0,
+          "end": 25.0,
+          "text": "A black hole should have left an exit event on the other side of the planet, and nobody saw one."
+        },
+        {
+          "start": 25.0,
+          "end": 29.0,
+          "text": "Antimatter would leave a radiation signature that isn't there."
+        },
+        {
+          "start": 29.0,
+          "end": 35.2,
+          "text": "Fair, though I will point out that the alien theory is still very popular on the internet."
+        },
+        {
+          "start": 35.2,
+          "end": 38.28,
+          "text": "Many things are very popular on the internet."
+        },
+        {
+          "start": 38.28,
+          "end": 44.48,
+          "text": "Touss\u00e9, let's talk about the energy because the numbers here are genuinely frightening."
+        },
+        {
+          "start": 44.48,
+          "end": 49.84,
+          "text": "Estimates vary, but most lands somewhere between 10 and 15 megatons of TNT for comparison."
+        },
+        {
+          "start": 49.84,
+          "end": 55.24,
+          "text": "The bomb dropped on Hiroshima in 1945 was about 15 kilotons, so Tunguska was something"
+        },
+        {
+          "start": 55.24,
+          "end": 57.4,
+          "text": "like a thousand times larger."
+        },
+        {
+          "start": 57.4,
+          "end": 62.68,
+          "text": "a thousand times. And it happened over one of the emptiest places on earth. If the same"
+        },
+        {
+          "start": 62.68,
+          "end": 67.6,
+          "text": "object had arrived a few hours later, the rotation of the planet would have put a European"
+        },
+        {
+          "start": 67.6,
+          "end": 69.6,
+          "text": "capital underneath it."
+        },
+        {
+          "start": 69.6,
+          "end": 73.68,
+          "text": "That claim gets repeated a lot, and I'd be careful with it. It depends on the exact"
+        },
+        {
+          "start": 73.68,
+          "end": 78.32,
+          "text": "path and the uncertainty is large. What we can say is that an event of this size over"
+        },
+        {
+          "start": 78.32,
+          "end": 80.4,
+          "text": "a city would have been a catastrophe."
+        },
+        {
+          "start": 80.4,
+          "end": 85.2,
+          "text": "Okay, I'll take the correction. It is still the reason people care about Tunguska today,"
+        },
+        {
+          "start": 85.2,
+          "end": 86.2,
+          "text": "though."
+        },
+        {
+          "start": 86.2,
+          "end": 90.52,
+          "text": "is. Tunguska is the largest impact event in recorded history, and it is the reference"
+        },
+        {
+          "start": 90.52,
+          "end": 95.12,
+          "text": "point every time someone asks how often an object like that hits us. The usual answer"
+        },
+        {
+          "start": 95.12,
+          "end": 98.76,
+          "text": "is somewhere between once every few hundred years and once every thousand or so."
+        }
+      ]
+    }
+  ]
+}

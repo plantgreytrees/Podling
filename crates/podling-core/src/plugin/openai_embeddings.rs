@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use super::embedding::EmbeddingProvider;
 use super::http::{Transport, TransportConfig, config_error};
+use super::ollama::OllamaUnload;
 use crate::error::{ProviderFailure, Result};
 
 /// Texts per request. Keeps each body well under the response cap (64
@@ -30,6 +31,8 @@ pub const PLUGIN: &str = "open_ai_compat_embeddings";
 pub struct OpenAiEmbeddings {
     transport: Transport,
     model: String,
+    /// Set by `unload_after = true`.
+    unload: Option<OllamaUnload>,
 }
 
 impl OpenAiEmbeddings {
@@ -48,6 +51,7 @@ impl OpenAiEmbeddings {
             model,
             api_key_env,
             timeout_secs,
+            unload_after,
         } = config
         else {
             return Err(config_error(
@@ -62,20 +66,36 @@ impl OpenAiEmbeddings {
                 api_key_env: api_key_env.as_deref(),
                 timeout_secs: *timeout_secs,
             },
-            env,
+            &env,
         )?;
         if model.trim().is_empty() {
             return Err(config_error("embedding.model must not be empty"));
         }
+        let unload = unload_after
+            .then(|| {
+                OllamaUnload::new(
+                    "embedding",
+                    PLUGIN,
+                    base_url,
+                    model,
+                    api_key_env.as_deref(),
+                    &env,
+                )
+            })
+            .transpose()?;
         Ok(Self {
             transport,
             model: model.clone(),
+            unload,
         })
     }
 
     /// Base delay before the first retry; tests set it to nearly nothing.
     pub fn with_retry_backoff(mut self, backoff: Duration) -> Self {
         self.transport.set_retry_backoff(backoff);
+        if let Some(unload) = &mut self.unload {
+            unload.set_retry_backoff(backoff);
+        }
         self
     }
 
@@ -123,6 +143,10 @@ impl EmbeddingProvider for OpenAiEmbeddings {
             vectors.extend(self.embed_batch(batch)?);
         }
         Ok(vectors)
+    }
+
+    fn release(&self) -> Result<()> {
+        self.unload.as_ref().map_or(Ok(()), OllamaUnload::release)
     }
 }
 
@@ -178,6 +202,7 @@ mod tests {
             model: model.into(),
             api_key_env: Some("K".into()),
             timeout_secs: None,
+            unload_after: false,
         }
     }
 

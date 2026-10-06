@@ -22,7 +22,11 @@ const STAGES: [&str; 7] = [
 ];
 
 /// The stages that run only with `[embedding]` and `[nli]` configured.
-const GROUNDING_STAGES: [&str; 2] = ["cluster_claims", "score_stances"];
+const GROUNDING_STAGES: [&str; 3] = ["ground_claims", "cluster_claims", "score_stances"];
+
+/// Runs once per chunk with `[tts]` configured, as the example has.
+const SYNTH_STAGE: &str = "synthesize_chunk";
+const TRANSCRIBE_STAGE: &str = "transcribe_chunk";
 
 fn example() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tunguska/episode.toml")
@@ -41,7 +45,10 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
         .filter_map(|line| {
             let mut cols = line.split_whitespace();
             let (id, cache) = (cols.next()?, cols.next()?);
-            (STAGES.contains(&id) || GROUNDING_STAGES.contains(&id))
+            (STAGES.contains(&id)
+                || GROUNDING_STAGES.contains(&id)
+                || id == SYNTH_STAGE
+                || id == TRANSCRIBE_STAGE)
                 .then(|| (id.to_owned(), cache.to_owned()))
         })
         .collect()
@@ -53,25 +60,52 @@ fn every_example_episode_parses() {
     let mut seen = 0;
     for entry in fs::read_dir(&examples).unwrap() {
         let dir = entry.unwrap().path();
-        for name in ["episode.toml", "episode-ollama.toml"] {
+        for name in ["episode.toml", "episode-ollama.toml", "episode-tts.toml"] {
             let path = dir.join(name);
+            // Every example has the offline and the Ollama episode; only some
+            // have a TTS one.
+            if name == "episode-tts.toml" && !path.exists() {
+                continue;
+            }
             let text =
                 fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
             let spec: podling_types::EpisodeSpec =
                 toml::from_str(&text).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
-            // The Ollama episode shows the grounding stages; the offline one
-            // stays without them, so it needs no downloads.
+            // The local-model episodes show the grounding stages; the offline
+            // one stays without them, so it needs no downloads.
             assert_eq!(
                 spec.embedding.is_some() && spec.nli.is_some(),
-                name == "episode-ollama.toml",
+                name != "episode.toml",
                 "{}",
                 path.display()
             );
+            podling_core::plugin::check_audio(&spec)
+                .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+            // Every voice is CC0 or CC-BY, and the voices README credits each
+            // recorded clip.
+            if !spec.cast.is_empty() {
+                let credits = fs::read_to_string(dir.join("voices/README.md")).unwrap();
+                for member in &spec.cast {
+                    let voice = &member.voice;
+                    assert!(
+                        ["CC0-1.0", "CC-BY-4.0"].contains(&voice.licence()),
+                        "{}: {}",
+                        path.display(),
+                        voice.licence()
+                    );
+                    let file = voice.reference().file_name().unwrap().to_str().unwrap();
+                    assert!(
+                        credits.contains(&format!("`{file}`")),
+                        "{}: {file}",
+                        path.display()
+                    );
+                }
+            }
             seen += 1;
         }
     }
-    // Tunguska and Titanic, two episodes each.
-    assert!(seen >= 4, "{seen}");
+    // Tunguska's three episodes and Titanic's two.
+    assert!(seen >= 5, "{seen}");
 }
 
 #[test]
@@ -103,13 +137,34 @@ fn second_run_of_the_example_is_all_cache_hits() {
             .success()
     };
 
-    let first = stage_rows(&run().get_output().stdout);
-    assert_eq!(first.len(), STAGES.len());
+    let first = run();
+    let stdout = String::from_utf8_lossy(&first.get_output().stdout).into_owned();
+    let first = stage_rows(stdout.as_bytes());
+    let chunks = first
+        .iter()
+        .filter(|(id, _)| id == TRANSCRIBE_STAGE)
+        .count();
+    assert!(chunks > 0, "the example has [tts]: {stdout}");
+    // Each chunk is synthesised, then transcribed to check it. The fake
+    // script's one "mm-hm" over another speaker's turn is then synthesised
+    // on its own, and not transcribed.
+    let synthesised = first.iter().filter(|(id, _)| id == SYNTH_STAGE).count();
+    assert_eq!(synthesised, chunks + 1, "{first:?}");
+    assert_eq!(first.len(), STAGES.len() + 2 * chunks + 1);
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
+    let wav = out.join("episode.wav");
+    assert!(
+        stdout.contains(&format!("episode audio: {}", wav.display())),
+        "{stdout}"
+    );
+    assert!(wav.is_file());
 
     let second = stage_rows(&run().get_output().stdout);
     let expected: Vec<_> = STAGES
         .iter()
+        .copied()
+        .chain(std::iter::repeat_n([SYNTH_STAGE, TRANSCRIBE_STAGE], chunks).flatten())
+        .chain([SYNTH_STAGE])
         .map(|s| (s.to_string(), "hit".to_string()))
         .collect();
     assert_eq!(second, expected);
@@ -119,13 +174,19 @@ fn second_run_of_the_example_is_all_cache_hits() {
         .args(["cache", "stats"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("7 entries"));
+        .stdout(
+            predicate::str::starts_with(format!("{} entries,", STAGES.len() + 2 * chunks + 1)).and(
+                predicate::str::contains(format!("; {} audio blobs", chunks + 1)),
+            ),
+        );
     podling(&cache).args(["cache", "clear"]).assert().success();
     podling(&cache)
         .args(["cache", "stats"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("0 entries"));
+        .stdout(predicate::str::starts_with(
+            "0 entries, 0 bytes; 0 audio blobs",
+        ));
 }
 
 #[test]
@@ -164,6 +225,7 @@ fn schema_export_writes_one_parseable_file_per_kind() {
         names,
         [
             "analysis",
+            "audio",
             "chunks",
             "claims",
             "documents",
@@ -514,6 +576,7 @@ fn a_grounded_run_caches_the_new_stages_too() {
             "ingest",
             "chunk",
             "extract_claims",
+            "ground_claims",
             "cluster_claims",
             "score_stances",
             "ledger",
@@ -524,7 +587,7 @@ fn a_grounded_run_caches_the_new_stages_too() {
     );
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
     let second = run();
-    assert_eq!(second.len(), 9);
+    assert_eq!(second.len(), first.len());
     assert!(second.iter().all(|(_, c)| c == "hit"), "{second:?}");
 }
 

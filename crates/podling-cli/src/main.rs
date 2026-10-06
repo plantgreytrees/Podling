@@ -42,6 +42,11 @@ enum Command {
         /// Run every stage without reading or writing the cache.
         #[arg(long)]
         no_cache: bool,
+
+        /// The TTS worker profiles; defaults to
+        /// `~/.config/podling/sidecars.toml`. Never read from the episode.
+        #[arg(long)]
+        sidecars: Option<PathBuf>,
     },
 
     /// Inspect or empty the stage cache.
@@ -76,10 +81,12 @@ fn main() -> ExitCode {
             episode,
             out,
             no_cache,
+            sidecars,
         } => commands::run(
             &episode,
             &out,
             (!no_cache).then_some(cli.cache_dir.as_path()),
+            sidecars.as_deref(),
         ),
         Command::Cache(CacheCommand::Stats) => commands::cache_stats(&cli.cache_dir),
         Command::Cache(CacheCommand::Clear) => commands::cache_clear(&cli.cache_dir),
