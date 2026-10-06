@@ -3,5 +3,10 @@
     "commands": {
       "Cargo.toml": "cargo test --quiet"
     }
+  },
+  "languages": {
+    "rust": {
+      "format": ["rustfmt --edition 2024 {file}"]
+    }
   }
 }
