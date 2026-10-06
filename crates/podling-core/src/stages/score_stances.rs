@@ -72,7 +72,9 @@ impl Stage for ScoreStances<'_> {
     // before it, so a contradiction told by pronoun isn't refused.
     // 6: the pronoun may sit anywhere in the sentence ("In 1931 he got
     // there.", "His arrival came in 1931."), not only first.
-    const VERSION: u32 = 6;
+    // 7: a number-against-number contradiction must also hold with claim and
+    // premise swapped (`StanceEvidence::reverse_contradiction`).
+    const VERSION: u32 = 7;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -143,18 +145,59 @@ impl Stage for ScoreStances<'_> {
             })
             .collect();
         let scores = score_checked(self.nli, Self::ID, &pairs)?;
+        let mut judgements: Vec<Judged> = candidates
+            .iter()
+            .zip(&scores)
+            .map(|(candidate, score)| Judged {
+                window: candidate.window,
+                similarity: candidate.similarity,
+                entailment: PerMille::from_probability(score.entailment),
+                contradiction: PerMille::from_probability(score.contradiction),
+                reverse_contradiction: None,
+            })
+            .collect();
+
+        // A number-against-number contradiction must also hold the other way
+        // round, the claim as premise against each of the window's numbered
+        // sentences. Only candidates that would contradict if it did are
+        // scored, again in one call. Asking `decide` with the best possible
+        // reverse score keeps the rule in one place.
+        let mut reverse_pairs: Vec<NliPair<'_>> = Vec::new();
+        let mut reverse_of: Vec<(usize, usize)> = Vec::new(); // (judgement, pair count)
+        for (j, (candidate, judged)) in candidates.iter().zip(&judgements).enumerate() {
+            let claim = input.claims[candidate.claim].text();
+            let premise = windows[candidate.window].text;
+            let hypotheses = reverse_hypotheses(premise);
+            let would_contradict = Judged {
+                reverse_contradiction: Some(PerMille::from_probability(1.0)),
+                ..*judged
+            }
+            .stance(claim, premise)
+                == Some(Stance::Contradicts);
+            if numbers(claim).is_empty() || hypotheses.is_empty() || !would_contradict {
+                continue;
+            }
+            reverse_of.push((j, hypotheses.len()));
+            reverse_pairs.extend(hypotheses.into_iter().map(|hypothesis| NliPair {
+                premise: claim,
+                hypothesis,
+            }));
+        }
+        let reverse_scores = score_checked(self.nli, Self::ID, &reverse_pairs)?;
+        let mut next = reverse_scores.iter();
+        for (j, count) in reverse_of {
+            judgements[j].reverse_contradiction = next
+                .by_ref()
+                .take(count)
+                .map(|s| PerMille::from_probability(s.contradiction))
+                .max();
+        }
 
         // Keep, per claim and chunk, the one window that decides: the best
         // entailment if any window supports the claim, otherwise the best
         // qualifying contradiction. A chunk is never both for and against.
         let mut decided: BTreeMap<(usize, usize), (Stance, Judged)> = BTreeMap::new();
-        for (candidate, score) in candidates.iter().zip(&scores) {
-            let judged = Judged {
-                window: candidate.window,
-                similarity: candidate.similarity,
-                entailment: PerMille::from_probability(score.entailment),
-                contradiction: PerMille::from_probability(score.contradiction),
-            };
+        for (candidate, judged) in candidates.iter().zip(judgements) {
             let premise = windows[candidate.window].text;
             let Some(stance) = judged.stance(input.claims[candidate.claim].text(), premise) else {
                 continue;
@@ -201,6 +244,7 @@ impl Stage for ScoreStances<'_> {
             claims = claims.len(),
             windows = windows.len(),
             pairs = pairs.len(),
+            reverse_pairs = reverse_pairs.len(),
             supports,
             contradicts,
             "stances scored"
@@ -215,11 +259,13 @@ struct Candidate {
     similarity: PerMille,
 }
 
+#[derive(Clone, Copy)]
 struct Judged {
     window: usize,
     similarity: PerMille,
     entailment: PerMille,
     contradiction: PerMille,
+    reverse_contradiction: Option<PerMille>,
 }
 
 /// Everything one premise window's stance on a claim is decided from: the two
@@ -234,6 +280,10 @@ pub struct StanceEvidence<'a> {
     pub similarity: PerMille,
     pub entailment: PerMille,
     pub contradiction: PerMille,
+    /// The highest contradiction of the claim, read as the premise, against
+    /// each of [`reverse_hypotheses`]`(premise)`; `None` when not scored.
+    /// Only a number-against-number contradiction needs it.
+    pub reverse_contradiction: Option<PerMille>,
 }
 
 /// The stance a premise establishes on a claim, if any. Compared on the
@@ -244,11 +294,41 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
     } else if evidence.contradiction.get() >= CONTRADICT_PM
         && evidence.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
         && number_is_about_the_subject(evidence.claim, evidence.premise)
+        && holds_both_ways(evidence)
     {
         Some(Stance::Contradicts)
     } else {
         None
     }
+}
+
+/// When the claim and the premise both state a number, whether the
+/// contradiction also holds read the other way round. NLI models over-call a
+/// differing count that only shares a topic one way: "The vessel was provided
+/// with lifeboats for 1,176 persons." is "contradicted" by "From these boats
+/// he took on board 712 persons" (0.997), but the claim doesn't contradict
+/// that sentence (0.010), while "706 persons were saved." does both ways
+/// (0.997 / 0.995). The cost: a count the model reads as a subset ("8 million
+/// fir trunks" of "80 million trees") is no longer a contradiction.
+fn holds_both_ways(evidence: &StanceEvidence<'_>) -> bool {
+    if numbers(evidence.claim).is_empty() || numbers(evidence.premise).is_empty() {
+        return true;
+    }
+    evidence
+        .reverse_contradiction
+        .is_some_and(|r| r.get() >= CONTRADICT_PM)
+}
+
+/// The sentences of `premise` that hold a number: the hypotheses the claim is
+/// read against for [`StanceEvidence::reverse_contradiction`]. Sentence by
+/// sentence, not the whole window, so the claim is judged against the
+/// numbered statement rather than the window's other sentences.
+pub fn reverse_hypotheses(premise: &str) -> Vec<&str> {
+    sentences(premise)
+        .into_iter()
+        .map(|range| &premise[range])
+        .filter(|sentence| !numbers(sentence).is_empty())
+        .collect()
 }
 
 /// When the claim and the premise both state a number, false if the premise
@@ -315,6 +395,7 @@ impl Judged {
             similarity: self.similarity,
             entailment: self.entailment,
             contradiction: self.contradiction,
+            reverse_contradiction: self.reverse_contradiction,
         })
     }
 }
@@ -546,6 +627,7 @@ mod tests {
             similarity: PerMille::from_probability(0.7),
             entailment: PerMille::from_probability(0.0),
             contradiction: PerMille::from_probability(0.99),
+            reverse_contradiction: Some(PerMille::from_probability(0.99)),
         };
         // The window's only year dates the expedition, not the explosion.
         let other_subject =
@@ -570,6 +652,7 @@ mod tests {
             similarity: PerMille::from_probability(0.7),
             entailment: PerMille::from_probability(0.0),
             contradiction: PerMille::from_probability(0.99),
+            reverse_contradiction: Some(PerMille::from_probability(0.99)),
         };
         assert_eq!(decide(&evidence), Some(Stance::Contradicts));
     }
@@ -582,6 +665,7 @@ mod tests {
             similarity: PerMille::from_probability(0.8),
             entailment: PerMille::from_probability(0.0),
             contradiction: PerMille::from_probability(0.99),
+            reverse_contradiction: Some(PerMille::from_probability(0.99)),
         };
         let pronoun = "Leonid Kulik led the first expedition to the site. He got there in 1931.";
         assert_eq!(decide(&evidence(pronoun)), Some(Stance::Contradicts));
@@ -612,6 +696,7 @@ mod tests {
             similarity: PerMille::from_probability(0.7),
             entailment: PerMille::from_probability(0.0),
             contradiction: PerMille::from_probability(0.99),
+            reverse_contradiction: Some(PerMille::from_probability(0.99)),
         };
         assert_eq!(decide(&evidence), Some(Stance::Contradicts));
     }
@@ -665,6 +750,144 @@ mod tests {
         assert!(contradicted(
             "The great explosion happened. The explosion happened in 1927."
         ));
+    }
+
+    #[test]
+    fn a_numeric_contradiction_must_hold_both_ways() {
+        let evidence = |claim, reverse| StanceEvidence {
+            claim,
+            premise: "From these boats he took on board 712 persons, one of them died shortly \
+                      afterwards.",
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.997),
+            reverse_contradiction: reverse,
+        };
+        let pm = |p| Some(PerMille::from_probability(p));
+        // The lifeboat capacity only shares a topic with the count saved:
+        // the model calls it a contradiction one way only.
+        let capacity = "The vessel was provided with lifeboats for 1,176 persons.";
+        assert_eq!(decide(&evidence(capacity, pm(0.010))), None);
+        // Not scored the other way: refused, never assumed.
+        assert_eq!(decide(&evidence(capacity, None)), None);
+        // Just under the threshold the other way is not enough.
+        assert_eq!(decide(&evidence(capacity, pm(0.949))), None);
+        // A real disagreement on the count holds both ways.
+        let saved = "706 persons were saved.";
+        assert_eq!(
+            decide(&evidence(saved, pm(0.995))),
+            Some(Stance::Contradicts)
+        );
+        assert_eq!(
+            decide(&evidence(saved, pm(0.95))),
+            Some(Stance::Contradicts)
+        );
+    }
+
+    #[test]
+    fn a_contradiction_without_numbers_ignores_the_reverse_score() {
+        let evidence = |claim, premise| StanceEvidence {
+            claim,
+            premise,
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.99),
+            reverse_contradiction: None,
+        };
+        // Neither text holds a number.
+        assert_eq!(
+            decide(&evidence(
+                "No impact crater was found at the site.",
+                "Kulik found a large crater at the site."
+            )),
+            Some(Stance::Contradicts)
+        );
+        // Only the premise holds one.
+        assert_eq!(
+            decide(&evidence(
+                "No impact crater was found at the site.",
+                "Kulik found a crater at the site in 1927."
+            )),
+            Some(Stance::Contradicts)
+        );
+    }
+
+    #[test]
+    fn reverse_hypotheses_are_the_numbered_sentences() {
+        assert_eq!(
+            reverse_hypotheses("The ship sank. 706 persons were saved. Rescue came at dawn."),
+            vec!["706 persons were saved."]
+        );
+        assert!(reverse_hypotheses("The ship sank.").is_empty());
+    }
+
+    #[test]
+    fn the_stage_needs_the_contradiction_both_ways() {
+        const CAPACITY: &str = "The boats took on board 1176 persons.";
+        const TAKEN: &str = "The boats took on board 712 persons.";
+        /// Contradiction 1.0 whenever CAPACITY is the hypothesis, and `back`
+        /// for every other pair: with `back` 0 the contradiction is one-way.
+        struct OneWay {
+            back: f32,
+            pairs: std::cell::Cell<usize>,
+        }
+        impl NliProvider for OneWay {
+            fn id(&self) -> &str {
+                "one-way"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+                self.pairs.set(self.pairs.get() + pairs.len());
+                Ok(pairs
+                    .iter()
+                    .map(|p| {
+                        let c = if p.hypothesis == CAPACITY {
+                            1.0
+                        } else {
+                            self.back
+                        };
+                        NliScores {
+                            entailment: 0.0,
+                            neutral: 1.0 - c,
+                            contradiction: c,
+                        }
+                    })
+                    .collect())
+            }
+        }
+        // Similar enough that only the reverse check can refuse it.
+        let v = FakeEmbedding.embed(&[CAPACITY, TAKEN]).unwrap();
+        let similarity = PerMille::from_probability(cosine(&v[0], &v[1]));
+        assert!(
+            similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM,
+            "{similarity:?}"
+        );
+        let input = input(&[("a", CAPACITY), ("b", TAKEN)]);
+
+        let one_way = OneWay {
+            back: 0.0,
+            pairs: Default::default(),
+        };
+        let claims = run(&one_way, &input);
+        assert_eq!(claims, input.claims, "a one-way contradiction adds nothing");
+        // Two forward pairs, then one reverse pair for CAPACITY, the only
+        // forward contradiction.
+        assert_eq!(one_way.pairs.get(), 3);
+
+        let two_way = OneWay {
+            back: 1.0,
+            pairs: Default::default(),
+        };
+        let claims = run(&two_way, &input);
+        for text in [CAPACITY, TAKEN] {
+            let (status, _) = status_of(&claims, text);
+            assert!(
+                matches!(status, ClaimStatus::Contested { .. }),
+                "{text}: {status:?}"
+            );
+        }
     }
 
     #[test]
