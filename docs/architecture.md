@@ -44,9 +44,9 @@ needs concurrency, such as parallel TTS or streaming.
  ledger ─────────► Ledger          classify(): status from distinct independence groups
  adjudicate ─────► Verdicts        one LLM call per Contested claim: which side the sources
                                    favour, or Unresolved; none when nothing is Contested
- script ─────────► Script          LLM sees each claim's id, text, status and verdict, and numbered
-                                   sentences; returns QuoteRef { chunk, sentence }
-                                   and writes {{quote:N}} in the turn text where the quote goes;
+ script ─────────► Script          LLM sees each claim's id, text, status and verdict, and
+                                   numbered sources of numbered sentences; returns
+                                   QuoteRef { source, sentence } and writes {{quote:N}} in the turn text where the quote goes;
                                    Quote::from_document copies the words and the stage fills the
                                    placeholder in; every citation must name a claim in the ledger
  analyse ────────► AnalysisReport  opt-in analysers, e.g. quote_verifier
@@ -77,10 +77,11 @@ as before Phase 5 apart from `schema_version`.
 
 Provider output is never trusted. The following are `InvalidProviderOutput` errors:
 - malformed JSON;
-- a quote that names an unknown chunk or a sentence the chunk doesn't have
-  (or that doesn't resolve in its document);
-- a citation of a claim id that isn't in the ledger (a chunk id cited as a claim
-  is named as one, so the retry can correct it);
+- a quote that names a source number past the end of `sources` or a sentence
+  the source doesn't have (or that doesn't resolve in its document);
+- a citation of a claim id that isn't in the ledger;
+- a script in which no turn cites a Contested claim that has a verdict (the
+  message names the claim, so the retry can add it);
 - a turn whose text has a `{{quote:N}}` with no quote reference N, a quote
   reference with no `{{quote:N}}`, or a malformed placeholder;
 - a turn whose text puts three or more words in quotation marks itself: the
@@ -230,9 +231,11 @@ LLM task replies with an object (claim extraction returns `{ "claims": [...] }`)
 | TLS | rustls with the bundled web PKI roots, no OpenSSL. The added licences are permissive (Apache-2.0/MIT/ISC/BSD-3/CDLA-Permissive-2.0). |
 
 **Sentence-addressed quotes.** For the script, each chunk is shown to the model as
-numbered sentences (`text::sentences`, counting from 0), and the model answers with
-`QuoteRef { chunk, sentence }`. Models count sentences far more reliably than bytes.
-The stage looks the chunk up, takes the sentence's span, and calls
+a numbered source (`source`, its position in the chunk list) of numbered sentences
+(`text::sentences`), both counting from 0, and the model answers with
+`QuoteRef { source, sentence }`. Models count sentences far more reliably than bytes.
+The model sees no chunk id: llama3.1:8b, shown chunk ids, cited one as a claim.
+The stage takes the chunk at that position, takes the sentence's span, and calls
 `Quote::from_document`. The invariant is unchanged: the model points and the code copies.
 
 The same holds for the spoken text. In a turn's `text` the model writes `{{quote:N}}`
@@ -408,7 +411,10 @@ per Contested claim to `verdicts.json`:
 comes only from `classify()`, and a claim the sources favour is still Contested.
 
 **Cost bound.** One request per Contested claim, plus at most one retry when the
-reply is rejected. With no Contested claims (every run without `[nli]`) there is no
+reply is rejected. Each reply is capped at `MAX_VERDICT_TOKENS` (512, or the
+episode's `max_output_tokens` if lower) through `CompletionRequest::max_tokens`:
+llama3.1:8b in JSON mode once kept writing past 13,000 tokens, and a cut-off reply
+takes the usual retry and fallback. With no Contested claims (every run without `[nli]`) there is no
 request at all. Only the Contested claims and their passages are in the cache key,
 so editing anything else leaves the verdicts cached.
 
@@ -423,7 +429,9 @@ so it is never cached as a verdict.
 `verdict: { favours, explanation }`, without the evidence references (whose chunk
 ids a small model once mistook for claim ids). The prompt says to give both
 accounts, say which side the sources favour or that it is unresolved, explain
-why, and never state either side as settled.
+why, and never state either side as settled. Every judged claim must be cited by
+some turn; a script that leaves one out is rejected naming it (a live script
+once dropped both of its judged claims).
 
 ## Episode audio
 

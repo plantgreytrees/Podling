@@ -106,6 +106,7 @@ impl Stage for ExtractClaims<'_> {
                 task: LlmTask::ExtractClaims,
                 instructions: INSTRUCTIONS.to_owned(),
                 input: json!({ "chunk_text": chunk.text() }),
+                max_tokens: None,
             };
             let names: Vec<&str> = input
                 .titles

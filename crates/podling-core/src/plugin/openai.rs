@@ -123,7 +123,12 @@ impl OpenAiCompat {
         if let Some(t) = self.temperature {
             body["temperature"] = json!(t);
         }
-        if let Some(n) = self.max_output_tokens {
+        // The lower of the episode's cap and the request's, whichever are set.
+        let cap = [self.max_output_tokens, request.max_tokens]
+            .into_iter()
+            .flatten()
+            .min();
+        if let Some(n) = cap {
             body["max_tokens"] = json!(n);
         }
         body
@@ -333,6 +338,34 @@ mod tests {
             *timeout_secs = Some(0);
         }
         assert!(OpenAiCompat::from_config_with_env(&cfg, no_env).is_err());
+    }
+
+    #[test]
+    fn the_lower_of_the_episode_and_request_token_caps_is_sent() {
+        use crate::plugin::LlmTask;
+        let with_cap = |episode: Option<u32>| {
+            let mut cfg = config("http://h/v1", None);
+            if let LlmConfig::OpenAiCompat {
+                max_output_tokens, ..
+            } = &mut cfg
+            {
+                *max_output_tokens = episode;
+            }
+            OpenAiCompat::from_config_with_env(&cfg, no_env).unwrap()
+        };
+        let request = |cap: Option<u32>| CompletionRequest {
+            task: LlmTask::AdjudicateClaim,
+            instructions: String::new(),
+            input: json!({}),
+            max_tokens: cap,
+        };
+        let sent =
+            |episode, req| with_cap(episode).request_body(&request(req))["max_tokens"].clone();
+        assert_eq!(sent(Some(4096), Some(512)), json!(512));
+        assert_eq!(sent(Some(256), Some(512)), json!(256));
+        assert_eq!(sent(None, Some(512)), json!(512));
+        assert_eq!(sent(Some(4096), None), json!(4096));
+        assert_eq!(sent(None, None), Value::Null);
     }
 
     #[test]

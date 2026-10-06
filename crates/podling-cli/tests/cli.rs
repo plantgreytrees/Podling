@@ -345,7 +345,7 @@ fn tiny_model(request: &Value) -> (u16, String) {
             "text": "The first source says: {{quote:0}}",
             "emotion": "neutral",
             "citations": [claim],
-            "quotes": [{ "chunk": source["chunk"], "sentence": first["sentence"] }],
+            "quotes": [{ "source": source["source"], "sentence": first["sentence"] }],
         }],
     }))
 }

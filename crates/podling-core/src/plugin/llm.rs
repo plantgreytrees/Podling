@@ -1,7 +1,7 @@
 //! Text-generation providers and the output shapes they must produce.
 
 use podling_types::{
-    BeatKind, ChunkId, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Nonverbal, NonverbalAt,
+    BeatKind, ClaimId, ClaimStatus, Emotion, Favours, Ledger, Nonverbal, NonverbalAt,
     NonverbalKind, Pace, Speaker, SpeakerId, Stance, Verdicts,
 };
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,9 @@ use crate::text::sentences;
 ///    as index ranges: llama3.1:8b wrote inclusive ends for exclusive ones.
 /// 7: a Contested claim's ledger entry carries the adjudicator's verdict
 ///    ([`LedgerVerdict`]).
-pub const PROMPT_VERSION: u32 = 7;
+/// 8: script sources are numbered ([`SourceText::source`]) and a quote names
+///    a source number, not a chunk id, which llama3.1:8b cited as a claim.
+pub const PROMPT_VERSION: u32 = 8;
 
 /// Version of the adjudicator's prompt and input shape, in its cache key only.
 /// Kept apart from [`PROMPT_VERSION`] so a change to the adjudicator doesn't
@@ -55,6 +57,11 @@ pub struct CompletionRequest {
     pub task: LlmTask,
     pub instructions: String,
     pub input: Value,
+    /// The most tokens this reply may have, for a task whose answer is small:
+    /// a model stuck repeating itself is cut off instead of running until the
+    /// timeout, and the cut-off reply is rejected like any other bad one. A
+    /// provider with its own `max_output_tokens` uses the lower of the two.
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +178,10 @@ pub struct VerdictDraft {
 /// split into numbered sentences so a quote can be pointed at by number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceText {
-    pub chunk: ChunkId,
+    /// The chunk's position in the request's `sources`, counting from 0. The
+    /// model sees no chunk id: a second kind of hash-shaped id next to the
+    /// claim ids got cited as a claim.
+    pub source: usize,
     /// Title of the chunk's document, for the model's orientation.
     pub title: String,
     pub sentences: Vec<NumberedSentence>,
@@ -236,12 +246,13 @@ impl DraftTurn {
     }
 }
 
-/// The sentence of a chunk that the turn quotes verbatim. The model counts
+/// The sentence of a source that the turn quotes verbatim. The model counts
 /// sentences far more reliably than bytes; the script stage turns this into a
 /// span and copies the words out of the source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuoteRef {
-    pub chunk: ChunkId,
+    /// [`SourceText::source`] of the quoted chunk.
+    pub source: usize,
     /// Counting from 0, as in [`SourceText`].
     pub sentence: usize,
 }
@@ -454,7 +465,7 @@ impl FakeLlm {
         let quote = first_source.and_then(|source| {
             let first = source.sentences.first()?;
             Some(QuoteRef {
-                chunk: source.chunk.clone(),
+                source: source.source,
                 sentence: first.sentence,
             })
         });
@@ -494,7 +505,8 @@ impl LlmProvider for FakeLlm {
         // 6: beats are marked on the turns that begin them.
         // 7: answers `AdjudicateClaim`; a judged claim's turn adds the
         //    verdict's explanation, and quotation marks are dropped from claims.
-        json!({ "provider": "fake", "version": 7 })
+        // 8: quotes name a source number.
+        json!({ "provider": "fake", "version": 8 })
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
@@ -512,13 +524,14 @@ impl LlmProvider for FakeLlm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use podling_types::{Chunk, Claim, Document, SourceRef, TextSpan};
+    use podling_types::Claim;
 
     fn request(task: LlmTask, input: Value) -> CompletionRequest {
         CompletionRequest {
             task,
             instructions: String::new(),
             input,
+            max_tokens: None,
         }
     }
 
@@ -557,17 +570,9 @@ mod tests {
 
     #[test]
     fn write_script_quotes_the_first_sentence_by_reference() {
-        let source = SourceRef {
-            connector: "t".into(),
-            locator: "a".into(),
-            independence_group: "g".into(),
-        };
-        let doc = Document::new(source, "A", "# Title\n\nA flash was seen. Then a boom.");
-        let chunk = Chunk::from_document(&doc, TextSpan::new(9, doc.text().len()).unwrap(), vec![])
-            .unwrap();
         let ledger = Ledger::from_claims([Claim::new("A flash was seen.")]);
         let sources = json!([{
-            "chunk": chunk.id(),
+            "source": 0,
             "title": "A",
             "sentences": [
                 { "sentence": 0, "text": "A flash was seen." },
@@ -587,7 +592,7 @@ mod tests {
         assert_eq!(
             draft.turns[0].quotes,
             vec![QuoteRef {
-                chunk: chunk.id().clone(),
+                source: 0,
                 sentence: 0
             }]
         );

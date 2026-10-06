@@ -269,6 +269,9 @@ Depends on: titanic-example
 - [ ] 5.5 `docs/architecture.md`: update the artifact flow, add an "Adjudicating Contested claims" section (cost bound, fallback, caching, no quoting), the bump rules (ADJUDICATE_PROMPT_VERSION), and drop "next phase" at :166. → accept: docs-curator check; every cited path resolves.
 - [ ] 5.6 README: the artifact list, the stage list and the Titanic example. → accept: matches the code.
 - [ ] 5.7 `docs/handoff.md`: rewrite it for the next goal (NLI entailment in `is_grounded`). → accept: written.
+- [ ] 5.8 Live fix: cap each verdict reply (`CompletionRequest::max_tokens`, `MAX_VERDICT_TOKENS` = 512; the OpenAI-compatible provider sends the lower of it and `max_output_tokens`); `Adjudicate::VERSION` 2→3. Live, llama3.1:8b in JSON mode wrote 13,000+ tokens for one verdict. → accept: tests that the provider sends the lower cap.
+- [ ] 5.9 Live fix: the script request numbers its sources (`SourceText::source`, `QuoteRef { source, sentence }`) instead of showing chunk ids, which llama3.1:8b cited as claims on both attempts. `PROMPT_VERSION` 7→8 (ARCH-SPEECH-16), `WriteScript::VERSION` 11→12, fake 7→8. → accept: a test for an out-of-range source; no-NLI artifact bodies unchanged.
+- [ ] 5.10 Live fix: a script must cite every Contested claim that has a verdict (rule 2, checked by `build_script` with a rejection that names the missing claim), since a live script left both judged claims out. → accept: a unit test that a script missing a judged claim is rejected with its id.
 
 ## Sequencing
 Contracts → stage → script → example → live/docs. Each step needs the types or stage before it. The example needs the script integration to show verdicts.

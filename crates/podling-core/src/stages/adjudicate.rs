@@ -41,6 +41,12 @@ Rules:
 
 Reply with one JSON object: {\"claim\": <the claim's id>, \"favours\": <supporting|contradicting|unresolved>, \"explanation\": \"...\", \"cites\": [<n>]}.";
 
+/// The most tokens a verdict reply may have. A verdict is a few hundred
+/// tokens at most (the explanation is capped at `MAX_EXPLANATION_CHARS`), but
+/// llama3.1:8b in JSON mode once kept writing past 13,000 tokens; cut off, the
+/// reply fails to parse and takes the usual retry and fallback.
+pub const MAX_VERDICT_TOKENS: u32 = 512;
+
 /// The explanation of a verdict written because the model's replies were
 /// rejected.
 pub const FALLBACK_EXPLANATION: &str =
@@ -136,7 +142,8 @@ pub struct Adjudicate<'a> {
 impl Stage for Adjudicate<'_> {
     const ID: &'static str = "adjudicate";
     // 2: a fallback's stored reason is bounded by `reason_excerpt`.
-    const VERSION: u32 = 2;
+    // 3: a reply is capped at `MAX_VERDICT_TOKENS`.
+    const VERSION: u32 = 3;
     type Input = AdjudicateInput;
     type Output = Verdicts;
 
@@ -195,6 +202,7 @@ impl Adjudicate<'_> {
                     })
                     .collect::<Vec<_>>(),
             }),
+            max_tokens: Some(MAX_VERDICT_TOKENS),
         };
         match complete_validated(self.llm, Self::ID, &request, |text| {
             build_verdict(text, claim)

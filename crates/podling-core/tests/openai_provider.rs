@@ -163,6 +163,7 @@ fn request() -> CompletionRequest {
         task: LlmTask::ExtractClaims,
         instructions: "Extract claims.".into(),
         input: json!({ "chunk_text": "Trees fell." }),
+        max_tokens: None,
     }
 }
 

@@ -344,14 +344,14 @@ impl LlmProvider for Replay {
                 let sources: Vec<SourceText> =
                     serde_json::from_value(request.input["sources"].clone()).unwrap();
                 for source in sources.iter().filter(|s| !s.sentences.is_empty()) {
-                    let id = serde_json::to_value(&source.chunk).unwrap();
+                    // The quotes go too: a source number is a JSON number.
                     script = script.replace(
-                        &format!("{{{{chunk:{}}}}}", source.title),
-                        id.as_str().unwrap(),
+                        &format!("\"{{{{source:{}}}}}\"", source.title),
+                        &source.source.to_string(),
                     );
                 }
                 // `{{quote:N}}` is meant to stay: the script stage fills it in.
-                for unfilled in ["{{claim:", "{{chunk:"] {
+                for unfilled in ["{{claim:", "{{source:"] {
                     assert!(
                         !script.contains(unfilled),
                         "unfilled {unfilled} in {script}"
@@ -632,7 +632,7 @@ const NO_NLI_KEYS: [(&str, &str); 7] = [
     ),
     (
         "extract_claims",
-        "727a711896e095971adb1174457ff04755b56c88532557aa3a78cbbd8cf8b93e",
+        "633c1a3b185a4cb9877ace660c3d96702685ed1939a62977d78c941a2eac479e",
     ),
     (
         "ledger",
@@ -640,11 +640,11 @@ const NO_NLI_KEYS: [(&str, &str); 7] = [
     ),
     (
         "adjudicate",
-        "d8ce16014ad27892e6c28ed3a65dac979b974770b8f3efecdcc67a88361b57ed",
+        "63e7aba9e26e90018988bd4112af3bf17b3665b8d4ee3bef2da2eb2836d9479f",
     ),
     (
         "script",
-        "e806be84a057d2ce445a37a81d2a10c96db22101321468e1f72e04de82df082b",
+        "dd7a59a7ea0d20a252f64993d8bfa6f0e07db768e53f45d2027bb44a301bc01a",
     ),
     (
         "analyse",
