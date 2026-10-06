@@ -1,6 +1,6 @@
 ---
 goal: A rejected adjudicator reply leaves a bounded reason in verdicts.json, and a reply cut off at a token cap names the cap that cut it.
-status: IN_PROGRESS
+status: COMPLETE
 coverage:
   correctness: 1.1, 1.2, 2.1, 2.2
   tests: 1.3, 2.1, 2.2, 2.4, 2.5
@@ -48,11 +48,11 @@ Tooling: implementer · gates code-reviewer · checks cargo fmt --check, cargo c
 Source: the second `/craftsman:scrutinise`, isolated, over `1dcb270..93f0d2a` (the live fixes). 0 Critical, 1 Warning, 4 Suggestions; none disputed.
 Tooling: implementer · gates code-reviewer · checks cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings, cargo test --workspace
 
-- [ ] 2.1 (F2, Warning) In `plugin/openai.rs`, compute the effective output cap once, with a helper used by both `request_body` and `complete`. The helper should say whether the episode's `llm.max_output_tokens` or the stage's request cap bound. Then make the `CutOff` message name that cap and its value, e.g. "…cut off at the stage's cap of 512 tokens" or "…cut off at llm.max_output_tokens = 256; raise it". If `docs/architecture.md` quotes the old wording, update it. → accept: two `tests/openai_provider.rs` tests check the message: one where the stage cap binds, one where the episode cap binds. Advice to raise `llm.max_output_tokens` appears only when the episode cap bound.
-- [ ] 2.2 (F3, Suggestion) In `stages/script.rs`, make `quoted_part_hint` match a listed quotation by prefix when the typed echo ends in `…` (it was cut at `MAX_ECHO_CHARS`); keep exact matching otherwise. `PlaceholderError` is unchanged. → accept: a unit test with a quotation longer than `MAX_ECHO_CHARS` gets the `part` hint.
-- [ ] 2.3 (F4, Suggestion) In `plugin/openai.rs`, emit a `tracing::warn!` before returning `CutOff`, with the same fields as the success `info!` (elapsed_ms, attempts, prompt_tokens, completion_tokens). → accept: code-reviewer confirms; the gates pass.
-- [ ] 2.4 (F5, Suggestion) Add a `build_script` test on `lookout()` whose turn quotes `{"source": 0, "sentence": 1, "part": 0}`. → accept: the turn text contains “Iceberg right ahead.” and the quote's span is the inner quotation's span in the chunk.
-- [ ] 2.5 (F6, Suggestion) Add tests with an LLM that cuts off on every call. → accept: `complete_validated` returns `InvalidProviderOutput` containing "after 2 attempts" after exactly 2 calls, and `Adjudicate::run` returns an `Unresolved` fallback verdict, not an error.
+- [x] 2.1 (F2, Warning) In `plugin/openai.rs`, compute the effective output cap once, with a helper used by both `request_body` and `complete`. The helper should say whether the episode's `llm.max_output_tokens` or the stage's request cap bound. Then make the `CutOff` message name that cap and its value, e.g. "…cut off at the stage's cap of 512 tokens" or "…cut off at llm.max_output_tokens = 256; raise it". If `docs/architecture.md` quotes the old wording, update it. → accept: two `tests/openai_provider.rs` tests check the message: one where the stage cap binds, one where the episode cap binds. Advice to raise `llm.max_output_tokens` appears only when the episode cap bound.
+- [x] 2.2 (F3, Suggestion) In `stages/script.rs`, make `quoted_part_hint` match a listed quotation by prefix when the typed echo ends in `…` (it was cut at `MAX_ECHO_CHARS`); keep exact matching otherwise. `PlaceholderError` is unchanged. → accept: a unit test with a quotation longer than `MAX_ECHO_CHARS` gets the `part` hint.
+- [x] 2.3 (F4, Suggestion) In `plugin/openai.rs`, emit a `tracing::warn!` before returning `CutOff`, with the same fields as the success `info!` (elapsed_ms, attempts, prompt_tokens, completion_tokens). → accept: code-reviewer confirms; the gates pass.
+- [x] 2.4 (F5, Suggestion) Add a `build_script` test on `lookout()` whose turn quotes `{"source": 0, "sentence": 1, "part": 0}`. → accept: the turn text contains “Iceberg right ahead.” and the quote's span is the inner quotation's span in the chunk.
+- [x] 2.5 (F6, Suggestion) Add tests with an LLM that cuts off on every call. → accept: `complete_validated` returns `InvalidProviderOutput` containing "after 2 attempts" after exactly 2 calls, and `Adjudicate::run` returns an `Unresolved` fallback verdict, not an error.
 
 Design note, out of scope: no episode setting can raise the per-stage caps (`MAX_VERDICT_TOKENS`, `MAX_CLAIMS_TOKENS`, `MAX_SCRIPT_TOKENS`). A model that counts thinking tokens in `completion_tokens` would hit them. Add an override if such a model is ever used.
 
