@@ -112,7 +112,7 @@ Leave out text normalisation (it does not touch an already spelled-out word) and
 - **Strongest case against.** The evidence is one listener, one named word, and under 3 minutes of live audio. Part of the flatness may come from the script: llama3.1:8b's repetitive "That's a … But what about …?" banter is something no TTS change fixes.
 - **Hidden assumptions, each with a cheap test:**
   - *Qwen mispronounces "kilometres" specifically.* Synthesise "kilometres", "kilometers" and a respelling in isolation and listen.
-  - *Respelling changes Qwen's output.* Compare "Kulik" with "Koolik".
+  - *Respelling changes Qwen's output.* Compare "Kulik" with "Koolik". **Confirmed** by the word test below, for the guest voice.
   - *A designed clip's liveliness survives cloning.* Blind A/B on the same three turns against the LibriTTS-R clip.
   - *How Whisper base.en spells "kilometres".* Run it once on an existing chunk.
 - **Failure modes:**
@@ -131,6 +131,24 @@ Leave out text normalisation (it does not touch an already spelled-out word) and
   - **The smallest slice.** This is what is recommended.
   - **Pick a clip per emotion.** One designed clip per speaker and emotion, chosen by `turn.emotion`. Only after a single designed clip proves livelier.
   - **A new cloning model that takes instructions.** The highest cost, and it re-runs the bake-off.
+
+## Word test (step 0, 2026-10-06)
+`scripts/tts_bakeoff/word_test.py`: 8 sentences × 2 bake-off voices, seed 1234, Qwen3-TTS 1.7B Base (peak 4,386 MiB), then Whisper base.en on the CPU. The clips are in `~/podling-listening/word-test/` (outside the repository), with `whisper.json`.
+
+| Test | Host heard | Guest heard |
+|---|---|---|
+| "kilometres" / "kilometers" / "kill-oh-meeters" / "60 km" | "60 kilometers" for all, except "kilo meters" for the respelling | "60 kilometers" for all four |
+| "Kulik" → "Koolick" | Kulik → Kulik | **Koolik → Kulik** |
+| "Tunguska" → "Toon-goose-kah" | Tunguska → **Tungus Ka** | Tunguska → **Tungus Ka** |
+
+What it shows:
+- **Respelling changes Qwen's output.** The guest's "Kulik" moved from "Koolik" to "Kulik". So the deciding fact holds, and the pronunciation list stays in scope.
+- **Hyphenated respellings split the word** ("Tungus Ka"). Respellings should be single unhyphenated words.
+- **Qwen expands "60 km" itself**, which confirms text normalisation is not needed.
+- **Whisper cannot judge the "kilometres" fault.** It hears every variant as "kilometers", so only a listener can say which variant sounds right.
+- **Whisper writes American spellings** ("kilometers", "center"). A script with "kilometres" and "centre" therefore scores false WER errors today. The scorer needs British/American folding, independently of the pronunciation list.
+
+**Pending, the user's ears:** which of clips 01–04 says "kilometres" correctly in each voice.
 
 ## Disputed
 - *"'kilometres' appears nowhere in the recorded notes, so the named example is not in evidence."* **Softened.** The user named it in conversation after the notes were written (2026-10-06). It is in neither live script (0 matches in `~/podling-listening/{ten,thirty}-minute/script.json`), so it was heard in the bake-off clips, whose fixture spells it out (`scripts/tts_bakeoff/fixtures/tunguska-10min.json:10`). It is direct evidence, but it should be added to the plan's "Live results", as recommendation 1 says.
