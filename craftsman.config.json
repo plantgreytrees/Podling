@@ -1,1 +1,7 @@
-{}
+{
+  "stopGate": {
+    "commands": {
+      "Cargo.toml": "cargo test --quiet"
+    }
+  }
+}
