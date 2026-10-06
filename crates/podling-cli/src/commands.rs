@@ -135,7 +135,8 @@ fn provider_hint(spec: &EpisodeSpec, plugin: &str, kind: ProviderFailure) -> Opt
         ProviderFailure::Unreachable | ProviderFailure::TimedOut => Some(format!(
             "is the server at {base_url} running and reachable?"
         )),
-        ProviderFailure::Http(_) | ProviderFailure::Other => None,
+        // A cut-off reply is retried as a rejection and never reaches here as is.
+        ProviderFailure::Http(_) | ProviderFailure::CutOff | ProviderFailure::Other => None,
     }
 }
 

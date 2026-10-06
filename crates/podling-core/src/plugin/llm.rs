@@ -9,7 +9,7 @@ use std::num::NonZeroUsize;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ProviderFailure, Result};
 use crate::text::sentences;
 
 /// Version of the stage prompts and the input shapes they describe. Part of
@@ -312,8 +312,15 @@ pub fn complete_validated_with<T>(
     let mut rejections: Vec<String> = Vec::new();
     let mut current = request.clone();
     loop {
-        let reply = llm.complete(&current)?;
-        let reason = match validate(&reply.text) {
+        // A reply cut off at the token limit is a bad reply like any other.
+        let checked = match llm.complete(&current) {
+            Ok(reply) => validate(&reply.text),
+            Err(err) if err.provider_failure() == Some(ProviderFailure::CutOff) => {
+                Err(format!("{err}; reply with a shorter JSON object"))
+            }
+            Err(err) => return Err(err),
+        };
+        let reason = match checked {
             Ok(value) => return Ok(value),
             Err(reason) => reason,
         };
@@ -765,6 +772,47 @@ mod tests {
         let req = request(LlmTask::ExtractClaims, json!({}));
         let err = complete_validated(&Down, "s", &req, parse_object).unwrap_err();
         assert!(matches!(err, CoreError::Provider { .. }));
+    }
+
+    #[test]
+    fn a_reply_cut_off_at_the_token_limit_is_retried_as_a_rejection() {
+        /// Cut off on the first call, a good object on the second.
+        struct CutOnce(std::cell::RefCell<Vec<CompletionRequest>>);
+        impl LlmProvider for CutOnce {
+            fn id(&self) -> &str {
+                "cut_once"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
+                let mut seen = self.0.borrow_mut();
+                seen.push(request.clone());
+                if seen.len() == 1 {
+                    return Err(CoreError::Provider {
+                        plugin: "cut_once".into(),
+                        kind: ProviderFailure::CutOff,
+                        message: "cut off at the token limit".into(),
+                    });
+                }
+                Ok(Completion {
+                    text: r#"{"ok":true}"#.into(),
+                })
+            }
+        }
+        let llm = CutOnce(Default::default());
+        let req = request(LlmTask::ExtractClaims, json!({}));
+        let value = complete_validated(&llm, "s", &req, parse_object).unwrap();
+        assert_eq!(value["ok"], true);
+        let seen = llm.0.borrow();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[1]
+                .instructions
+                .contains("reply with a shorter JSON object"),
+            "{}",
+            seen[1].instructions
+        );
     }
 
     #[test]

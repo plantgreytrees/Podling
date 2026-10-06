@@ -299,6 +299,22 @@ fn a_body_that_is_not_a_chat_completion_is_a_shape_error() {
 }
 
 #[test]
+fn a_reply_stopped_at_the_token_limit_is_cut_off() {
+    let body = json!({
+        "choices": [{ "message": { "content": "{\"claims\": [" }, "finish_reason": "length" }],
+        "usage": { "prompt_tokens": 11, "completion_tokens": 2048 },
+    });
+    let server = MockServer::start(vec![Reply::status(200, body.to_string())]);
+    let (kind, message) = provider_error(
+        provider(&server, None, None)
+            .complete(&request())
+            .unwrap_err(),
+    );
+    assert_eq!(kind, ProviderFailure::CutOff);
+    assert!(message.contains("2048 tokens"), "{message}");
+}
+
+#[test]
 fn an_unreachable_server_names_the_url() {
     let server = MockServer::start(vec![]);
     let url = server.base_url.clone();

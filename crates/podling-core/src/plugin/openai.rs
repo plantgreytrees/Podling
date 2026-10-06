@@ -166,6 +166,18 @@ impl LlmProvider for OpenAiCompat {
         let posted = self.transport.post_json("/chat/completions", &payload)?;
         let reply = parse_reply(&posted.body)
             .map_err(|message| self.transport.error(ProviderFailure::Other, message))?;
+        if reply.cut_off {
+            return Err(self.transport.error(
+                ProviderFailure::CutOff,
+                format!(
+                    "the model's output was cut off at the token limit ({} tokens); \
+                     if llm.max_output_tokens is set, it may be too low",
+                    reply
+                        .completion_tokens
+                        .map_or("?".into(), |n| n.to_string())
+                ),
+            ));
+        }
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis() as u64,
             attempts = posted.attempts,
@@ -185,11 +197,14 @@ impl LlmProvider for OpenAiCompat {
 
 struct Reply {
     content: String,
+    /// `finish_reason` was `length`: the reply stopped at the token limit.
+    cut_off: bool,
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
 }
 
-/// Extracts `choices[0].message.content` and the token usage.
+/// Extracts `choices[0].message.content`, whether it was cut off, and the
+/// token usage.
 fn parse_reply(raw: &str) -> std::result::Result<Reply, String> {
     let value: Value =
         serde_json::from_str(raw).map_err(|_| "the response body is not valid JSON".to_string())?;
@@ -197,14 +212,9 @@ fn parse_reply(raw: &str) -> std::result::Result<Reply, String> {
     let content = choice["message"]["content"]
         .as_str()
         .ok_or("the response has no choices[0].message.content text")?;
-    if choice["finish_reason"] == "length" {
-        return Err(
-            "the model's output was cut off at the token limit; raise llm.max_output_tokens"
-                .to_string(),
-        );
-    }
     Ok(Reply {
         content: content.to_owned(),
+        cut_off: choice["finish_reason"] == "length",
         prompt_tokens: value["usage"]["prompt_tokens"].as_u64(),
         completion_tokens: value["usage"]["completion_tokens"].as_u64(),
     })
@@ -379,9 +389,10 @@ mod tests {
         assert_eq!(reply.prompt_tokens, Some(7));
         assert!(parse_reply("nope").is_err());
         assert!(parse_reply(r#"{"choices":[]}"#).is_err());
-        assert!(
+        assert!(!reply.cut_off);
+        let cut =
             parse_reply(r#"{"choices":[{"message":{"content":"{"},"finish_reason":"length"}]}"#)
-                .is_err()
-        );
+                .unwrap();
+        assert!(cut.cut_off);
     }
 }
