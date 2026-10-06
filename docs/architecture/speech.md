@@ -3,7 +3,7 @@
 > and `/architect --update speech` should be run.
 
 # Speech architecture
-_Last verified: 2026-10-06 at `fb5d3ea` · Source idea: [natural-episode-speech](../ideas/natural-episode-speech.md)_
+_Last verified: 2026-10-07 at `2d21606` · Source idea: [natural-episode-speech](../ideas/natural-episode-speech.md)_
 
 ## In plain English
 Podling turns a script into audio by sending each chunk of turns to a TTS worker (Qwen3-TTS 1.7B Base), then checks the audio by transcribing it with Whisper and comparing the words.
@@ -18,8 +18,8 @@ The word test (docs/ideas/natural-episode-speech.md, "Word test") showed respell
 ## How it fits
 ```mermaid
 flowchart LR
-  user["~/.config/podling/pronounce.toml"] --> merge
-  ep["episode [tts.pronounce]"] --> merge["lexicon merge (episode wins)"]
+  user["pronounce.toml beside sidecars.toml"] --> merge
+  ep["episode [tts.pronounce]"] --> merge["lexicon.rs merge (episode wins)"]
   merge --> spoken["synthesize.rs spoken()<br/>sets SpokenTurn.say_as"]
   spoken --> key["ChunkInput cache key"]
   spoken --> wire["sidecar_tts.rs wire_turns<br/>text = say_as or text"]
@@ -49,15 +49,15 @@ flowchart LR
 | ARCH-SPEECH-17 | No model swap here | A swap needs its own VRAM-gated spike | Switch to an instruction-capable model now |
 
 ## Data & flows
-- **Lexicon:** owned by the user (user-level file) and the episode (`[tts.pronounce]`). It is merged once per run, and the episode wins per name. Changing a name's `say` re-synthesises only the chunks that contain that name. Changing `heard` only changes the check, which runs again on every run anyway.
+- **Lexicon:** owned by the user (user-level file) and the episode (`[tts.pronounce]`). It is merged once per run, and the episode wins per name. Changing a name's `say` re-synthesises only the chunks that contain that name (plus the next chunk, for a backend that listens to context; none does today). Changing `heard` only changes the check, which runs again on every run anyway.
 - **Transcripts:** keyed on the expected (original) text, so adding a respelling re-transcribes only the chunks whose audio changed.
-- **Generated voices:** the design script writes `<name>.wav`, `<name>.txt` (transcript) and `<name>.wav.provenance.json`. Podling refuses a generated-licence voice that has no provenance file, and copies the licence into the audio manifest as it does today.
+- **Generated voices:** the design script writes `<name>.wav`, `<name>.txt` (transcript) and `<name>.wav.provenance.json`. Podling refuses a generated-licence voice that has no valid provenance file (checked in `Voices::resolve`, before any stage), and copies the licence into the audio manifest as it does today.
 
 ## Trade-offs & known limits
 - **Flat delivery stays mostly unsolved.** The Base model takes no style instruction. The levers are expressive designed voices and less repetitive scripts. A model swap is deferred.
 - **The user-level lexicon makes output depend on a file outside the episode.** The cache key still captures the effect through `say_as`, but sharing an episode doesn't share that file.
 - **The spelling table only catches pairs someone has listed.** Unknown pairs show up as WER until they're added.
-- **Commercial use of generated voices assumes the VoiceDesign weights are Apache-2.0.** dependency-auditor must confirm that before the script lands. The voice-marketplace licensing idea may later replace `LicenseRef-Podling-Generated`.
+- **Commercial use of generated voices assumes the VoiceDesign weights are Apache-2.0.** The dependency audit of `scripts/voice_design/` found no AGPL, non-commercial or revenue-capped package (`scripts/voice_design/README.md`). The voice-marketplace licensing idea may later replace `LicenseRef-Podling-Generated`.
 
 ## Glossary
 - **Lexicon:** name → respelling (and optional heard-as variants).
