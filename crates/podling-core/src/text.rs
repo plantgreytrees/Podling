@@ -68,7 +68,15 @@ const MIN_QUOTED_WORDS: usize = 3;
 /// straight (`"…"`) or curly (`“…”`) quotation marks. An unmatched opening
 /// mark yields nothing, so unbalanced text can't panic.
 pub(crate) fn quotations(text: &str) -> Vec<&str> {
-    let mut spans = Vec::new();
+    quotation_ranges(text)
+        .into_iter()
+        .map(|range| &text[range])
+        .collect()
+}
+
+/// Byte ranges of [`quotations`] in `text`, without the marks.
+pub(crate) fn quotation_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
     let mut open: Option<(usize, char)> = None;
     for (i, c) in text.char_indices() {
         match open {
@@ -78,14 +86,14 @@ pub(crate) fn quotations(text: &str) -> Vec<&str> {
                 _ => {}
             },
             Some((start, close)) if c == close => {
-                spans.push(&text[start..i]);
+                ranges.push(start..i);
                 open = None;
             }
             Some(_) => {}
         }
     }
-    spans.retain(|s| s.split_whitespace().count() >= MIN_QUOTED_WORDS);
-    spans
+    ranges.retain(|r| text[r.clone()].split_whitespace().count() >= MIN_QUOTED_WORDS);
+    ranges
 }
 
 /// Where the model says a quote goes in a turn's text: `{{quote:N}}`, with N

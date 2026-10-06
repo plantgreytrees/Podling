@@ -5,13 +5,13 @@
 > scrutinise fixes (unreferenced-quotation check, claim grounding, script input
 > size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
 > can name things from the title and headings, Phase 3 (embeddings and NLI
-> in the claim ledger) and Phase 5 (episode audio: TTS, speech-recognition
-> checks, assembly) with its `/scrutinise` fixes (backchannel-aware speech
-> checks, a weights- and adapter-aware TTS cache key, a voice licence
-> allow-list, and stopping the sidecar's whole process tree). Phase 4, the
-> Contested-claim adjudicator, is not built yet.
+> in the claim ledger), Phase 4 (the Contested-claim adjudicator) and Phase 5
+> (episode audio: TTS, speech-recognition checks, assembly) with its
+> `/scrutinise` fixes (backchannel-aware speech checks, a weights- and
+> adapter-aware TTS cache key, a voice licence allow-list, and stopping the
+> sidecar's whole process tree). Phase 5 was built before Phase 4.
 
-This document describes the state after Phase 5. Where the design
+This document describes the state after Phases 4 and 5. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
 
 ## Crates
@@ -42,9 +42,11 @@ needs concurrency, such as parallel TTS or streaming.
  [cluster_claims] ► Vec<Claim>     paraphrases merged: mutual NLI entailment, equal numbers
  [score_stances] ─► Vec<Claim>     other groups' sentences checked by NLI: Supports / Contradicts
  ledger ─────────► Ledger          classify(): status from distinct independence groups
- script ─────────► Script          LLM sees each claim's id, text and status, and numbered
-                                   sentences; returns QuoteRef { chunk, sentence }
-                                   and writes {{quote:N}} in the turn text where the quote goes;
+ adjudicate ─────► Verdicts        one LLM call per Contested claim: which side the sources
+                                   favour, or Unresolved; none when nothing is Contested
+ script ─────────► Script          LLM sees each claim's id, text, status and verdict, and
+                                   numbered sources of numbered sentences; returns
+                                   QuoteRef { source, sentence } and writes {{quote:N}} in the turn text where the quote goes;
                                    Quote::from_document copies the words and the stage fills the
                                    placeholder in; every citation must name a claim in the ledger
  analyse ────────► AnalysisReport  opt-in analysers, e.g. quote_verifier
@@ -59,9 +61,12 @@ needs concurrency, such as parallel TTS or streaming.
 [`pipeline::run`](../crates/podling-core/src/pipeline.rs) calls the stages in
 order. The three bracketed ones run only when the episode has both `[embedding]`
 and `[nli]` (see [Grounding with embeddings and NLI](#grounding-with-embeddings-and-nli));
-without them the run has the same six stages, cache keys and artifact bodies as
-before Phase 3. The test `without_nli_the_cache_keys_are_unchanged`
-([`tests/pipeline.rs`](../crates/podling-core/tests/pipeline.rs)) pins those keys. Each call goes through
+without them nothing can be Contested, so `adjudicate` makes no call and writes an
+empty `verdicts.json`, and the other artifacts' bodies are byte for byte what they were
+before Phase 3 (only the envelope's `schema_version` has moved on). The test
+`without_nli_the_cache_keys_are_unchanged`
+([`tests/pipeline.rs`](../crates/podling-core/tests/pipeline.rs)) pins the stages'
+cache keys, so only a deliberate bump moves one. Each call goes through
 [`stage::cached`](../crates/podling-core/src/stage.rs), which opens a
 `tracing` span `stage{id, version}`, logs `cache_hit` and `elapsed_ms`, and
 adds a `StageRecord` to the `RunReport`. Every artifact is written as
@@ -72,9 +77,11 @@ as before Phase 5 apart from `schema_version`.
 
 Provider output is never trusted. The following are `InvalidProviderOutput` errors:
 - malformed JSON;
-- a quote that names an unknown chunk or a sentence the chunk doesn't have
-  (or that doesn't resolve in its document);
+- a quote that names a source number past the end of `sources` or a sentence
+  the source doesn't have (or that doesn't resolve in its document);
 - a citation of a claim id that isn't in the ledger;
+- a script in which no turn cites a Contested claim that has a verdict (the
+  message names the claim, so the retry can add it);
 - a turn whose text has a `{{quote:N}}` with no quote reference N, a quote
   reference with no `{{quote:N}}`, or a malformed placeholder;
 - a turn whose text puts three or more words in quotation marks itself: the
@@ -90,11 +97,19 @@ Provider output is never trusted. The following are `InvalidProviderOutput` erro
   ([`embed_checked`](../crates/podling-core/src/plugin/embedding.rs),
   [`score_checked`](../crates/podling-core/src/plugin/nli.rs)).
 
-Both LLM stages call the model through
+All three LLM stages call the model through
 [`complete_validated`](../crates/podling-core/src/plugin/llm.rs). If a reply fails
-those checks, the model is asked once more with the reason appended to the
-instructions. A second failure is the error, so a stage makes at most two calls per
-chunk or script. Transport failures are not retried there, because the provider
+those checks, the model is asked again with every rejection so far listed after the
+instructions, each cut to 500 characters (`reason_excerpt`), since a reason can quote
+part of the reply. Extraction and adjudication get two attempts (`DEFAULT_ATTEMPTS`)
+per chunk or Contested claim; the script gets three (`SCRIPT_ATTEMPTS`), because
+live, llama3.1:8b often fixed the rejected mistake on a retry and made a new one.
+The last failure is the error. Every request is also capped through
+`CompletionRequest::max_tokens` (`MAX_CLAIMS_TOKENS` 2048, `MAX_SCRIPT_TOKENS` 8192,
+`MAX_VERDICT_TOKENS` 512; the provider sends the lower of that and the episode's
+`max_output_tokens`): live, llama3.1:8b in JSON mode sometimes never stops, and a
+cut-off reply is just another rejection. The adjudicator alone turns that error into a
+verdict instead of failing (see [Adjudicating Contested claims](#adjudicating-contested-claims)). Transport failures are not retried there, because the provider
 has its own policy (below).
 
 `pipeline::run` also fails closed if two fetched documents share an id but
@@ -144,8 +159,10 @@ and are still cache hits.
    fingerprint holds the base URL, model, temperature, max output tokens and a
    request-layout version, and never the API key, so rotating a key keeps the cache.
 4. **You changed a prompt or the shape of an LLM input.** Bump
-   [`PROMPT_VERSION`](../crates/podling-core/src/plugin/llm.rs). Both LLM stages
-   put it in their config fingerprint next to the instruction text.
+   [`PROMPT_VERSION`](../crates/podling-core/src/plugin/llm.rs). `extract_claims`
+   and `script` put it in their config fingerprint next to the instruction text.
+   The adjudicator has its own `ADJUDICATE_PROMPT_VERSION`, so changing its prompt
+   doesn't re-run claim extraction.
 5. **You changed an embedding or NLI provider's behaviour.** Rule 3 applies to
    them too: `EmbeddingProvider::fingerprint()` and `NliProvider::fingerprint()`
    are in all three grounding stages' cache keys (`ground_claims`, `cluster_claims`,
@@ -194,7 +211,6 @@ Deferred to later phases:
 - Synthesising chunks in parallel.
 - MCP source connectors.
 - PDF ingestion (Docling / pdfium).
-- A Contested-claim adjudicator: the next phase.
 
 ## The OpenAI-compatible provider
 
@@ -215,15 +231,23 @@ LLM task replies with an object (claim extraction returns `{ "claims": [...] }`)
 | Key | Read once from the variable named by `api_key_env`. Named but unset or empty is a `Config` error before any request. Sent only as `Authorization: Bearer`. Its `Debug` prints `[redacted]`, and error excerpts and logs never contain it. |
 | URL | Must be `http://` or `https://`, with no credentials, query or fragment. A key over plain `http` to a non-local host logs a warning. Redirects are off, so the header can't follow one to another host. |
 | Limits | Per-request timeout (default 120 s); response bodies over 4 MiB are rejected while being read; an error body is quoted up to 512 bytes. |
-| Retries | A 429 or 5xx is retried twice (0.5 s, then 1 s). A timeout, a 4xx or a transport error is not. Separately, `complete_validated` re-asks once when a reply fails validation. |
-| Errors | `CoreError::Provider` carries a `ProviderFailure` kind (`Http(status)`, `Unreachable`, `TimedOut`, `Other`); `CoreError::provider()` finds it and the failing plugin through stage wrappers. The CLI picks its fix hint from the kind, never from the message wording, and takes the URL, model and key variable from `[embedding]` when the plugin is `open_ai_compat_embeddings`, otherwise from `[llm]`. |
+| Retries | A 429 or 5xx is retried twice (0.5 s, then 1 s). A timeout, a 4xx or a transport error is not. Separately, `complete_validated` re-asks when a reply fails validation (once, or twice for the script). |
+| Errors | `CoreError::Provider` carries a `ProviderFailure` kind (`Http(status)`, `Unreachable`, `TimedOut`, `CutOff`, `Other`; the LLM stages retry a `CutOff` reply as a rejection); `CoreError::provider()` finds it and the failing plugin through stage wrappers. The CLI picks its fix hint from the kind, never from the message wording, and takes the URL, model and key variable from `[embedding]` when the plugin is `open_ai_compat_embeddings`, otherwise from `[llm]`. |
 | Observability | One `tracing` span per request with the model, elapsed ms, attempts and token usage. Never the key or the prompt text. |
 | TLS | rustls with the bundled web PKI roots, no OpenSSL. The added licences are permissive (Apache-2.0/MIT/ISC/BSD-3/CDLA-Permissive-2.0). |
 
 **Sentence-addressed quotes.** For the script, each chunk is shown to the model as
-numbered sentences (`text::sentences`, counting from 0), and the model answers with
-`QuoteRef { chunk, sentence }`. Models count sentences far more reliably than bytes.
-The stage looks the chunk up, takes the sentence's span, and calls
+a numbered source (`source`, its position in the chunk list) of numbered sentences
+(`text::sentences`), both counting from 0, and the model answers with
+`QuoteRef { source, sentence }`. Models count sentences far more reliably than bytes.
+The model sees no chunk id: llama3.1:8b, shown chunk ids, cited one as a claim.
+A sentence also lists the quotations inside it (`quoted`, the spans
+`text::quotation_ranges` finds), and a reference may add `part` to quote only one
+of them: live, the model kept typing a lookout's words that sit inside a longer
+sentence, since it had no way to point at them. A typed quotation that is one of
+these parts is rejected with the reference to use instead. `text::sentences` does
+not end a sentence at `."`, so a chunk with quoted speech can be one long sentence.
+The stage takes the chunk at that position, takes the sentence's span, and calls
 `Quote::from_document`. The invariant is unchanged: the model points and the code copies.
 
 The same holds for the spoken text. In a turn's `text` the model writes `{{quote:N}}`
@@ -388,6 +412,50 @@ is a `Config` error before any stage runs. A relative `model_dir` resolves again
 episode file's directory, and a missing model file is one error line naming the
 `hf download` command.
 
+## Adjudicating Contested claims
+
+A Contested claim has evidence from at least one independence group against it.
+[`adjudicate`](../crates/podling-core/src/stages/adjudicate.rs) asks the LLM which
+side the sources favour, so the script can explain the disagreement instead of
+only reporting it. It writes one [`Verdict`](../crates/podling-types/src/verdict.rs)
+per Contested claim to `verdicts.json`:
+- `favours`: `supporting`, `contradicting` or `unresolved`. The prompt makes
+  `unresolved` the default and forbids outside knowledge.
+- `explanation`: one or two plain sentences, at most 600 characters, with no
+  quotation marks, so quoted words still come only from source spans.
+- `cites`: the evidence the verdict rests on, as `EvidenceRef { chunk, stance,
+  premise }`. The model sees the evidence numbered, with each passage (the NLI
+  premise, the merged wording, or else the chunk) and its source's title, and
+  cites by number. The stage checks every number and requires a cite from each
+  side the evidence has.
+- `fallback`: set only when the stage gave up on the model (below).
+
+**Status is untouched.** The verdict sits next to the ledger; `ClaimStatus` still
+comes only from `classify()`, and a claim the sources favour is still Contested.
+
+**Cost bound.** One request per Contested claim, plus at most one retry when the
+reply is rejected. Each reply is capped at `MAX_VERDICT_TOKENS` (512, or the
+episode's `max_output_tokens` if lower) through `CompletionRequest::max_tokens`:
+llama3.1:8b in JSON mode once kept writing past 13,000 tokens, and a cut-off reply
+takes the usual retry and fallback. With no Contested claims (every run without `[nli]`) there is no
+request at all. Only the Contested claims and their passages are in the cache key,
+so editing anything else leaves the verdicts cached.
+
+**Fallback.** A reply that is still rejected after the retry (bad JSON, an unknown
+number, a missing side, a quotation mark, a favoured side with no cite) becomes an
+`Unresolved` verdict citing the first piece of evidence on each side, with the
+rejection reason in `fallback`, cut to 500 characters. The stage never picks a side the model didn't
+argue. A transport failure (the server down, a timeout) fails the stage instead,
+so it is never cached as a verdict.
+
+**In the script.** The script request's ledger entry for a judged claim carries
+`verdict: { favours, explanation }`, without the evidence references (whose chunk
+ids a small model once mistook for claim ids). The prompt says to give both
+accounts, say which side the sources favour or that it is unresolved, explain
+why, and never state either side as settled. Every judged claim must be cited by
+some turn; a script that leaves one out is rejected naming it (a live script
+once dropped both of its judged claims).
+
 ## Episode audio
 
 With `[tts]` (which needs `[asr]` and `[[cast]]`; `check_audio` in
@@ -496,7 +564,8 @@ sampling, and you can't audit them afterwards. The ledger makes trust
 - It counts distinct *independence groups*, not documents. Syndicated copies of one report
   therefore never look like corroboration.
 - An LLM is needed only where judgement really is required: extracting
-  claims, writing the script, and (later) adjudicating Contested claims. The NLI
+  claims, writing the script, and adjudicating Contested claims, where it adds a
+  verdict but never changes the status. The NLI
   model is not a judge of status either: it produces scored evidence, and fixed
   thresholds turn scores into stances.
 

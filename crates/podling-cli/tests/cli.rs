@@ -11,11 +11,12 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::{Value, json};
 
-const STAGES: [&str; 6] = [
+const STAGES: [&str; 7] = [
     "ingest",
     "chunk",
     "extract_claims",
     "ledger",
+    "adjudicate",
     "script",
     "analyse",
 ];
@@ -55,33 +56,56 @@ fn stage_rows(stdout: &[u8]) -> Vec<(String, String)> {
 
 #[test]
 fn every_example_episode_parses() {
-    let dir = example().parent().unwrap().to_owned();
-    for name in ["episode.toml", "episode-ollama.toml", "episode-tts.toml"] {
-        let text = fs::read_to_string(dir.join(name)).unwrap();
-        let spec: podling_types::EpisodeSpec =
-            toml::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}"));
-        // The local-model episodes show the grounding stages; the offline
-        // one stays without them, so it needs no downloads.
-        assert_eq!(
-            spec.embedding.is_some() && spec.nli.is_some(),
-            name != "episode.toml",
-            "{name}"
-        );
-        podling_core::plugin::check_audio(&spec).unwrap_or_else(|err| panic!("{name}: {err}"));
-        // Every voice is CC0 or CC-BY, and the voices README credits each
-        // recorded clip.
-        let credits = fs::read_to_string(dir.join("voices/README.md")).unwrap();
-        for member in &spec.cast {
-            let voice = &member.voice;
-            assert!(
-                ["CC0-1.0", "CC-BY-4.0"].contains(&voice.licence()),
-                "{name}: {}",
-                voice.licence()
+    let examples = example().parent().unwrap().parent().unwrap().to_owned();
+    let mut seen = 0;
+    for entry in fs::read_dir(&examples).unwrap() {
+        let dir = entry.unwrap().path();
+        for name in ["episode.toml", "episode-ollama.toml", "episode-tts.toml"] {
+            let path = dir.join(name);
+            // Every example has the offline and the Ollama episode; only some
+            // have a TTS one.
+            if name == "episode-tts.toml" && !path.exists() {
+                continue;
+            }
+            let text =
+                fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+            let spec: podling_types::EpisodeSpec =
+                toml::from_str(&text).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+            // The local-model episodes show the grounding stages; the offline
+            // one stays without them, so it needs no downloads.
+            assert_eq!(
+                spec.embedding.is_some() && spec.nli.is_some(),
+                name != "episode.toml",
+                "{}",
+                path.display()
             );
-            let file = voice.reference().file_name().unwrap().to_str().unwrap();
-            assert!(credits.contains(&format!("`{file}`")), "{name}: {file}");
+            podling_core::plugin::check_audio(&spec)
+                .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+            // Every voice is CC0 or CC-BY, and the voices README credits each
+            // recorded clip.
+            if !spec.cast.is_empty() {
+                let credits = fs::read_to_string(dir.join("voices/README.md")).unwrap();
+                for member in &spec.cast {
+                    let voice = &member.voice;
+                    assert!(
+                        ["CC0-1.0", "CC-BY-4.0"].contains(&voice.licence()),
+                        "{}: {}",
+                        path.display(),
+                        voice.licence()
+                    );
+                    let file = voice.reference().file_name().unwrap().to_str().unwrap();
+                    assert!(
+                        credits.contains(&format!("`{file}`")),
+                        "{}: {file}",
+                        path.display()
+                    );
+                }
+            }
+            seen += 1;
         }
     }
+    // Tunguska's three episodes and Titanic's two.
+    assert!(seen >= 5, "{seen}");
 }
 
 #[test]
@@ -207,7 +231,8 @@ fn schema_export_writes_one_parseable_file_per_kind() {
             "documents",
             "episode",
             "ledger",
-            "script"
+            "script",
+            "verdicts"
         ]
         .map(|k| format!("{k}.schema.json"))
     );
@@ -320,7 +345,7 @@ fn tiny_model(request: &Value) -> (u16, String) {
             "text": "The first source says: {{quote:0}}",
             "emotion": "neutral",
             "citations": [claim],
-            "quotes": [{ "chunk": source["chunk"], "sentence": first["sentence"] }],
+            "quotes": [{ "source": source["source"], "sentence": first["sentence"] }],
         }],
     }))
 }
@@ -491,9 +516,10 @@ fn live_run_against_a_real_server() {
     let key_env = std::env::var("PODLING_LIVE_LLM_KEY_ENV").ok();
     let mut llm = compat_llm(&url, key_env.as_deref());
     llm = llm.replace("model = \"tiny\"", &format!("model = \"{model}\""));
-    // A local 8B model needs 80 to 120 s to write the script; the default
-    // timeout is 120 s.
-    llm.push_str("timeout_secs = 300\n");
+    // A local 8B model needs 80 to 120 s to write the script on a GPU, and
+    // can take ten minutes or more on a CPU-only server; the default timeout
+    // is 120 s.
+    llm.push_str("timeout_secs = 1800\n");
 
     let tmp = tempfile::tempdir().unwrap();
     let episode = episode_with_llm(tmp.path(), &llm);
@@ -554,13 +580,14 @@ fn a_grounded_run_caches_the_new_stages_too() {
             "cluster_claims",
             "score_stances",
             "ledger",
+            "adjudicate",
             "script",
             "analyse",
         ]
     );
     assert!(first.iter().all(|(_, c)| c == "miss"), "{first:?}");
     let second = run();
-    assert_eq!(second.len(), 9);
+    assert_eq!(second.len(), first.len());
     assert!(second.iter().all(|(_, c)| c == "hit"), "{second:?}");
 }
 

@@ -26,8 +26,10 @@ base_url = "http://localhost:11434/v1"
 model = "llama3.1:8b"
 temperature = 0.2
 # Writing the script takes a local 8B model 80 to 120 seconds on an 8 GB card,
-# so the 120 second default can time out. A hosted model needs far less.
-timeout_secs = 300
+# so the 120 second default can time out. A CPU-only server can manage as
+# little as 1 to 2 tokens a second, so one reply can take ten minutes or more.
+# A hosted model needs far less.
+timeout_secs = 1800
 
 # [embedding] and [nli] turn on the grounding stages: a claim its own passage
 # doesn't entail is dropped (the run prints how many), claims worded

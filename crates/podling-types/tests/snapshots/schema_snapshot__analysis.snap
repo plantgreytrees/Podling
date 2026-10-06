@@ -47,6 +47,7 @@ expression: schema
         "chunks",
         "claims",
         "ledger",
+        "verdicts",
         "script",
         "analysis",
         "audio"

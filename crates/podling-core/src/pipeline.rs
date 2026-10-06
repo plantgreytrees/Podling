@@ -1,7 +1,7 @@
 //! Runs an episode end to end: sources → documents → chunks → claims →
 //! (grounding, clusters and stances, when `[embedding]` and `[nli]` are set) → ledger →
-//! script → analysis → (audio, when `[tts]` is set), writing each artifact to the
-//! output directory.
+//! verdicts on Contested claims → script → analysis → (audio, when `[tts]` is
+//! set), writing each artifact to the output directory.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,9 +24,10 @@ use crate::plugin::{
 use crate::stage::{GroundingCounts, RunReport, cached};
 use crate::stages::assemble::{SAMPLE_RATE, assemble};
 use crate::stages::{
-    Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput, ClusterClaims, ExtractClaims,
-    GroundClaims, GroundInput, Ingest, ScoreStances, ScriptInput, StanceInput, Takes, Verification,
-    Voices, WriteScript, synthesize_overlays, synthesize_script, verify_audio,
+    Adjudicate, AdjudicateInput, Analyse, AnalyseInput, BuildLedger, ChunkDocuments, ClaimInput,
+    ClusterClaims, ExtractClaims, GroundClaims, GroundInput, Ingest, ScoreStances, ScriptInput,
+    StanceInput, Takes, Verification, Voices, WriteScript, synthesize_overlays, synthesize_script,
+    verify_audio,
 };
 
 /// The episode's audio file, in the output directory.
@@ -197,11 +198,15 @@ fn run_inner(
         // model it loaded is freed before the script stage needs the memory.
     }
     let ledger = cached(&BuildLedger, &claims, cache, &mut report)?;
+    // Only Contested claims reach the adjudicator; with none it makes no call.
+    let adjudicate_input = AdjudicateInput::new(&ledger, &claim_input.chunks, &documents)?;
+    let verdicts = cached(&Adjudicate { llm }, &adjudicate_input, cache, &mut report)?;
 
     let script_input = ScriptInput {
         topic: spec.topic.clone(),
         target_minutes: spec.target_minutes,
         ledger,
+        verdicts,
         chunks: claim_input.chunks,
         documents,
         cast: spec
@@ -241,6 +246,7 @@ fn run_inner(
     write(out_dir, ArtifactKind::Chunks, &script_input.chunks)?;
     write(out_dir, ArtifactKind::Claims, &claims)?;
     write(out_dir, ArtifactKind::Ledger, &script_input.ledger)?;
+    write(out_dir, ArtifactKind::Verdicts, &script_input.verdicts)?;
     write(out_dir, ArtifactKind::Script, &analyse_input.script)?;
     write(out_dir, ArtifactKind::Analysis, &analysis)?;
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bump when any artifact's serialised shape changes (the schema snapshot
 /// test fails first, as a reminder). Readers treat other versions as foreign.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
@@ -17,18 +17,20 @@ pub enum ArtifactKind {
     Chunks,
     Claims,
     Ledger,
+    Verdicts,
     Script,
     Analysis,
     Audio,
 }
 
 impl ArtifactKind {
-    pub const ALL: [ArtifactKind; 8] = [
+    pub const ALL: [ArtifactKind; 9] = [
         Self::Episode,
         Self::Documents,
         Self::Chunks,
         Self::Claims,
         Self::Ledger,
+        Self::Verdicts,
         Self::Script,
         Self::Analysis,
         Self::Audio,
@@ -42,6 +44,7 @@ impl ArtifactKind {
             Self::Chunks => "chunks",
             Self::Claims => "claims",
             Self::Ledger => "ledger",
+            Self::Verdicts => "verdicts",
             Self::Script => "script",
             Self::Analysis => "analysis",
             Self::Audio => "audio",

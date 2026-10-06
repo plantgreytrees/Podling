@@ -33,6 +33,12 @@
 | [phase3-nli-ledger](./phase3-nli-ledger.md) | 5 | real-providers | crates/podling-core/src/plugin | rust | high | MERGED | 2026-10-01 |
 | [phase3-nli-ledger](./phase3-nli-ledger.md) | 6 | live-and-docs | examples/tunguska, docs | rust | normal | MERGED | 2026-10-01 |
 | [scrutinise-phase3-nli-ledger](./scrutinise-phase3-nli-ledger.md) | 1 | script-prompt-version | crates/podling-core | rust | normal | MERGED | 2026-10-01 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 1 | verdict-contracts | crates/podling-types | rust | normal | MERGED | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 2 | adjudicate-stage | crates/podling-core/src/stages/adjudicate.rs | rust | high | MERGED | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 3 | script-integration | crates/podling-core/src/stages/script.rs | rust | high | MERGED | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 4 | titanic-example | examples/titanic | rust | normal | MERGED | 2026-10-04 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 5 | live-and-docs | docs | markdown | normal | MERGED | 2026-10-06 |
+| [scrutinise-phase4-adjudicator](./scrutinise-phase4-adjudicator.md) | 1 | fallback-reason-cap | crates/podling-core/src/stages/adjudicate.rs | rust | normal | MERGED | 2026-10-04 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 1 | tts-bakeoff | scripts/tts_bakeoff | python | normal | MERGED | 2026-10-05 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 2 | audio-contracts | crates/podling-types | rust | normal | MERGED | 2026-10-05 |
 | [phase5-tts-audio](./phase5-tts-audio.md) | 3 | tts-sidecar | sidecars/tts | python | high | MERGED | 2026-10-05 |
@@ -64,6 +70,8 @@
 | [phase1-core-contracts](./phase1-core-contracts.md) | 5 (stage-pipeline) | crates/podling-core/src/pipeline | PENDING | — | 2026-09-29 |
 | [phase1-core-contracts](./phase1-core-contracts.md) | 6 (cli) | crates/podling-cli | PENDING | — | 2026-09-29 |
 | [phase1-core-contracts](./phase1-core-contracts.md) | 7 (docs) | docs | PENDING | — | 2026-09-29 |
+| [phase4-adjudicator](./phase4-adjudicator.md) | 5 (live-and-docs) | — | MERGED | 93f0d2a, dcb260f | 2026-10-06 |
+| [scrutinise-phase4-adjudicator](./scrutinise-phase4-adjudicator.md) | 2 (live-fix-polish) | crates/podling-core/src/plugin/openai.rs | COMPLETE | all 6 acceptance criteria ticked; dcb260f | 2026-10-06 |
 | [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 1 (asr-expected-text) | crates/podling-core/src/stages/synthesize.rs | COMPLETE | all 1 acceptance criteria ticked; merge 61ca815 into worktree-phase5-tts-plan; … | 2026-10-05 |
 | [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 2 (tts-weights-fingerprint) | sidecars/tts, crates/podling-core/src/plugin/sidecar_tts.rs | COMPLETE | all 1 acceptance criteria ticked; merge 4a75676 into worktree-phase5-tts-plan; … | 2026-10-05 |
 | [scrutinise-phase5-tts-audio](./scrutinise-phase5-tts-audio.md) | 3 (voice-licence-allowlist) | crates/podling-types/src/episode.rs | COMPLETE | all 1 acceptance criteria ticked; merge 93279f7 into worktree-phase5-tts-plan; … | 2026-10-05 |
