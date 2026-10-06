@@ -208,7 +208,7 @@ refused; no such pair is measured. S1 `text.rs:30-34,41` STOP_WORDS/`content_wor
 `sentences` feed the stance gate but `ScoreStances::fingerprint` doesn't cover them. S2
 `score_stances.rs:534-607` the gate is tested through `decide` only, not `ScoreStances::run`.
 
-- [ ] 3.1 W1 pairs: add to `pairs.json` c25 ("Kulik reached the site in 1927." / "Leonid
+- [x] 3.1 W1 pairs: add to `pairs.json` c25 ("Kulik reached the site in 1927." / "Leonid
   Kulik led the first expedition to the site. In 1931 he got there."), c26 ("Kulik reached
   the site in 1927." / "Leonid Kulik led the first expedition to the site. His arrival came
   in 1931."), and same-shape neithers whose pronoun means another noun: n36 ("Kulik reached
@@ -216,9 +216,9 @@ refused; no such pair is measured. S1 `text.rs:30-34,41` STOP_WORDS/`content_wor
   Leningrad."), n37 ("The explosion happened in June 1908." / "The explosion was witnessed by
   Evenki herders. Their village was moved in 1921."). Re-score live.
   accept: `the_pair_set_is_well_formed` passes; old pairs' scores unchanged.
-- [ ] 3.2 Print the report for VERSION 5 on the extended set; record it in Report (round 3).
+- [x] 3.2 Print the report for VERSION 5 on the extended set; record it in Report (round 3).
   accept: printed with `-- --nocapture report`.
-- [ ] 3.3 Only if 3.2 shows a contradicts miss among c25–c26: candidate (e) a numbered
+- [x] 3.3 Only if 3.2 shows a contradicts miss among c25–c26: candidate (e) a numbered
   sentence carries the previous sentence's subject when any of its words is a pronoun or
   possessive (he/she/it/they/this/these/his/her/its/their/him/them). Report its contradicts
   TP/FP/FN (n36/n37 measure the cost); adopt it only at ≥ VERSION 2 precision and recall
@@ -226,17 +226,17 @@ refused; no such pair is measured. S1 `text.rs:30-34,41` STOP_WORDS/`content_wor
   If adopted: VERSION 5 → 6 with a one-line reason; unit cases for c25/c26 shapes beside
   `a_pronoun_carries_the_subject_into_the_numbered_sentence`; no threshold moved.
   accept: chosen rule's figures printed; pre-existing tests unchanged; `cargo test --workspace` green.
-- [ ] 3.4 S2: one `ScoreStances::run`-level test with the module's fake NLI returning
+- [x] 3.4 S2: one `ScoreStances::run`-level test with the module's fake NLI returning
   contradiction ≥ CONTRADICT_PM for a claim and an off-subject numbered window (n21 shape),
   asserting that claim gets no Contradicts evidence from that chunk.
   accept: test passes and fails if `Judged::stance` gets claim/premise swapped or the gate removed.
-- [ ] 3.5 S1: doc comments on `STOP_WORDS`, `content_words` and `sentences` in `text.rs` say
+- [x] 3.5 S1: doc comments on `STOP_WORDS`, `content_words` and `sentences` in `text.rs` say
   the stance gate depends on them, so a change must bump `ScoreStances` VERSION.
   accept: comments present; no behaviour change.
-- [ ] 3.6 `docs/architecture.md` score_stances: pair count and figures equal the 3.2/3.3
+- [x] 3.6 `docs/architecture.md` score_stances: pair count and figures equal the 3.2/3.3
   report; rule bullet describes the pronoun carry-over as adopted.
   accept: doc figures equal the printed report.
-- [ ] 3.7 Fill "Report (round 3)" below.
+- [x] 3.7 Fill "Report (round 3)" below.
 
 ## Report
 Pair set: 62 → 73 pairs (c17–c21 reworded/plural-subject numeric contradictions; n29–n33
@@ -308,7 +308,36 @@ dropped one silently leaves it Corroborated/SingleSource. Supports unchanged; no
 moved.
 
 ## Report (round 3)
-_Filled by 3.7._
+Pair set 78 → 82 (c25, c26, n36, n37), re-scored live; `scores.json` diff is insertions
+only, so the 78 earlier scores are unchanged. New scores (similarity / contradiction ‰):
+c25 851/1000, c26 842/1000, n36 699/997, n37 707/979.
+
+3.2 — VERSION 5 on 82 pairs (`-- --nocapture report`):
+
+| rule | stance | TP | FP | FN | precision | recall | false positives |
+|---|---|---|---|---|---|---|---|
+| VERSION 2 (before) | supports | 14 | 0 | 5 | 100.0% | 73.7% | |
+| VERSION 2 (before) | contradicts | 26 | 6 | 0 | 81.2% | 100.0% | n21 n33 n34 n35 n36 n37 |
+| VERSION 5 | supports | 14 | 0 | 5 | 100.0% | 73.7% | |
+| VERSION 5 | contradicts | 24 | 2 | 2 | 92.3% | 92.3% | n34 n35 |
+
+VERSION 5 misses c25 and c26 (W1 confirmed); `stance_precision_report` fails "contradicts
+recall fell: 1.000 -> 0.923".
+
+3.3 — candidate (e), adopted as VERSION 6: a numbered sentence holding a pronoun or
+possessive anywhere (he/she/it/they/this/these/his/her/its/their/him/them) carries the
+previous sentence's subject.
+
+| rule | stance | TP | FP | FN | precision | recall | false positives |
+|---|---|---|---|---|---|---|---|
+| VERSION 6 (after) | supports | 14 | 0 | 5 | 100.0% | 73.7% | |
+| VERSION 6 (after) | contradicts | 26 | 4 | 0 | 86.7% | 100.0% | n34 n35 n36 n37 |
+
+VERSION 6 meets the guard (≥ VERSION 2's 81.2% precision and 100% recall); n36/n37 are the
+measured cost, the same pronoun-ambiguity class as n34/n35. No threshold moved. 3.4's
+stage-level test asserts the off-subject window's fake-embedding similarity clears
+`MIN_CONTRADICT_SIMILARITY_PM`, so only the subject rule refuses it (a source mutation to
+demonstrate the failure was not run).
 
 ## Verification background
 - Gate: `crates/podling-core/src/stages/score_stances.rs` `numbers_share_the_subject` (~259),

@@ -80,5 +80,9 @@
   { "id": "c23", "label": "contradicts", "claim": "The explosion happened in June 1908.", "premise": "The explosion was enormous. It occurred in 1907.", "note": "window, changed year, pronoun refers back to the subject" },
   { "id": "c24", "label": "contradicts", "claim": "About 80 million trees were flattened.", "premise": "The trees fell in a butterfly-shaped pattern. They numbered roughly 8 million.", "note": "window, changed count, pronoun refers back to the subject" },
   { "id": "n34", "label": "neither", "claim": "The explosion happened in June 1908.", "premise": "The explosion was witnessed by Evenki herders. They returned to the area in 1921.", "note": "window, pronoun refers to someone else" },
-  { "id": "n35", "label": "neither", "claim": "Kulik reached the site in 1927.", "premise": "Kulik studied meteorites in Petrograd. It became Leningrad in 1924.", "note": "window, pronoun refers to something else" }
+  { "id": "n35", "label": "neither", "claim": "Kulik reached the site in 1927.", "premise": "Kulik studied meteorites in Petrograd. It became Leningrad in 1924.", "note": "window, pronoun refers to something else" },
+  { "id": "c25", "label": "contradicts", "claim": "Kulik reached the site in 1927.", "premise": "Leonid Kulik led the first expedition to the site. In 1931 he got there.", "note": "window, changed year, fronted date before the pronoun" },
+  { "id": "c26", "label": "contradicts", "claim": "Kulik reached the site in 1927.", "premise": "Leonid Kulik led the first expedition to the site. His arrival came in 1931.", "note": "window, changed year, possessive refers back to the subject" },
+  { "id": "n36", "label": "neither", "claim": "Kulik reached the site in 1927.", "premise": "Kulik studied meteorites in Petrograd. In 1924 it became Leningrad.", "note": "window, fronted date, pronoun refers to something else" },
+  { "id": "n37", "label": "neither", "claim": "The explosion happened in June 1908.", "premise": "The explosion was witnessed by Evenki herders. Their village was moved in 1921.", "note": "window, possessive refers to someone else" }
 ]
