@@ -11,6 +11,7 @@ related: [docs/ideas/natural-episode-speech.md, docs/architecture/speech.rules.m
 touches:
   - crates/podling-core/src/stages/script.rs            # INSTRUCTIONS/AUDIO_RULES (arc, focus); later a sectioned writer
   - crates/podling-core/src/plugin/llm.rs               # PROMPT_VERSION (ARCH-SPEECH-16); a new LlmTask only if a section/outline call is added
+  - crates/podling-core/src/plugin/openai.rs            # optional routing/data-policy field (OpenRouter provider filter); local-only enforcement
   - crates/podling-core/src/plugin/fake*.rs             # fake LLM follows any new task
   - crates/podling-core/src/stages/outline.rs           # only in step 3: deterministic act plan (program picks claim ids)
   - crates/podling-types/src/episode.rs                 # only if `topic` proves too weak: optional `focus`; SCHEMA_VERSION + snapshot (ARCH-SPEECH-07)
@@ -185,11 +186,36 @@ In order of impact:
    - original fiction from a world bible;
    - myth and lore retellings, which fit today's ledger as-is;
    - an author consistency checker built on the extract → NLI-contradiction path.
+7. **Hosted MVP, under the no-training rule (below).** The fastest way to test a stronger writer needs no code change: point an example episode's `[llm]` at an open-weight model on a host that does not train on inputs and retains nothing.
+   - The existing provider already sends the key from a named environment variable and asks for JSON mode (`crates/podling-core/src/plugin/openai.rs:121`).
+   - Estimated cost: under ~$0.10 per 10-minute episode at about $0.21 in / $4.20 out per million tokens (DeepSeek V4 Pro pricing, https://pricepertoken.com/endpoints/openrouter).
+   - A 10-minute script fits `MAX_SCRIPT_TOKENS = 8192` (`crates/podling-core/src/stages/script.rs:174`). A 30–60-minute one does not, so long episodes still need the sectioned writer (recommendation 3).
+   - Run the harness on local and hosted, before and after the arc prompt. That separates "the model is too weak" from "the prompt asks for no story".
+
+## Data privacy: no training on Podling data
+**Constraint (user, 2026-10-07):** none of the user's information, data or stories may be used to train any model. This applies even more strongly to the work authors will submit under the planned fiction/author feature.
+
+**What it means for providers:**
+- **Local inference is the default** and the only unconditional guarantee. Today only the LLM, and any embedding server configured as hosted, sends text off the machine. TTS and Whisper run locally (`README.md:313`), and the NLI model runs on the CPU.
+- **A hosted LLM is allowed only on endpoints that both refuse training by default *and* retain nothing:**
+  - **Together AI:** no training without explicit consent; turn on zero data retention in the organisation's Privacy settings ("Store prompts and model responses" = No). https://docs.together.ai/docs/zero-data-retention
+  - **Fireworks AI:** reported as no training or logging for open models without opt-in. This is second-hand (https://zoftwarehub.com/en-sa/products/together-ai/zoftware-analysis), **UNPROVEN** against Fireworks' own docs.
+  - **OpenRouter, paid:** only with `provider: { "data_collection": "deny", "zdr": true }` (https://openrouter.ai/docs/guides/routing/provider-selection). Podling does not send a `provider` object today, so this needs an optional routing field on `[llm]`, part of the provider fingerprint. OpenRouter's *own* logging policy is **UNPROVEN** from its docs.
+- **Excluded:**
+  - DeepSeek's first-party API: trains on inputs by default, opt-out only, stored in China (https://meetily.ai/llm-privacy/deepseek, https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html).
+  - Free tiers whose prompts may be used for training (https://openrouter.ai/blog/tutorials/free-llm-apis-compared/).
+  - The MIT-licensed DeepSeek V4 *weights* remain fine to use; it is DeepSeek's own *host* that is excluded.
+
+**Design obligations, carried to `/architect` and the fiction idea:**
+- A source or episode marked private can force **local-only**: the run refuses any non-local provider. This is a hard check, not a convention.
+- When hosted is allowed, the config names a zero-retention endpoint, and Podling records which endpoint processed which text.
+- Providers' terms change, so re-check a provider's privacy page before any author text is sent.
 
 ## Open questions
 - **Writer model** (answered 2026-10-07): "Ideally, I want it to be local but I understand those limitations, please see what we can do." So: local-first, and recommendations 3 and 4 exist to make that work. A hosted model is a comparison point only.
 - **Who picks the angle** (answered): the episode maker, per episode.
 - **Fantasy** (answered): both original fiction and retellings, plus "helping out with plots for actual authors… keep the story consistent and to the point". Split to its own idea.
+- **Larger model off this machine** (answered 2026-10-07): the cheapest MVP is a pay-per-token API for an open-weight model, not a rented GPU (roughly $1–3 per session, https://www.spheron.network/blog/gpu-cloud-pricing-comparison-runpod-vs-vastai-2026/). It is constrained by the no-training rule: see recommendation 7 and "Data privacy".
 - **Still open:** what episode length matters most? Story structure at 5 minutes and at 30–60 minutes are different problems. Phase 5's goal is 30–60 minutes (`docs/plans/phase5-tts-audio.md:4`).
 
 ## Next step
