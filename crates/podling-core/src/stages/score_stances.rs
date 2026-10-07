@@ -76,7 +76,7 @@ impl Stage for ScoreStances<'_> {
     // premise swapped (`StanceEvidence::reverse_contradiction`).
     // 8: the reverse check also reads the whole window when one of its
     // sentences has no number (`reverse_hypotheses`), and replaces the
-    // subject rule of 3-6: a number about something else fails it too.
+    // subject rule of 3-7: a number about something else fails it too.
     const VERSION: u32 = 8;
     type Input = StanceInput;
     type Output = Vec<Claim>;
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn a_number_about_something_else_fails_the_reverse_check() {
-        // Scores from the real NLI model (`stance_pairs` n21 and t03).
+        // Reverse scores from the real NLI model (`stance_pairs` n21, t03).
         let pm = |p| PerMille::from_probability(p);
         let evidence = |claim, premise, reverse| StanceEvidence {
             claim,

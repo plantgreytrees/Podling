@@ -29,6 +29,7 @@ units:
     scope:
       read:
         - crates/podling-core/src/stages/score_stances.rs
+        - crates/podling-core/src/text.rs
         - crates/podling-core/tests/stance_precision.rs
         - crates/podling-core/tests/fixtures/stance_pairs/pairs.json
         - crates/podling-core/tests/fixtures/stance_pairs/scores.json
@@ -41,6 +42,7 @@ units:
         - docs/plans/stance-whole-window.md
       write:
         - crates/podling-core/src/stages/score_stances.rs
+        - crates/podling-core/src/text.rs
         - crates/podling-core/tests/stance_precision.rs
         - crates/podling-core/tests/fixtures/stance_pairs/scores.json
         - docs/architecture.md
@@ -63,30 +65,61 @@ false contradiction; otherwise reverted to the documented limit (option 1).
 Option 2 (whole window as an extra reverse hypothesis), tried before merging the branch
 (option B). Option 1 is the fallback.
 
+Second decision (user, 2026-10-07, after 1.3's first re-score): the gate failed because
+the subject rule (`number_is_about_the_subject`, VERSIONs 3–7) also refuses t03. A probe
+without it gave 27/2/1, so the user chose "drop the subject rule": VERSION 8 is the
+whole-window two-way check alone. `text.rs` joined the scope for its doc comments.
+
 ## Scope Steps (executable core)
 
 ### Unit 1 — stance-whole-window
-- [ ] 1.1 `score_stances.rs`: `reverse_hypotheses` returns the numbered sentences, then the
+- [x] 1.1 `score_stances.rs`: `reverse_hypotheses` returns the numbered sentences, then the
   whole window when it has ≥ 2 sentences and at least one has no number; docs on it and on
   `holds_both_ways` updated; VERSION 7 → 8 with a one-line reason. No threshold changed.
   accept: `cargo test -p podling-core --lib score_stances` green.
-- [ ] 1.2 Unit test: `reverse_hypotheses` on a window with a numberless sentence returns the
+- [x] 1.2 Unit test: `reverse_hypotheses` on a window with a numberless sentence returns the
   numbered sentence and the whole window; on a window of numbered sentences only, just those.
   The four pre-existing stage tests unchanged.
   accept: tests named for each case.
-- [ ] 1.3 Live re-score (`score_the_stance_pairs`); forward scores unchanged. Gate: t03 is a TP
+- [x] 1.3 Live re-score (`score_the_stance_pairs`); forward scores unchanged. Gate: t03 is a TP
   and the false positives stay exactly n35 n36. Pass → pin the new figures. Fail → revert
   1.1/1.2, record the figures in Report, keep option 1.
   accept: report printed and recorded in Report.
-- [ ] 1.4 Live cold runs (gate passed only): Titanic keeps "706 persons were saved." Contested
+- [x] 1.4 Live cold runs (gate passed only): Titanic keeps "706 persons were saved." Contested
   and the lifeboat claim not; Tunguska exit 0 with 0 Contested.
   accept: outcomes recorded in Report.
-- [ ] 1.5 `docs/architecture.md` score_stances rule and figures; `docs/handoff.md` status.
+- [x] 1.5 `docs/architecture.md` score_stances rule and figures; `docs/handoff.md` status.
   accept: doc figures equal the printed report.
-- [ ] 1.6 Fill Report below.
+- [x] 1.6 Fill Report below.
 
 ## Report
-_Filled by 1.6._
+- 1.1: `reverse_hypotheses` adds the whole window when it mixes numbered and numberless
+  sentences. The subject rule and `refers_back` are removed (second decision). VERSION 8.
+  No threshold changed.
+- 1.2: `reverse_hypotheses_are_the_numbered_sentences_and_a_mixed_window`;
+  `a_number_about_something_else_fails_the_reverse_check` (n21 at 0.080 back → None; t03 at
+  1.000 back → Contradicts) replaces the five subject-rule tests (`a_number_about_something_else_does_not_contradict`,
+  `a_claim_without_a_number_skips_the_subject_rule`, `a_pronoun_carries_the_subject_into_the_numbered_sentence`,
+  `one_shared_word_keeps_the_models_call`, `the_stage_refuses_a_number_about_something_else`),
+  whose rule no longer exists. The four pre-existing stage tests are unchanged and pass.
+- 1.3: live re-score (DeBERTa v3 base, nomic-embed-text); forward scores unchanged.
+  Reverse: t03 0.002 → 1.000, n21 0.080, n33 0.021, n34 0.002, n37 0.004.
+  First pass (with the subject rule): contradicts 26/2/2, unchanged, so the gate failed.
+  Without the subject rule:
+  ```
+  before: VERSION 2   contradicts 28 TP 7 FP 0 FN  80.0% / 100.0%  n21 n33 n34 n35 n36 n37 t02
+  after:  VERSION 8   contradicts 27 TP 2 FP 1 FN  93.1% /  96.4%  n35 n36
+                      supports    14 TP 0 FP 5 FN 100.0% /  73.7%
+  ```
+  Gate passed (t03 TP, FPs exactly n35 n36); pinned in `stance_precision_report`.
+- 1.4: cold runs (llama3.1:8b, GPU Ollama). Titanic exit 0: "706 persons were saved."
+  Contested (the only Contested claim); the lifeboat claim single_source. Tunguska: the first
+  run failed at `script` (llama cited a sentence that doesn't exist; stances already
+  scored, `reverse_pairs=0`, 0 contradicts); the rerun on the same cache exited 0 with
+  7 claims, 0 Contested (1 corroborated, 6 single_source).
+- 1.5: `docs/architecture.md` score_stances rule and figures, `docs/handoff.md` status.
+- Gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, `cargo test --workspace` exit 0.
 
 ## Verification background
 - t03 (VERSION 7): similarity 883, forward 1000, reverse 2 (numbered sentence only);
