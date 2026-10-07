@@ -327,6 +327,7 @@ fn score_the_stance_pairs() {
         api_key_env: None,
         timeout_secs: None,
         unload_after: false,
+        data_policy: None,
     })
     .unwrap();
 

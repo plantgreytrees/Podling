@@ -137,6 +137,7 @@ mod tests {
                 timeout_secs: None,
                 max_output_tokens: None,
                 unload_after,
+                data_policy: None,
             },
             |_| None,
         )
@@ -150,6 +151,7 @@ mod tests {
                 api_key_env: None,
                 timeout_secs: None,
                 unload_after,
+                data_policy: None,
             },
             |_| None,
         )

@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use podling_types::EmbeddingConfig;
+use podling_types::{DataPolicy, EmbeddingConfig};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -31,6 +31,8 @@ pub const PLUGIN: &str = "open_ai_compat_embeddings";
 pub struct OpenAiEmbeddings {
     transport: Transport,
     model: String,
+    /// The episode's declared policy, in the fingerprint when set.
+    data_policy: Option<DataPolicy>,
     /// Set by `unload_after = true`.
     unload: Option<OllamaUnload>,
 }
@@ -52,6 +54,7 @@ impl OpenAiEmbeddings {
             api_key_env,
             timeout_secs,
             unload_after,
+            data_policy,
         } = config
         else {
             return Err(config_error(
@@ -86,6 +89,7 @@ impl OpenAiEmbeddings {
         Ok(Self {
             transport,
             model: model.clone(),
+            data_policy: *data_policy,
             unload,
         })
     }
@@ -128,13 +132,19 @@ impl EmbeddingProvider for OpenAiEmbeddings {
     }
 
     /// Never includes the key: rotating it must not invalidate the cache.
+    /// A declared `data_policy` is included; an undeclared one adds nothing,
+    /// so a local episode keeps its cache keys.
     fn fingerprint(&self) -> Value {
-        json!({
+        let mut fingerprint = json!({
             "provider": "open_ai_compat",
             "base_url": self.transport.base_url(),
             "model": self.model,
             "request_version": REQUEST_VERSION,
-        })
+        });
+        if let Some(policy) = self.data_policy {
+            fingerprint["data_policy"] = json!(policy);
+        }
+        fingerprint
     }
 
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
@@ -203,6 +213,7 @@ mod tests {
             api_key_env: Some("K".into()),
             timeout_secs: None,
             unload_after: false,
+            data_policy: None,
         }
     }
 
@@ -232,6 +243,22 @@ mod tests {
         assert_eq!(fp["base_url"], "http://h/v1");
         assert_eq!(fp["model"], "nomic");
         assert!(!fp.to_string().contains("sk-x"));
+    }
+
+    #[test]
+    fn a_declared_data_policy_is_in_the_fingerprint_and_the_key_never_is() {
+        let mut cfg = config("http://h/v1/", "nomic");
+        if let EmbeddingConfig::OpenAiCompat { data_policy, .. } = &mut cfg {
+            *data_policy = Some(DataPolicy::ZeroRetention);
+        }
+        let declared = OpenAiEmbeddings::from_config_with_env(&cfg, |_| Some("sk-x".into()))
+            .unwrap()
+            .fingerprint();
+        let undeclared = build("http://h/v1/", "nomic").unwrap().fingerprint();
+        assert_eq!(declared["data_policy"], "zero_retention");
+        assert!(undeclared.get("data_policy").is_none(), "{undeclared}");
+        assert_ne!(declared, undeclared);
+        assert!(!declared.to_string().contains("sk-x"), "{declared}");
     }
 
     #[test]
