@@ -285,7 +285,8 @@ pub fn provenance_path(clip: &Path) -> PathBuf {
 
 /// How a [`GENERATED_VOICE_LICENCE`] clip was made, written by the
 /// voice-design tool next to the clip. Enough to make the clip again, and to
-/// show it was designed rather than copied from a person.
+/// show it was designed rather than copied from a person. `clip_blake3` ties
+/// the file to the clip it was written for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawVoiceProvenance")]
 pub struct VoiceProvenance {
@@ -294,6 +295,12 @@ pub struct VoiceProvenance {
     design_prompt: String,
     seed: u64,
     tool_version: String,
+    #[serde(serialize_with = "lowercase_hex")]
+    clip_blake3: blake3::Hash,
+}
+
+fn lowercase_hex<S: serde::Serializer>(hash: &blake3::Hash, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(hash.to_hex().as_str())
 }
 
 #[derive(Deserialize)]
@@ -308,11 +315,18 @@ struct RawVoiceProvenance {
     seed: u64,
     /// The version of the tool that wrote the clip.
     tool_version: String,
+    /// The blake3 hash of the clip file's bytes, as 64 lowercase hex digits.
+    clip_blake3: String,
 }
 
+/// A provenance file that cannot describe a clip.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("voice provenance has an empty {0:?}")]
-pub struct EmptyProvenanceField(&'static str);
+pub enum ProvenanceError {
+    #[error("voice provenance has an empty {0:?}")]
+    Empty(&'static str),
+    #[error("voice provenance has a `clip_blake3` that is not 64 lowercase hex digits")]
+    BadClipHash,
+}
 
 impl VoiceProvenance {
     pub fn model(&self) -> &str {
@@ -334,10 +348,15 @@ impl VoiceProvenance {
     pub fn tool_version(&self) -> &str {
         &self.tool_version
     }
+
+    /// The hash of the clip this provenance was written for.
+    pub fn clip_blake3(&self) -> &blake3::Hash {
+        &self.clip_blake3
+    }
 }
 
 impl TryFrom<RawVoiceProvenance> for VoiceProvenance {
-    type Error = EmptyProvenanceField;
+    type Error = ProvenanceError;
 
     fn try_from(raw: RawVoiceProvenance) -> Result<Self, Self::Error> {
         let fields = [
@@ -347,14 +366,22 @@ impl TryFrom<RawVoiceProvenance> for VoiceProvenance {
             ("tool_version", &raw.tool_version),
         ];
         if let Some((name, _)) = fields.iter().find(|(_, value)| value.trim().is_empty()) {
-            return Err(EmptyProvenanceField(name));
+            return Err(ProvenanceError::Empty(name));
         }
+        // `from_hex` takes either case; only lowercase is written, so the
+        // file has one spelling.
+        if raw.clip_blake3.bytes().any(|b| b.is_ascii_uppercase()) {
+            return Err(ProvenanceError::BadClipHash);
+        }
+        let clip_blake3 =
+            blake3::Hash::from_hex(&raw.clip_blake3).map_err(|_| ProvenanceError::BadClipHash)?;
         Ok(Self {
             model: raw.model,
             weights_commit: raw.weights_commit,
             design_prompt: raw.design_prompt,
             seed: raw.seed,
             tool_version: raw.tool_version,
+            clip_blake3,
         })
     }
 }

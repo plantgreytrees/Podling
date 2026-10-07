@@ -23,6 +23,17 @@ def test_provenance_has_exactly_the_rust_fields():
     assert fields == rust_struct_fields("RawVoiceProvenance")
 
 
+def test_the_clip_hash_is_podlings_blake3(tmp_path):
+    # The same vector as `the_clip_hash_matches_the_voice_design_tool` in
+    # crates/podling-types/tests/roundtrip.rs.
+    clip = tmp_path / "host.wav"
+    clip.write_bytes(b"podling voice")
+    assert (
+        design.clip_hash(clip)
+        == "86a92eb5d621332263d4a33849079e862874f8de9e3c6f46d43e0f7bceac97ea"
+    )
+
+
 def test_the_licence_is_podlings_generated_licence():
     source = EPISODE_RS.read_text(encoding="utf-8")
     assert f'GENERATED_VOICE_LICENCE: &str = "{design.LICENCE}"' in source

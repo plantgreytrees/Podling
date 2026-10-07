@@ -66,6 +66,30 @@ wheels = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.0.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/a8/7450e3cee34de76bdfd78507e07c0329fce52da235bcde461250e23066f8/blake3-1.0.10.tar.gz", hash = "sha256:e6f2cdb7ac9499adda6aec064a561b9dd808d243d4f639a4761cd19dea53e015", size = 117129, upload-time = "2026-09-29T12:42:43.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/f9/f44a2a6b76e61dad84bc55b00fa258024aa127164fc5c37334b79559f421/blake3-1.0.10-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:b8cdcb17e59b1e3d89cf59034fcdbc5da4668e4956046dc84f66becdcb0228da", size = 342012, upload-time = "2026-09-29T12:40:35.036Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/3e/b6f14d198ebfc4b7e96065984cf66a02da77523f7e87d272058632afbe7d/blake3-1.0.10-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:1d123f28258262a496927ef45a55199d48993b7d753cd32b921d44989646de82", size = 329371, upload-time = "2026-09-29T12:40:36.289Z" },
+    { url = "https://files.pythonhosted.org/packages/64/fd/b6d98d57c0d1ee88b0b0196d226c0973b1d127bd9d08a3fb862c1c9de4b2/blake3-1.0.10-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3eb08834ea1bba33f4d554b051d0e0bebd4ad6549c92623a7857893d0c171f96", size = 375144, upload-time = "2026-09-29T12:40:37.903Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/c6/5d039a94af2de5990b36b1d7d01982875ac66395737330eeea703fd3160e/blake3-1.0.10-cp311-cp311-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:069e1de7f6221361ff392c4a0968bb7c9093580fd3fc7cc148b83155cb2216b9", size = 373741, upload-time = "2026-09-29T12:40:39.588Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/4c/95274a9c125cae972e1334f99de14e2338266772052cf769e7c06d372f6a/blake3-1.0.10-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:b600c6cfbfe6f9659e85fb4b5fc1d48df04ea1fc020f146dfd8c4b977ce3555e", size = 445735, upload-time = "2026-09-29T12:40:41.052Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/f7/5abc5d96294bd099dbb38080f26e1febcd8dc094f757725d7b764ce4e434/blake3-1.0.10-cp311-cp311-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:2734f7238fd65201fe1418f7df6461832e1af7bffde49eb649ad259d5eda5ab6", size = 487061, upload-time = "2026-09-29T12:40:42.514Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/07/d75e55df25cd50c0d864b60b47dfba53e8fb567cd0b4829edd178c238395/blake3-1.0.10-cp311-cp311-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:b418b475cff4288e014660c8653f8f7853dfba6955652cc5437738c2e55bf66e", size = 384001, upload-time = "2026-09-29T12:40:43.776Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/04/0a0d4ced7329ad34561042218bd8adcee4803e3573ea984f1888573f340a/blake3-1.0.10-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6cb28e28235370abc901294852282e08bca545a4ef02878cecb6c58a8a8b25d3", size = 386505, upload-time = "2026-09-29T12:40:45.062Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/23/fd5307fe8be2df499ed3e4f56554cfbe8601528ab2116fc30f7df1cfed3e/blake3-1.0.10-cp311-cp311-manylinux_2_31_riscv64.whl", hash = "sha256:a1ab843c46d1b16f204bf2f9da6f39cc493dcdb88c85ec32a548a767b4a774b3", size = 382733, upload-time = "2026-09-29T12:40:46.346Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/32/7ffc08278a7577ecf0cad036588e6cac5dcb46f15efb22241f0729485138/blake3-1.0.10-cp311-cp311-musllinux_1_1_aarch64.whl", hash = "sha256:06c46952c5bfc7a59264c0546be11dcf761c96ac0c8f42377c3cd9c369f222df", size = 550847, upload-time = "2026-09-29T12:40:47.679Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/a0/a4ace8ec5558e41316081ed98edc87e692206130929222f02251215a1b67/blake3-1.0.10-cp311-cp311-musllinux_1_1_x86_64.whl", hash = "sha256:21a7ff998223bffe2d367c000468323252650ae5aa9fa1e17e91ba88e1dd8115", size = 592285, upload-time = "2026-09-29T12:40:49.047Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/5b/4a8f11574201be73b5577f8117f192e2e00e6c0af16821da3cb937009f86/blake3-1.0.10-cp311-cp311-win32.whl", hash = "sha256:90e4a35978993a3907d1c09f7511897a1f6f5830021ee6cbef321e6f86f61b99", size = 232386, upload-time = "2026-09-29T12:40:50.346Z" },
+    { url = "https://files.pythonhosted.org/packages/30/76/7bf1d315e63a8d7484042298a1b6b5efa8dc4411bf3648fb2c27225f7a56/blake3-1.0.10-cp311-cp311-win_amd64.whl", hash = "sha256:8be3c0d1b3ad678bb344f1e2471ed9917395e5b06f22a12a895787d3401d32e2", size = 220486, upload-time = "2026-09-29T12:40:51.618Z" },
+]
+
+[[package]]
 name = "brotli"
 version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -951,6 +975,7 @@ name = "podling-voice-design"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "blake3" },
     { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "qwen-tts" },
@@ -966,6 +991,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "blake3", specifier = ">=1.0.5,<2" },
     { name = "huggingface-hub", specifier = ">=0.24.7" },
     { name = "numpy", specifier = ">=2.1,<3" },
     { name = "qwen-tts", specifier = "==0.1.1" },

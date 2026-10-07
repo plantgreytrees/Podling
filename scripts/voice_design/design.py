@@ -38,6 +38,16 @@ class Provenance:
     design_prompt: str
     seed: int
     tool_version: str
+    # Ties the provenance to this clip: Podling refuses it beside another.
+    clip_blake3: str
+
+
+def clip_hash(clip: Path) -> str:
+    """The blake3 hash of the clip file's bytes, as lowercase hex, which
+    Podling compares with the clip it loads."""
+    import blake3
+
+    return blake3.blake3(clip.read_bytes()).hexdigest()
 
 
 def provenance_path(clip: Path) -> Path:
@@ -186,6 +196,8 @@ def main(argv: list[str] | None = None) -> None:
         design_prompt=args.description,
         seed=args.seed,
         tool_version=TOOL_VERSION,
+        # Hashed after writing, so it is the hash of the bytes on disk.
+        clip_blake3=clip_hash(args.out),
     )
     provenance_path(args.out).write_text(
         json.dumps(asdict(provenance), indent=2) + "\n", encoding="utf-8"
