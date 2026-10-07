@@ -97,7 +97,10 @@ fn writes_every_artifact_in_a_versioned_envelope() {
 /// `podling run --episode tests/fixtures/episode.toml --no-cache`). Only the
 /// envelope's `schema_version` may differ. Artifacts added since (the
 /// adjudicator's verdicts) have no golden; nothing is Contested without NLI,
-/// so the verdicts are empty.
+/// so the verdicts are empty. `script.json` was rewritten when the script
+/// request began listing claims in source order (story-driven-script): the
+/// fake writes one turn per claim in request order, so the same turns come in
+/// a new order.
 #[test]
 fn no_nli_config_writes_todays_artifacts() {
     let tmp = tempfile::tempdir().unwrap();
@@ -621,6 +624,10 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
 /// and bumped `PROMPT_VERSION` to 7, the fake LLM to 7 and `script` to 11 (its
 /// input gained the verdicts), so the LLM stages moved again; analyse's key,
 /// a hash of the script it reads, shows the script itself did not change.
+/// story-driven-script split `SCRIPT_PROMPT_VERSION` off `PROMPT_VERSION`,
+/// ordered the script request's claims by source and bumped `script` to 13:
+/// `script` moved, and so did `analyse`, because the fake script now speaks
+/// the claims in source order; `extract_claims` did not.
 const NO_NLI_KEYS: [(&str, &str); 7] = [
     (
         "ingest",
@@ -644,11 +651,11 @@ const NO_NLI_KEYS: [(&str, &str); 7] = [
     ),
     (
         "script",
-        "db0ce133885efec5041e02d4656058624f94d5da17074c53d0380fb7682dd875",
+        "aa4bfe5c7aa0ec7780fe427818f8113e3826d06ef6e7bc93fe2fada2419823e5",
     ),
     (
         "analyse",
-        "038465e90df3d8074e5054c6b0c489c397aaa33443cfe556cf8d76e07ff058b9",
+        "68915896a2a2dc82243424d16518199ea4d1e8541c9de0602b07b9de67692786",
     ),
 ];
 

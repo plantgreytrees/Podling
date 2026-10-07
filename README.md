@@ -96,6 +96,9 @@ sources = [
 analysers = [{ kind = "quote_verifier" }]
 ```
 
+`topic` is the episode's angle: the script follows one through-line taken from it,
+so two topics on the same sources can tell different stories.
+
 An **independence group** names where a source's information came from.
 Five articles rewritten from one wire report belong in one group, so
 together they count as a single source. Podling rejects unknown keys, and
