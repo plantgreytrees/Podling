@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use podling_types::{
     ArtifactKind, AsrConfig, AudioManifest, Document, DocumentId, Envelope, EpisodeAudio,
-    EpisodeSpec, Finding, Lexicon, MixConfig, PerMille, Script, SourceRef, Speaker, TtsConfig,
+    EpisodeSpec, Finding, Lexicon, MixConfig, PerMille, Script, SourceRef, TtsConfig,
 };
 use serde::Serialize;
 
@@ -203,24 +203,8 @@ fn run_inner(
     let adjudicate_input = AdjudicateInput::new(&ledger, &claim_input.chunks, &documents)?;
     let verdicts = cached(&Adjudicate { llm }, &adjudicate_input, cache, &mut report)?;
 
-    let script_input = ScriptInput {
-        topic: spec.topic.clone(),
-        target_minutes: spec.target_minutes,
-        ledger,
-        verdicts,
-        chunks: claim_input.chunks,
-        documents,
-        cast: spec
-            .cast
-            .iter()
-            .map(|member| Speaker {
-                id: member.id.clone(),
-                name: member.name.clone(),
-                role: member.role.clone(),
-            })
-            .collect(),
-        audio: spec.tts.is_some(),
-    };
+    let script_input =
+        ScriptInput::for_episode(spec, ledger, verdicts, claim_input.chunks, documents);
     let script = cached(&WriteScript { llm }, &script_input, cache, &mut report)?;
     // The LLM's last stage: free its GPU memory for the TTS model.
     release("llm", llm.release());

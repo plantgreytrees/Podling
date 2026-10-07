@@ -27,9 +27,7 @@ use podling_core::plugin::{Completion, CompletionRequest, LlmProvider, build_llm
 use podling_core::script_metrics::{ScriptMetrics, cited_claim_overlap, cited_claims};
 use podling_core::stages::{ScriptInput, WriteScript};
 use podling_core::{Result, Stage};
-use podling_types::{
-    Chunk, ClaimId, Document, EpisodeSpec, Ledger, LlmConfig, Script, Speaker, Verdicts,
-};
+use podling_types::{Chunk, ClaimId, Document, EpisodeSpec, Ledger, LlmConfig, Script, Verdicts};
 use serde_json::Value;
 
 /// The phrase the script stage's rejection uses for a citation the ledger
@@ -56,9 +54,9 @@ fn script_eval() {
         saved.verdicts.as_slice().len(),
     );
     println!(
-        "| run | ok | attempts | unknown-citation rejections | secs | words | word ratio | turns | quotes | citations | coverage | judged cited |"
+        "| run | ok | attempts | unknown-citation rejections | secs | words | word ratio | turns | quotes | citations | coverage | cited unsupported | judged cited |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     let mut outcomes = Vec::new();
     for i in 1..=n {
         let outcome = write_one(llm.as_ref(), &saved, &topic);
@@ -164,25 +162,16 @@ impl Saved {
     }
 
     fn input(&self, topic: &str) -> ScriptInput {
-        ScriptInput {
-            topic: topic.to_owned(),
-            target_minutes: self.episode.target_minutes,
-            ledger: self.ledger.clone(),
-            verdicts: self.verdicts.clone(),
-            chunks: self.chunks.clone(),
-            documents: self.documents.clone(),
-            cast: self
-                .episode
-                .cast
-                .iter()
-                .map(|member| Speaker {
-                    id: member.id.clone(),
-                    name: member.name.clone(),
-                    role: member.role.clone(),
-                })
-                .collect(),
-            audio: self.episode.tts.is_some(),
-        }
+        let mut input = ScriptInput::for_episode(
+            &self.episode,
+            self.ledger.clone(),
+            self.verdicts.clone(),
+            self.chunks.clone(),
+            self.documents.clone(),
+        );
+        // `PODLING_SCRIPT_EVAL_TOPIC` may try another angle on the same ledger.
+        input.topic = topic.to_owned();
+        input
     }
 }
 
@@ -286,7 +275,7 @@ impl Outcome {
         );
         match &self.result {
             Ok((_, m)) => format!(
-                "{head} | {} | {:.2} | {} | {} | {} | {}/{} ({:.2}) | {}/{}",
+                "{head} | {} | {:.2} | {} | {} | {} | {}/{} ({:.2}) | {} | {}/{}",
                 m.words,
                 m.word_ratio,
                 m.turns,
@@ -295,13 +284,14 @@ impl Outcome {
                 m.distinct_cited,
                 m.usable_claims,
                 m.coverage,
+                m.cited_unsupported,
                 m.judged_contested_cited,
                 m.judged_contested,
             ),
             Err(message) => {
                 let short: String = message.chars().take(140).collect();
                 format!(
-                    "{head} | — | — | — | — | — | — | — ({})",
+                    "{head} | — | — | — | — | — | — | — | — ({})",
                     short.replace('|', "/")
                 )
             }
