@@ -23,8 +23,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use podling_core::plugin::{build_llm, Completion, CompletionRequest, LlmProvider};
-use podling_core::script_metrics::{cited_claim_overlap, cited_claims, ScriptMetrics};
+use podling_core::plugin::{Completion, CompletionRequest, LlmProvider, build_llm};
+use podling_core::script_metrics::{ScriptMetrics, cited_claim_overlap, cited_claims};
 use podling_core::stages::{ScriptInput, WriteScript};
 use podling_core::{Result, Stage};
 use podling_types::{

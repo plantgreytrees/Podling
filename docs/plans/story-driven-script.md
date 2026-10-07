@@ -130,6 +130,9 @@ units:
         - docs/plans/story-driven-script.md
       write:
         - docs/plans/story-driven-script.md
+        # re-scoped: unit 2 merged this file before `cargo fmt` (edition 2024
+        # import order); the one-line fmt fix lands here
+        - crates/podling-core/tests/script_eval_live.rs
     arch: [ARCH-STORY-05, ARCH-STORY-08]
     tooling: { implementer: implementer, gates: [],
                skills: [], guards: [], mcp: [] }
@@ -268,10 +271,10 @@ Depends on: sds-harness-baseline (2.4 recorded)
 
 ### Step 4 — sds-arc-measure (., docs only)
 Depends on: sds-arc-script, sds-transport-policy
-- [ ] 4.1 Run `script_eval` N=5 on the same two saved runs with the unit-3 code; record the **Arc table** below in the baseline's shape → accept: section holds real numbers and the commit.
-- [ ] 4.2 Run `topic_overlap` on the Titanic run with `"how the 1912 Titanic inquiries disagreed|the ship's construction, its lifeboats and the engineering failure"`; record the overlap → accept: "Topic overlap" section filled.
-- [ ] 4.3 Apply ARCH-STORY-08: arc vs baseline on mean word ratio < 0.70, eventual pass rate below baseline, more unknown-citation rejections than baseline; record the verdict → accept: "ARCH-STORY-08 verdict" section filled; if the gate trips, stop with BLOCKED ON USER (whether to build the act writer); no `act_plan.rs` in the tree either way.
-- [ ] 4.4 Hosted table: if `TOGETHER_API_KEY` is set, run `script_eval` with `PODLING_SCRIPT_EVAL_EPISODE=examples/titanic/episode-together.toml` on baseline and arc code and record it; else record "pending: TOGETHER_API_KEY not set" → accept: the "Hosted table" section says one or the other.
+- [x] 4.1 Run `script_eval` N=5 on the same two saved runs with the unit-3 code; record the **Arc table** below in the baseline's shape → accept: section holds real numbers and the commit.
+- [x] 4.2 Run `topic_overlap` on the Titanic run with `"how the 1912 Titanic inquiries disagreed|the ship's construction, its lifeboats and the engineering failure"`; record the overlap → accept: "Topic overlap" section filled.
+- [x] 4.3 Apply ARCH-STORY-08: arc vs baseline on mean word ratio < 0.70, eventual pass rate below baseline, more unknown-citation rejections than baseline; record the verdict → accept: "ARCH-STORY-08 verdict" section filled; if the gate trips, stop with BLOCKED ON USER (whether to build the act writer); no `act_plan.rs` in the tree either way.
+- [x] 4.4 Hosted table: if `TOGETHER_API_KEY` is set, run `script_eval` with `PODLING_SCRIPT_EVAL_EPISODE=examples/titanic/episode-together.toml` on baseline and arc code and record it; else record "pending: TOGETHER_API_KEY not set" → accept: the "Hosted table" section says one or the other.
 
 ### Step 5 — sds-data-policy-types (., rust, high)
 Tooling: implementer · gates code-reviewer, security-auditor · guards cargo fmt/clippy/test
@@ -340,16 +343,89 @@ episodes (the Tunguska example has no `[tts]`, so it gets no length rule at all 
 `AUDIO_RULES` only).
 
 ## Arc table
-_pending — filled by 4.1._
+The arc prompt (`WriteScript::VERSION` 13, `SCRIPT_PROMPT_VERSION` 1, claims in source order),
+measured 2026-10-07 at commit `a13b3d0` (unit 3 merged on top of origin/main) with `script_eval`
+(N=5 per episode), on the same saved runs, model, server and settings as the baseline.
+
+**Titanic** — topic "how the 1912 Titanic inquiries disagreed"
+
+| run | ok | attempts | unknown-citation rejections | secs | words | word ratio | turns | quotes | citations | coverage | judged cited |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | no | 3 | 0 | 134 | — | — | — | — | — | — | — (turn 2: the text puts "Iceberg right ahead." in quotation marks) |
+| 2 | yes | 3 | 0 | 124 | 124 | 0.17 | 6 | 2 | 6 | 3/10 (0.30) | 1/1 |
+| 3 | no | 3 | 0 | 37 | — | — | — | — | — | — | — (no turn cites the contested claim) |
+| 4 | no | 3 | 0 | 479 | — | — | — | — | — | — | — (output cut off at the stage's token cap of 819…) |
+| 5 | yes | 1 | 0 | 45 | 416 | 0.55 | 8 | 9 | 10 | 8/10 (0.80) | 1/1 |
+
+Summary: eventual pass **2/5**, first-try pass 1/5, mean attempts 2.60, mean word ratio
+**0.36** (passing runs), mean quotes 5.5, mean coverage 0.55, unknown-citation rejections **0**,
+judged Contested cited 2/2.
+
+**Tunguska** — topic "the 1908 Tunguska explosion"
+
+| run | ok | attempts | unknown-citation rejections | secs | words | word ratio | turns | quotes | citations | coverage | judged cited |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | no | 3 | 0 | 95 | — | — | — | — | — | — | — (turn 4: uses {{quote:0}} but the turn has 0 quote references) |
+| 2 | yes | 2 | 0 | 41 | 34 | 0.05 | 2 | 1 | 2 | 2/7 (0.29) | 0/0 |
+| 3 | yes | 3 | 0 | 64 | 55 | 0.07 | 2 | 0 | 2 | 2/7 (0.29) | 0/0 |
+| 4 | yes | 3 | 0 | 462 | 36 | 0.05 | 2 | 1 | 2 | 2/7 (0.29) | 0/0 |
+| 5 | no | 3 | 0 | 73 | — | — | — | — | — | — | — (turn 5: sentence 0 of source 1 has 0 quoted parts) |
+
+Summary: eventual pass **3/5**, first-try pass 0/5, mean attempts 2.80, mean word ratio
+**0.06** (passing runs), mean quotes 0.7, mean coverage 0.29, unknown-citation rejections **0**,
+judged Contested cited 0/0.
+
+Baseline → arc: Titanic eventual pass 3/5 → 2/5, word ratio 0.29 → 0.36, quotes 1.0 → 5.5,
+coverage 0.83 → 0.55; Tunguska eventual pass 4/5 → 3/5, word ratio 0.08 → 0.06, coverage
+0.46 → 0.29. N=5 at temperature 0.2 is small: a one-run difference in pass rate is within noise,
+but it is the gate the rule names.
 
 ## Topic overlap
-_pending — filled by 4.2._
+`topic_overlap` on the saved Titanic run (10 ledger claims), arc prompt at `a13b3d0`, same model
+and server. A first pass at 1 script per topic got no accepted script for either topic (both
+failed validation after 3 attempts), so its overlap was empty; recorded here is the rerun at
+`PODLING_SCRIPT_EVAL_N=3` scripts per topic (union of claims cited by the accepted scripts).
+
+| topic | scripts accepted | distinct claims cited |
+|---|---|---|
+| A: how the 1912 Titanic inquiries disagreed | 2/3 (ratios 0.30, 0.32) | 10 |
+| B: the ship's construction, its lifeboats and the engineering failure | 1/3 (ratio 1.16) | 5 |
+
+Shared **5**, only A **5**, only B **0**, Jaccard **0.50**. The topic does steer selection: the
+construction angle cited half the ledger, all of it also cited under the inquiry angle; the
+inquiry angle cited everything. Small sample (3 accepted scripts in all).
 
 ## ARCH-STORY-08 verdict
-_pending — filled by 4.3._
+**Gate tripped** (docs/architecture/story.rules.md:18), on two of its three conditions, on both
+episodes:
+
+| condition | Titanic | Tunguska | trips |
+|---|---|---|---|
+| arc mean word ratio < 0.70 | 0.36 | 0.06 | yes |
+| arc eventual pass rate below baseline | 2/5 < 3/5 | 3/5 < 4/5 | yes |
+| more unknown-citation rejections than baseline | 0 vs 0 | 0 vs 0 | no |
+
+The rule therefore permits starting the act writer (ARCH-STORY-09/10); whether to build it is
+the user's decision, so this plan stops here with BLOCKED ON USER. No `act_plan.rs` exists in
+the tree. Observation for that decision: the arc prompt alone did not lengthen scripts (the 8B
+model still writes 2-turn Tunguska scripts with no `[tts]` length rule), and its extra
+instructions added failure modes (truncation at the token cap, a missed contested claim).
 
 ## Hosted table
-_pending — filled by 4.4._
+Pending: `TOGETHER_API_KEY` not set in this environment, so the hosted run of
+`examples/titanic/episode-together.toml` was not measured. To record it: set the key (and
+Together's no-training / no-retention settings), then run `script_eval` with
+`PODLING_SCRIPT_EVAL_EPISODE=examples/titanic/episode-together.toml` on the baseline and arc
+commits.
+
+## Notes from execution
+- Unit 5 added `data_policy: None,` to `crates/podling-core/tests/stance_precision.rs` — a
+  one-line consumer compile fix outside its listed write scope (noted in its commit).
+- Unit 4 carries `cargo fmt`'s import-order fix to `tests/script_eval_live.rs`, which unit 2
+  merged unformatted (re-scoped above).
+- `audio_e2e::the_user_and_episode_lexicons_reach_the_worker_the_episode_winning` failed once
+  ("Peer disconnected") under full-suite load during unit 6; it passed 3/3 alone and on the
+  next full run. Treated as a load flake, not changed.
 
 ## Verification background   (citations — for the reviewer, not the executor)
 - Script prompt, `PROMPT_VERSION` in the script fingerprint — `crates/podling-core/src/stages/script.rs:23-58`, `:102-107`.
