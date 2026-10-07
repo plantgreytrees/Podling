@@ -109,7 +109,24 @@ pub enum LlmConfig {
         /// in `/v1`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         unload_after: bool,
+        /// What the server does with the requests. Podling sends nothing to a
+        /// hosted `base_url` (anything but `localhost` or a loopback or
+        /// private IP address) unless this is declared.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_policy: Option<DataPolicy>,
     },
+}
+
+/// What a hosted server does with the text Podling sends it, as the episode's
+/// author declares it. Source text and claims go to the `[llm]` and
+/// `[embedding]` servers, so a server that isn't local must be declared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DataPolicy {
+    /// The endpoint neither trains on nor retains inputs or outputs (zero
+    /// data retention). Declare it only for an endpoint whose terms, or an
+    /// account setting, guarantee that.
+    ZeroRetention,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -137,6 +154,10 @@ pub enum EmbeddingConfig {
         /// `/v1`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         unload_after: bool,
+        /// What the server does with the requests; required for a hosted
+        /// `base_url`, as for `[llm]`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_policy: Option<DataPolicy>,
     },
 }
 

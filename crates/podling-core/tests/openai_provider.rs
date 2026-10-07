@@ -152,6 +152,7 @@ fn provider(server: &MockServer, key: Option<&str>, timeout_secs: Option<u64>) -
         timeout_secs,
         max_output_tokens: Some(256),
         unload_after: false,
+        data_policy: None,
     };
     OpenAiCompat::from_config_with_env(&config, |_| key.map(Into::into))
         .unwrap()

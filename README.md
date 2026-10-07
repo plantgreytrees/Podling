@@ -96,6 +96,9 @@ sources = [
 analysers = [{ kind = "quote_verifier" }]
 ```
 
+`topic` is the episode's angle: the script follows one through-line taken from it,
+so two topics on the same sources can tell different stories.
+
 An **independence group** names where a source's information came from.
 Five articles rewritten from one wire report belong in one group, so
 together they count as a single source. Podling rejects unknown keys, and
@@ -121,19 +124,27 @@ ollama pull llama3.1:8b
 cargo run -p podling-cli -- run --episode examples/tunguska/episode-ollama.toml
 ```
 
-For OpenAI or any hosted provider, name the environment variable that holds
-your key, and set that variable in your shell:
+Podling is local by default: it sends nothing to a server other than `localhost` or
+a loopback or private IP address (127.x, `::1`, 10.x, 172.16–31.x, 192.168.x,
+`fc00::/7`). Any other host, including a LAN name such as `ollama.lan`, counts as
+hosted, so use the server's IP address for a machine on your network. A hosted
+provider must declare `data_policy = "zero_retention"`, and the run is refused before
+any stage if it does not. Declare it only for an endpoint that neither trains on nor
+retains your requests, for example an account with zero data retention. Then name
+the environment variable that holds your key, and set that variable in your shell.
+This is [`examples/titanic/episode-together.toml`](examples/titanic/episode-together.toml):
 
 ```toml
 [llm]
 kind = "open_ai_compat"
-base_url = "https://api.openai.com/v1"
-model = "gpt-4o-mini"
-api_key_env = "OPENAI_API_KEY"
+base_url = "https://api.together.xyz/v1"
+model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+api_key_env = "TOGETHER_API_KEY"
+data_policy = "zero_retention"
 ```
 
 ```sh
-export OPENAI_API_KEY=...   # never put the key in the episode file
+export TOGETHER_API_KEY=...   # never put the key in the episode file
 ```
 
 | Key | Meaning |
@@ -144,12 +155,15 @@ export OPENAI_API_KEY=...   # never put the key in the episode file
 | `temperature`, `max_output_tokens` | Optional. The server's defaults apply when left out. |
 | `timeout_secs` | Optional, default 120. |
 | `unload_after` | Optional, default `false`. Ollama only: free the model as soon as its last stage is done, so the GPU is empty for text-to-speech. |
+| `data_policy` | Required for a hosted `base_url`; the only value is `zero_retention`. Leave it out for a local server. |
 
 **Privacy.** With a hosted provider, the text of your sources (chunk by chunk,
 then the passages behind each Contested claim, then the claim ledger and numbered
 source sentences for the script) is sent to
-that provider. With a local server on `localhost` nothing leaves your machine, so
-that is the recommended default. The key is sent only as an `Authorization:
+that provider, which is why Podling refuses a hosted `base_url` unless the section
+declares `data_policy = "zero_retention"`. A local server (on this machine, or at
+a private address on your own network, which then receives the same text) keeps
+your sources off the internet, so that is the default. The key is sent only as an `Authorization:
 Bearer` header. It is never written to the cache, the artifacts, a log line or an error
 message. Cached outputs derived from your sources are stored under `--cache-dir`.
 
@@ -204,7 +218,7 @@ decided it. The claim's status still comes from fixed rules, never from an LLM.
 | Key | Meaning |
 |---|---|
 | `embedding.kind` | `open_ai_compat` (any server with `POST /v1/embeddings`) or `fake` (offline, for tests). |
-| `embedding.base_url`, `embedding.model`, `embedding.api_key_env`, `embedding.timeout_secs`, `embedding.unload_after` | As for `[llm]`. |
+| `embedding.base_url`, `embedding.model`, `embedding.api_key_env`, `embedding.timeout_secs`, `embedding.unload_after`, `embedding.data_policy` | As for `[llm]`. |
 | `nli.kind` | `cross_encoder` or `fake`. |
 | `nli.model_dir` | Directory with `config.json`, `tokenizer.json` and `model.safetensors`. |
 
@@ -214,7 +228,8 @@ roughly 60 ms per sentence pair, and is loaded only when a stage actually runs, 
 cached rerun never loads it. It is dropped before the script is written.
 
 **Privacy.** The embedding server receives the text of every claim and every source
-sentence. A local server keeps it on your machine. The NLI model is always local.
+sentence. A local server keeps it on your machine; a hosted one needs
+`embedding.data_policy = "zero_retention"`, like `[llm]`. The NLI model is always local.
 
 **Context window.** The script call sends the whole claim ledger plus every chunk's
 numbered sentences. A server with a small context window (Ollama defaults to a few

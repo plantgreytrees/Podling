@@ -8,7 +8,11 @@
 # For a hosted provider, change `base_url` and `model`, and add
 #   api_key_env = "OPENAI_API_KEY"
 # naming the environment variable that holds your key. The key itself never
-# goes in this file. Note that a hosted provider receives your source text.
+# goes in this file. A hosted provider receives your source text, so Podling
+# refuses any host but localhost or a private address unless you also add
+#   data_policy = "zero_retention"
+# which you may declare only for an endpoint that neither trains on nor retains
+# your requests. See examples/titanic/episode-together.toml.
 
 title = "The Tunguska event"
 topic = "the 1908 Tunguska explosion"

@@ -159,6 +159,9 @@ impl SidecarTts {
                 base_url: &base_url,
                 api_key_env: None,
                 timeout_secs: Some(REQUEST_TIMEOUT_SECS),
+                // No policy: the worker is always on this machine, and a
+                // hosted URL here is refused.
+                data_policy: None,
             },
             |_| None,
         )?;

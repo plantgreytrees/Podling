@@ -211,6 +211,16 @@ expression: schema
         "voice"
       ]
     },
+    "DataPolicy": {
+      "description": "What a hosted server does with the text Podling sends it, as the episode's\nauthor declares it. Source text and claims go to the `[llm]` and\n`[embedding]` servers, so a server that isn't local must be declared.",
+      "oneOf": [
+        {
+          "description": "The endpoint neither trains on nor retains inputs or outputs (zero\ndata retention). Declare it only for an endpoint whose terms, or an\naccount setting, guarantee that.",
+          "type": "string",
+          "const": "zero_retention"
+        }
+      ]
+    },
     "EmbeddingConfig": {
       "oneOf": [
         {
@@ -241,6 +251,17 @@ expression: schema
             "base_url": {
               "description": "Base URL up to and including the version segment, e.g.\n`http://localhost:11434/v1`. Must be `http://` or `https://`.",
               "type": "string"
+            },
+            "data_policy": {
+              "description": "What the server does with the requests; required for a hosted\n`base_url`, as for `[llm]`.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DataPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -367,6 +388,17 @@ expression: schema
             "base_url": {
               "description": "Base URL up to and including the version segment, e.g.\n`http://localhost:11434/v1`. Must be `http://` or `https://`.",
               "type": "string"
+            },
+            "data_policy": {
+              "description": "What the server does with the requests. Podling sends nothing to a\nhosted `base_url` (anything but `localhost` or a loopback or\nprivate IP address) unless this is declared.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DataPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
