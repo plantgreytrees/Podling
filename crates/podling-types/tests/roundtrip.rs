@@ -348,6 +348,13 @@ fn a_pronounce_entry_with_nothing_in_it_is_refused() {
             "Kulik = { say = \"Koolick\", heard = [\"\"] }",
             "empty `heard`",
         ),
+        ("\" Kulik\" = \"Koolick\"", "leading or trailing whitespace"),
+        (
+            "\"Kulik \" = { say = \"Koolick\" }",
+            "leading or trailing whitespace",
+        ),
+        // A table without `say` names the missing field.
+        ("Kulik = { heard = [\"Koolik\"] }", "missing field `say`"),
     ] {
         let err = toml::from_str::<EpisodeSpec>(&with_pronounce(entries))
             .unwrap_err()
@@ -380,6 +387,12 @@ fn a_later_lexicon_wins_per_name() {
         Lexicon::new([(" ".into(), say("x"))].into()),
         Err(LexiconError::EmptyName)
     );
+    for padded in [" Kulik", "Kulik ", "\tKulik"] {
+        assert_eq!(
+            Lexicon::new([(padded.into(), say("x"))].into()),
+            Err(LexiconError::PaddedName(padded.into()))
+        );
+    }
 }
 
 const PROVENANCE: &str = r#"{

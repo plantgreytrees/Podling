@@ -376,12 +376,46 @@ pub struct Pronunciation {
 /// An entry is either just the respelling, `Kulik = "Koolick"`, or a table
 /// that also lists what speech recognition writes for the name,
 /// `Kulik = { say = "Koolick", heard = ["Koolik"] }`.
-#[derive(Deserialize, JsonSchema)]
-#[serde(untagged)]
+///
+/// `Deserialize` is written by hand (below) rather than `untagged`, so a
+/// table's own error, such as ``missing field `say` ``, reaches the user
+/// instead of "did not match any variant". The schema stays untagged.
+#[derive(JsonSchema)]
+#[schemars(untagged)]
 enum RawPronunciation {
     /// The respelling only.
     Say(String),
     Full(PronunciationTable),
+}
+
+impl<'de> Deserialize<'de> for RawPronunciation {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Shape;
+
+        impl<'de> serde::de::Visitor<'de> for Shape {
+            type Value = RawPronunciation;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a respelling string or a table with `say` and `heard`")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, say: &str) -> Result<Self::Value, E> {
+                Ok(RawPronunciation::Say(say.to_owned()))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let table = PronunciationTable::deserialize(
+                    serde::de::value::MapAccessDeserializer::new(map),
+                )?;
+                Ok(RawPronunciation::Full(table))
+            }
+        }
+
+        deserializer.deserialize_any(Shape)
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -400,6 +434,10 @@ struct PronunciationTable {
 pub enum LexiconError {
     #[error("a pronunciation entry has an empty name")]
     EmptyName,
+    /// A padded name would never match a whole word, so it is refused rather
+    /// than trimmed: the padding is usually a typo worth seeing.
+    #[error("pronunciation name {0:?} has leading or trailing whitespace")]
+    PaddedName(String),
     #[error("a pronunciation has an empty `say`")]
     EmptySay,
     #[error("a pronunciation has an empty `heard` entry")]
@@ -448,8 +486,13 @@ pub struct Lexicon(BTreeMap<String, Pronunciation>);
 
 impl Lexicon {
     pub fn new(entries: BTreeMap<String, Pronunciation>) -> Result<Self, LexiconError> {
-        if entries.keys().any(|name| name.trim().is_empty()) {
-            return Err(LexiconError::EmptyName);
+        for name in entries.keys() {
+            if name.trim().is_empty() {
+                return Err(LexiconError::EmptyName);
+            }
+            if name != name.trim() {
+                return Err(LexiconError::PaddedName(name.clone()));
+            }
         }
         Ok(Self(entries))
     }
