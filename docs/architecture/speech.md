@@ -64,3 +64,10 @@ flowchart LR
 - **say_as:** the model-facing text of a turn after respelling.
 - **Heard variant:** a spelling Whisper may produce for a name, counted as the name.
 - **Provenance file:** JSON beside a generated clip naming the model, weights commit, prompt, seed and tool version.
+
+## Amendments (2026-10-07, speech-followups)
+
+| Rule | Replaces | Decision | Why | Rejected |
+|---|---|---|---|---|
+| ARCH-SPEECH-18 | ARCH-SPEECH-08 | Lexicon names with leading/trailing whitespace are rejected; a table without `say` gets an error naming `say`; a hand-written `Deserialize` is allowed in place of `untagged`. | A padded name never matches whole-word, so it failed silently. Untagged enums report "did not match any variant", which hides the missing field. | Trimming names silently (hides a typo); keeping untagged and post-checking (the field name is already lost). |
+| ARCH-SPEECH-19 | ARCH-SPEECH-14 | `provenance.json` also records the clip's blake3 hash (lowercase hex); a mismatch rejects the voice. | Without the hash a provenance file could sit beside a different clip from the one it describes. blake3 is already the workspace's content hash, so Rust needs no new crate. | sha256 (Python stdlib, but a new Rust crate); no hash (provenance not tied to the clip). |
