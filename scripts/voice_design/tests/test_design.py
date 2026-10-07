@@ -69,6 +69,26 @@ def args(tmp_path: Path, **overrides) -> list[str]:
     return [part for pair in values.items() for part in pair]
 
 
+def test_main_records_the_hash_of_the_clip_it_wrote(tmp_path, monkeypatch):
+    import json
+
+    import blake3
+    import numpy as np
+
+    # No model or GPU: the snapshot, the memory check and the voice are stubs.
+    monkeypatch.setattr(design, "snapshot", lambda model: tmp_path / "0123abcd")
+    monkeypatch.setattr(design, "free_mib", lambda: design.NEEDS_MIB)
+    tone = np.sin(np.arange(2400, dtype=np.float32) / 8).astype(np.float32)
+    monkeypatch.setattr(design, "generate", lambda model_dir, args: (tone, 24000))
+
+    design.main(args(tmp_path))
+
+    clip = tmp_path / "host.wav"
+    provenance = json.loads(design.provenance_path(clip).read_text(encoding="utf-8"))
+    assert provenance["clip_blake3"] == blake3.blake3(clip.read_bytes()).hexdigest()
+    assert provenance["weights_commit"] == "0123abcd"
+
+
 def test_good_arguments_parse(tmp_path):
     parsed = design.parse_args(args(tmp_path))
     assert (parsed.seed, parsed.out.name, parsed.force) == (7, "host.wav", False)
