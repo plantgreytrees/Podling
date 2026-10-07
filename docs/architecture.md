@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current as of 2026-10-06. It covers Phase 1 (core contracts), the
+> **Status:** current as of 2026-10-07. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes, Phase 2 (the OpenAI-compatible LLM provider) and its
 > scrutinise fixes (unreferenced-quotation check, claim grounding, script input
 > size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
@@ -549,7 +549,9 @@ synthesised as separate short clips for the second track (`synthesize_overlays`)
 [`lexicon.rs`](../crates/podling-core/src/lexicon.rs) reads the user-level
 `pronounce.toml` beside the `sidecars.toml` in use, and lays the episode's
 `[tts.pronounce]` over it, the episode winning per name. An entry is
-`Kulik = "Koolick"`, or `Kulik = { say = "Koolick", heard = ["Koolik"] }`. The
+`Kulik = "Koolick"`, or `Kulik = { say = "Koolick", heard = ["Koolik"] }`. A name
+with leading or trailing whitespace, an empty `say` or `heard` item, or a table
+without `say` is refused when the file is read, each with its own message. The
 lexicon is for names only: in the word test, respelling ordinary words made
 them worse. It has two uses, kept apart:
 - *Respellings, for the model only.* `spoken()` in
