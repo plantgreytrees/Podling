@@ -189,7 +189,7 @@ In order of impact:
 7. **Hosted MVP, under the no-training rule (below).** The fastest way to test a stronger writer needs no code change: point an example episode's `[llm]` at an open-weight model on a host that does not train on inputs and retains nothing.
    - The existing provider already sends the key from a named environment variable and asks for JSON mode (`crates/podling-core/src/plugin/openai.rs:121`).
    - Estimated cost: under ~$0.10 per 10-minute episode at about $0.21 in / $4.20 out per million tokens (DeepSeek V4 Pro pricing, https://pricepertoken.com/endpoints/openrouter).
-   - A 10-minute script fits `MAX_SCRIPT_TOKENS = 8192` (`crates/podling-core/src/stages/script.rs:174`). A 30–60-minute one does not, so long episodes still need the sectioned writer (recommendation 3).
+   - A 10-minute script fits `MAX_SCRIPT_TOKENS = 8192` (`crates/podling-core/src/stages/script.rs:152`). A 30–60-minute one does not, so long episodes still need the sectioned writer (recommendation 3).
    - Run the harness on local and hosted, before and after the arc prompt. That separates "the model is too weak" from "the prompt asks for no story".
 
 ## Data privacy: no training on Podling data
