@@ -82,9 +82,9 @@ struct Scored {
     similarity_pm: PerMille,
     entailment_pm: PerMille,
     contradiction_pm: PerMille,
-    /// The claim (as premise) against each of the premise's numbered
-    /// sentences (as hypotheses), the highest contradiction; absent unless
-    /// both texts hold a number. See `StanceEvidence::reverse_contradiction`.
+    /// The claim (as premise) against each of `reverse_hypotheses(premise)`
+    /// (as hypotheses), the highest contradiction; absent unless both texts
+    /// hold a number. See `StanceEvidence::reverse_contradiction`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reverse_contradiction_pm: Option<PerMille>,
 }
@@ -129,7 +129,7 @@ fn the_pair_set_is_well_formed() {
             p.id
         );
     }
-    // The pair that motivated the same-subject requirement must stay in.
+    // The pair that motivated the similarity floor must stay in.
     assert!(
         pairs
             .iter()
@@ -139,13 +139,15 @@ fn the_pair_set_is_well_formed() {
     );
 }
 
-/// Counts for one stance: emitted and right, emitted and wrong, missed.
+/// Counts for one stance: emitted and right, emitted and wrong, missed, with
+/// the ids of the wrong and the missed pairs.
 #[derive(Debug, Default)]
 struct Counts {
     tp: usize,
     fp: usize,
     missed: usize,
     false_positives: Vec<String>,
+    missed_ids: Vec<String>,
 }
 
 impl Counts {
@@ -199,7 +201,10 @@ impl Report {
                         counts.fp += 1;
                         counts.false_positives.push(pair.id.clone());
                     }
-                    (false, true) => counts.missed += 1,
+                    (false, true) => {
+                        counts.missed += 1;
+                        counts.missed_ids.push(pair.id.clone());
+                    }
                     (false, false) => {}
                 }
             }
@@ -210,19 +215,20 @@ impl Report {
     fn print(&self, title: &str) {
         let pct = |x: Option<f64>| x.map_or("n/a".to_owned(), |x| format!("{:.1}%", x * 100.0));
         eprintln!("{title}");
-        eprintln!("  stance       TP  FP  FN  precision  recall  false positives");
+        eprintln!("  stance       TP  FP  FN  precision  recall  false positives / missed");
         for (name, c) in [
             ("supports", &self.supports),
             ("contradicts", &self.contradicts),
         ] {
             eprintln!(
-                "  {name:<11} {:>3} {:>3} {:>3}  {:>9}  {:>6}  {}",
+                "  {name:<11} {:>3} {:>3} {:>3}  {:>9}  {:>6}  {} / {}",
                 c.tp,
                 c.fp,
                 c.missed,
                 pct(c.precision()),
                 pct(c.recall()),
-                c.false_positives.join(" ")
+                c.false_positives.join(" "),
+                c.missed_ids.join(" ")
             );
         }
     }
@@ -256,9 +262,23 @@ fn stance_precision_report() {
     // `holds_both_ways`) for n21 n33 n34 n37 t02. VERSION 8 reads the whole
     // window the other way too, which recovers t03 (the contradiction sits in
     // a sentence without a number) once the subject rule is gone.
-    let pinned = |c: &Counts| (c.tp, c.fp, c.missed, c.false_positives.join(" "));
-    assert_eq!(pinned(&after.supports), (14, 0, 5, String::new()));
-    assert_eq!(pinned(&after.contradicts), (27, 2, 1, "n35 n36".to_owned()));
+    let pinned = |c: &Counts| {
+        (
+            c.tp,
+            c.fp,
+            c.missed,
+            c.false_positives.join(" "),
+            c.missed_ids.join(" "),
+        )
+    };
+    let pin = |tp, fp, missed, fps: &str, misses: &str| {
+        (tp, fp, missed, fps.to_owned(), misses.to_owned())
+    };
+    assert_eq!(
+        pinned(&after.supports),
+        pin(14, 0, 5, "", "s04 s05 s06 s12 s16")
+    );
+    assert_eq!(pinned(&after.contradicts), pin(27, 2, 1, "n35 n36", "c18"));
 
     // The off-subject windows the model over-calls get no stance at all.
     for (pair, scored) in pairs().iter().zip(&scores().pairs) {
@@ -287,8 +307,8 @@ fn evidence<'a>(pair: &'a Pair, scored: &Scored) -> StanceEvidence<'a> {
 
 /// Scores every pair with the real NLI model and embedder, the way the stage
 /// does (premise = source window, hypothesis = claim, and for two numbered
-/// texts the reverse: premise = claim, hypothesis = each numbered window
-/// sentence), and rewrites `scores.json`.
+/// texts the reverse: premise = claim, hypothesis = each of
+/// `reverse_hypotheses(window)`), and rewrites `scores.json`.
 #[test]
 #[ignore = "needs the NLI model and an embedding server; see the module docs"]
 fn score_the_stance_pairs() {
