@@ -68,6 +68,7 @@ impl OpenAiEmbeddings {
                 base_url,
                 api_key_env: api_key_env.as_deref(),
                 timeout_secs: *timeout_secs,
+                data_policy: *data_policy,
             },
             &env,
         )?;
@@ -82,6 +83,7 @@ impl OpenAiEmbeddings {
                     base_url,
                     model,
                     api_key_env.as_deref(),
+                    *data_policy,
                     &env,
                 )
             })
@@ -223,14 +225,15 @@ mod tests {
 
     #[test]
     fn config_errors_name_the_embedding_section() {
-        for (url, model) in [("ftp://h/v1", "m"), ("http://h/v1", " ")] {
+        for (url, model) in [("ftp://h/v1", "m"), ("http://10.0.0.1/v1", " ")] {
             let Err(CoreError::Config { message }) = build(url, model) else {
                 panic!("{url} {model:?} must be rejected");
             };
             assert!(message.starts_with("embedding."), "{message}");
         }
-        let unset = OpenAiEmbeddings::from_config_with_env(&config("http://h/v1", "m"), |_| None)
-            .unwrap_err();
+        let unset =
+            OpenAiEmbeddings::from_config_with_env(&config("http://10.0.0.1/v1", "m"), |_| None)
+                .unwrap_err();
         assert!(
             unset.to_string().contains("embedding.api_key_env"),
             "{unset}"
@@ -239,22 +242,22 @@ mod tests {
 
     #[test]
     fn fingerprint_has_the_model_but_never_the_key() {
-        let fp = build("http://h/v1/", "nomic").unwrap().fingerprint();
-        assert_eq!(fp["base_url"], "http://h/v1");
+        let fp = build("http://10.0.0.1/v1/", "nomic").unwrap().fingerprint();
+        assert_eq!(fp["base_url"], "http://10.0.0.1/v1");
         assert_eq!(fp["model"], "nomic");
         assert!(!fp.to_string().contains("sk-x"));
     }
 
     #[test]
     fn a_declared_data_policy_is_in_the_fingerprint_and_the_key_never_is() {
-        let mut cfg = config("http://h/v1/", "nomic");
+        let mut cfg = config("http://10.0.0.1/v1/", "nomic");
         if let EmbeddingConfig::OpenAiCompat { data_policy, .. } = &mut cfg {
             *data_policy = Some(DataPolicy::ZeroRetention);
         }
         let declared = OpenAiEmbeddings::from_config_with_env(&cfg, |_| Some("sk-x".into()))
             .unwrap()
             .fingerprint();
-        let undeclared = build("http://h/v1/", "nomic").unwrap().fingerprint();
+        let undeclared = build("http://10.0.0.1/v1/", "nomic").unwrap().fingerprint();
         assert_eq!(declared["data_policy"], "zero_retention");
         assert!(undeclared.get("data_policy").is_none(), "{undeclared}");
         assert_ne!(declared, undeclared);

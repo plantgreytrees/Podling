@@ -76,12 +76,21 @@ impl OpenAiCompat {
                 base_url,
                 api_key_env: api_key_env.as_deref(),
                 timeout_secs: *timeout_secs,
+                data_policy: *data_policy,
             },
             &env,
         )?;
         let unload = unload_after
             .then(|| {
-                OllamaUnload::new("llm", PLUGIN, base_url, model, api_key_env.as_deref(), &env)
+                OllamaUnload::new(
+                    "llm",
+                    PLUGIN,
+                    base_url,
+                    model,
+                    api_key_env.as_deref(),
+                    *data_policy,
+                    &env,
+                )
             })
             .transpose()?;
         if model.trim().is_empty() {
@@ -331,29 +340,34 @@ mod tests {
 
     #[test]
     fn a_named_but_unset_or_empty_key_variable_fails_closed() {
-        let unset =
-            OpenAiCompat::from_config_with_env(&config("http://h/v1", Some("MY_KEY")), no_env)
-                .unwrap_err();
+        let unset = OpenAiCompat::from_config_with_env(
+            &config("http://10.0.0.1/v1", Some("MY_KEY")),
+            no_env,
+        )
+        .unwrap_err();
         assert!(message(unset).contains("MY_KEY"));
 
-        let empty =
-            OpenAiCompat::from_config_with_env(&config("http://h/v1", Some("MY_KEY")), |_| {
-                Some("  ".into())
-            })
-            .unwrap_err();
+        let empty = OpenAiCompat::from_config_with_env(
+            &config("http://10.0.0.1/v1", Some("MY_KEY")),
+            |_| Some("  ".into()),
+        )
+        .unwrap_err();
         assert!(message(empty).contains("MY_KEY"));
     }
 
     #[test]
     fn no_key_variable_means_no_key_and_is_fine() {
-        assert!(OpenAiCompat::from_config_with_env(&config("http://h/v1/", None), no_env).is_ok());
+        assert!(
+            OpenAiCompat::from_config_with_env(&config("http://10.0.0.1/v1/", None), no_env)
+                .is_ok()
+        );
     }
 
     #[test]
     fn debug_and_fingerprint_never_contain_the_key() {
         let key = "sk-super-secret-value";
         let provider = OpenAiCompat::from_config_with_env(
-            &config("https://api.example/v1", Some("MY_KEY")),
+            &config("https://10.0.0.2/v1", Some("MY_KEY")),
             |_| Some(key.into()),
         )
         .unwrap();
@@ -372,7 +386,7 @@ mod tests {
     #[test]
     fn fingerprint_changes_with_model_but_not_with_the_key() {
         let build = |model: &str, key: &str| {
-            let mut cfg = config("https://api.example/v1", Some("K"));
+            let mut cfg = config("https://10.0.0.2/v1", Some("K"));
             if let LlmConfig::OpenAiCompat { model: m, .. } = &mut cfg {
                 *m = model.into();
             }
@@ -388,7 +402,7 @@ mod tests {
     fn a_declared_data_policy_is_in_the_fingerprint_and_the_key_never_is() {
         let key = "sk-super-secret-value";
         let build = |policy: Option<DataPolicy>| {
-            let mut cfg = config("https://api.example/v1", Some("K"));
+            let mut cfg = config("https://10.0.0.2/v1", Some("K"));
             if let LlmConfig::OpenAiCompat { data_policy, .. } = &mut cfg {
                 *data_policy = policy;
             }
@@ -408,7 +422,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_numbers() {
-        let mut cfg = config("http://h/v1", None);
+        let mut cfg = config("http://10.0.0.1/v1", None);
         if let LlmConfig::OpenAiCompat { temperature, .. } = &mut cfg {
             *temperature = Some(f32::NAN);
         }
@@ -429,7 +443,7 @@ mod tests {
     fn the_lower_of_the_episode_and_request_token_caps_is_sent() {
         use crate::plugin::LlmTask;
         let with_cap = |episode: Option<u32>| {
-            let mut cfg = config("http://h/v1", None);
+            let mut cfg = config("http://10.0.0.1/v1", None);
             if let LlmConfig::OpenAiCompat {
                 max_output_tokens, ..
             } = &mut cfg
