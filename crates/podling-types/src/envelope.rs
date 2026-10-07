@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bump when any artifact's serialised shape changes (the schema snapshot
 /// test fails first, as a reminder). Readers treat other versions as foreign.
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,

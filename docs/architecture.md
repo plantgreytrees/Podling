@@ -606,10 +606,10 @@ A `LicenseRef-Podling-Generated` clip is one the user designed with the
 offline tool in [`scripts/voice_design/`](../scripts/voice_design/README.md),
 which is never a sidecar and never run by the pipeline. Such a clip needs
 `<clip>.provenance.json` beside it (`model`, `weights_commit`,
-`design_prompt`, `seed`, `tool_version`; `VoiceProvenance` in `episode.rs`), so
+`design_prompt`, `seed`, `tool_version`, and `clip_blake3`, the blake3 hash of the clip's bytes; `VoiceProvenance` in `episode.rs`), so
 it can be told from a recording and made again. `Voices::resolve` in
 `synthesize.rs` checks this with the other clips, before any stage runs, and
-refuses a missing or invalid file with an error naming the speaker and the path.
+refuses a missing or invalid file, or one whose hash is not the clip's, with an error naming the speaker and the path.
 
 ## Why a claim ledger, not debating agents
 

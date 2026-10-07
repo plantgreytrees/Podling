@@ -30,14 +30,14 @@ without `--force`:
 |---|---|
 | `designed-host.wav` | the clip |
 | `designed-host.txt` | its transcript: exactly `--text` |
-| `designed-host.wav.provenance.json` | `model`, `weights_commit`, `design_prompt`, `seed`, `tool_version` |
+| `designed-host.wav.provenance.json` | `model`, `weights_commit`, `design_prompt`, `seed`, `tool_version`, `clip_blake3` (the blake3 hash of the clip) |
 
 It then prints the `voice = { ... }` line for the speaker's `[[cast]]` entry,
 with `licence = "LicenseRef-Podling-Generated"`. Make the `reference` path
 relative to the episode file.
 
 Podling refuses a voice with that licence unless a valid
-`<clip>.provenance.json` is beside the clip, so a designed voice can always be
+`<clip>.provenance.json` whose `clip_blake3` matches the clip is beside it, so a designed voice can always be
 told from a recorded one and made again from its prompt and seed.
 
 ## Licence policy
@@ -59,6 +59,7 @@ Every direct dependency, and its licence:
 | `numpy` | BSD-3-Clause |
 | `soundfile` | BSD-3-Clause |
 | `huggingface-hub` | Apache-2.0 |
+| `blake3` | CC0-1.0 OR Apache-2.0 |
 | `pytest` (dev only) | MIT |
 
 The model, `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`, is Apache-2.0. No locked
