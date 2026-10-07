@@ -105,10 +105,16 @@ Tooling: implementer · guards cargo test
 Depends on: sa-tool
 
 Needs the GPU sidecar and an LLM (see the live-run notes in `phase5-tts-audio.md` "Live results").
-- [ ] 2.1 In the job tmp dir, copy `examples/tunguska/episode-tts.toml` twice, identical except that the on-copy uncomments `[tts.pronounce]` (`Kulik`, `Vanavara`); only the LLM base URL and timeouts may differ from the committed example, and identically in both → accept: `diff` of the two copies shows only the pronounce lines.
+- [x] 2.1 In the job tmp dir, copy `examples/tunguska/episode-tts.toml` twice, identical except that the on-copy uncomments `[tts.pronounce]` (`Kulik`, `Vanavara`); only the LLM base URL and timeouts may differ from the committed example, and identically in both → accept: `diff` of the two copies shows only the pronounce lines.
 - [ ] 2.2 Run the off-copy, then the on-copy, with one shared `--cache-dir` and separate `--out` directories → accept: both write `audio.json` (exit 1 from an `Error` finding is fine); the off-arm's `script.json` names Kulik or Vanavara. If it names neither, set `target_minutes = 30` in both copies and rerun both, at most twice; still neither → record the A/B as inconclusive and stop the unit.
 - [ ] 2.3 Run `lexicon_ab --off … --on …` and add "Lexicon A/B (speech-acceptance, <date>)" to `phase5-tts-audio.md` "Live results": the setup, the report (all and affected), the verdict and its caveats → accept: the section exists with the numbers and n affected.
 - [ ] 2.4 Build the pack with `--pack ~/podling-listening/lexicon-ab/ --cache-dir <shared cache>` → accept: one X/Y pair per affected chunk, `key.json` and `ratings.md` exist; the key has not been read in this session.
+
+**Stopped 2026-10-07, inconclusive.** The off arm's script named neither name at 10 minutes or at
+30 minutes twice (the second with a new shared cache). Only the off arm was run, since the on arm
+shares its script. The script stage writes one turn at version 12, a regression: see
+`phase5-tts-audio.md` "Lexicon A/B". 2.2–2.4 and step 3 wait for a fix to the script stage, then
+run unchanged.
 
 ### Step 3 — sa-listen (., user, normal)
 Depends on: sa-live

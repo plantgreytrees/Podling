@@ -582,6 +582,35 @@ files are in `~/podling-listening/` (outside the repository).
     (`sidecars/tts/podling_tts/backends/qwen.py:160-161`), so the script's emotions never reach
     the model.
 
+**Lexicon A/B (speech-acceptance, 2026-10-07): inconclusive.** The plan
+([`speech-acceptance.md`](speech-acceptance.md) 2.2) needs an off-arm script that names Kulik or
+Vanavara; none of three tries did, so the comparison, the `lexicon_ab` report and the blind pack were
+not made.
+- *Setup.* Two copies of `examples/tunguska/episode-tts.toml`, identical except the
+  `[tts.pronounce]` lines (`Kulik`, `Vanavara`); both point the LLM and embeddings at a native
+  Ollama 0.35.1 on the GPU (37 tokens/s; the docker container gave 0.29 tokens/s). Qwen3-TTS 1.7B
+  Base, Whisper `base.en`, voices LibriTTS-R 4446/1089, all at HEAD 738c87a (script stage version
+  12).
+- *Tries (off arm only; the on arm would share the script).*
+
+  | Try | `target_minutes` | Cache | Claims | Script | Names | Audio |
+  |---|---|---|---|---|---|---|
+  | 1 | 10 | shared, cold | 8 | 1 turn, 140 tokens | neither | 1 chunk, take 0, 0 ‰, verified |
+  | 2 | 30 | same | 8 | 1 turn, 185 tokens | neither | 1 chunk, take 1, 112 ‰, unverified |
+  | 3 | 30 | new shared cache | 9 | 1 turn, 101 tokens | neither | 1 chunk, take 0, 0 ‰, verified |
+
+  Try 3 used a new cache because the same inputs would have hit the cached script from try 2.
+- *Why: the script stage regressed.* With the same sources, model and claim count (9), the
+  2026-10-05 runs above at script version 10 wrote 10–18 turns and named Kulik. At version 12 every
+  try writes one host turn. In try 2 the turn's spoken text ends with
+  "(citations: [27d97049…])": the claim hash was synthesised, and Whisper's mismatch on it explains
+  the 112 ‰. Versions 11 (1dcb270) and 12 (cd738bd) changed the prompt. 12 added "every judged
+  `contested` entry must be cited" and removed the rule on where ids go; later commits added
+  three attempts with rejection feedback (5d1ce63) without a version bump. Which change causes
+  the one-turn scripts is not yet proven.
+- *Next.* Fix the script stage (an `/investigate`), then rerun this A/B unchanged: the tool
+  (`crates/podling-cli/examples/lexicon_ab.rs`) and the episode copies are ready.
+
 ## Scope Steps (executable core)
 
 ### Step 1 — tts-bakeoff (., python, normal)
