@@ -303,10 +303,64 @@ fn a_bad_user_lexicon_beside_the_profiles_fails_before_any_stage_runs() {
     let err = pipeline::run_with_sidecars(&spec, &profiles, tmp.path(), None, &out).unwrap_err();
     assert!(
         matches!(&err, CoreError::Config { message }
-            if message.contains(&lexicon.display().to_string())),
+            if message.contains(&lexicon.display().to_string())
+                && message.contains("missing field `say`")),
         "{err}"
     );
     assert!(!out.exists(), "nothing ran");
+}
+
+#[test]
+fn the_user_and_episode_lexicons_reach_the_worker_the_episode_winning() {
+    if !python_ok() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    // Both names are whole words in the fixture script's turns.
+    let spec = audio_episode(
+        tmp.path(),
+        "kind = \"sidecar\"\nsidecar = \"stub\"\n\n[tts.pronounce]\nTunguska = \"Toongooskah\"\n",
+    );
+    let profiles = tmp.path().join("sidecars.toml");
+    let capture = tmp.path().join("requests.jsonl");
+    let stub = fixtures().join("fake_sidecar.py");
+    fs::write(
+        &profiles,
+        format!(
+            "[sidecars.stub]\nprogram = \"python3\"\nargs = [{:?}, \"--capture\", {:?}]\n",
+            stub.display().to_string(),
+            capture.display().to_string()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("pronounce.toml"),
+        "[pronounce]\nTunguska = \"Tungoosker\"\nJune = \"Joon\"\n",
+    )
+    .unwrap();
+
+    pipeline::run_with_sidecars(&spec, &profiles, tmp.path(), None, &tmp.path().join("out"))
+        .unwrap();
+
+    // Every turn the worker was asked to say, across all chunks.
+    let sent: Vec<String> = fs::read_to_string(&capture)
+        .unwrap()
+        .lines()
+        .flat_map(|line| {
+            let body: Value = serde_json::from_str(line).unwrap();
+            body["turns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|turn| turn["text"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let said = |word: &str| sent.iter().any(|text| text.contains(word));
+    assert!(said("Toongooskah"), "the episode's respelling: {sent:?}");
+    assert!(said("Joon"), "the user's own respelling: {sent:?}");
+    assert!(!said("Tungoosker"), "the episode wins per name: {sent:?}");
+    assert!(!said("Tunguska") && !said("June"), "no name left: {sent:?}");
 }
 
 fn python_ok() -> bool {
