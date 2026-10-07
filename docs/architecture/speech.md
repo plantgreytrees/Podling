@@ -45,7 +45,7 @@ flowchart LR
 | ARCH-SPEECH-10 | Built-in British/American word-pair table | No false matches, no dependency, grows when misses show up | Suffix rules (mangle `acre`, `genre`, `premise`); rules plus list |
 | ARCH-SPEECH-11 | No stage version bumps | Keys already change exactly where output changes; the check isn't cached | Bumping (needlessly re-synthesises every episode) |
 | ARCH-SPEECH-13/14/15 | `LicenseRef-Podling-Generated` plus a required provenance file, made by an offline design script (user's choice) | Self-designed voices have no CC source; SPDX `LicenseRef-` keeps the manifest valid; provenance records model, prompt and seed | Defer the tool until the voice marketplace; record generated clips as CC0 |
-| ARCH-SPEECH-16 | `PROMPT_VERSION` bump for the anti-banter prompt | Bump rules | — |
+| ARCH-SPEECH-16 | *Superseded by [ARCH-STORY-02](./story.md):* script-prompt changes now bump `SCRIPT_PROMPT_VERSION`, so they no longer re-run claim extraction | Bump rules | — |
 | ARCH-SPEECH-17 | No model swap here | A swap needs its own VRAM-gated spike | Switch to an instruction-capable model now |
 
 ## Data & flows
