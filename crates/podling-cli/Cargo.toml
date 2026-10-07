@@ -10,6 +10,12 @@ publish.workspace = true
 name = "podling"
 path = "src/main.rs"
 
+# A one-off acceptance check, not part of the shipped binary. `test = true`
+# makes `cargo test` build the example and run its unit tests too.
+[[example]]
+name = "lexicon_ab"
+test = true
+
 [dependencies]
 podling-types.workspace = true
 podling-core.workspace = true
