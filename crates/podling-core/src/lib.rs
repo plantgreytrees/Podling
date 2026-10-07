@@ -7,6 +7,7 @@ pub mod error;
 pub mod lexicon;
 pub mod pipeline;
 pub mod plugin;
+pub mod script_metrics;
 pub mod stage;
 pub mod stages;
 pub mod text;
