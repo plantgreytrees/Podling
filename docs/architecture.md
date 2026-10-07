@@ -405,7 +405,7 @@ evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are s
 
 **Measured precision.** `tests/stance_precision.rs` runs the rule on 85 hand-labelled
 pairs scored once by the real models, both ways (`tests/fixtures/stance_pairs/`); the
-test pins the current rule's counts and false-positive ids exactly, so any rule change
+test pins the current rule's counts, false-positive ids and missed ids exactly, so any rule change
 must update them on purpose, and
 `cargo test -p podling-core --test stance_precision -- --nocapture report` prints the
 before/after table. VERSION 8: supports precision 100% / recall 73.7%, contradicts
@@ -422,7 +422,9 @@ n34 n35 n36 n37. A set this small shows the rule fits it, not that it generalise
 A chunk gives a claim at most one piece of evidence, from its most decisive window, and
 entailment wins over contradiction, so a chunk is never both for and against.
 
-**Cost bound.** At most 4 NLI pairs per claim for stances, plus 2 × 8 per claim for
+**Cost bound.** At most 4 NLI pairs per claim for stances, plus up to 2 reverse pairs for
+each of those windows that would contradict a numbered claim (a window has at most two
+sentences, so at most two `reverse_hypotheses`), 12 in all; plus 2 × 8 per claim for
 clustering, and one embedding per claim and per window. Both stages are cached by
 content, so a rerun costs nothing, and a fully cached run never loads the NLI model.
 
