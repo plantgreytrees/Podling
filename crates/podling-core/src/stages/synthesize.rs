@@ -1120,16 +1120,28 @@ mod tests {
 
     #[test]
     fn a_generated_voice_with_bad_provenance_is_refused() {
-        for bad in [
-            "not json",
-            r#"{"model": "m", "weights_commit": "c", "design_prompt": "p", "seed": 1}"#,
-            r#"{"model": "", "weights_commit": "c", "design_prompt": "p", "seed": 1,
-                "tool_version": "0.1.0"}"#,
+        // Each bad file, and a word its error must name.
+        let empty_model = provenance_for(blake3::hash(b"designed").to_hex().as_str()).replace(
+            r#""model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign""#,
+            r#""model": """#,
+        );
+        for (bad, named) in [
+            ("not json".to_owned(), "is not valid"),
+            (
+                r#"{"model": "m", "weights_commit": "c", "design_prompt": "p", "seed": 1}"#
+                    .to_owned(),
+                "missing field",
+            ),
+            // Complete but for an empty field, so the emptiness check is reached.
+            (empty_model, "\"model\""),
         ] {
             let dir = tempfile::tempdir().unwrap();
-            let (member, path) = generated_voice(dir.path(), Some(bad));
+            let (member, path) = generated_voice(dir.path(), Some(&bad));
             let message = config_message(Voices::resolve(&[member], dir.path()).unwrap_err());
-            assert!(message.contains(&path.display().to_string()), "{message}");
+            assert!(
+                message.contains(&path.display().to_string()) && message.contains(named),
+                "{message}"
+            );
         }
     }
 
