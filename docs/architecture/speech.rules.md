@@ -3,7 +3,7 @@ area: speech
 governs: ["crates/podling-core/src/stages/synthesize.rs", "crates/podling-core/src/lexicon.rs", "crates/podling-core/src/stages/verify_audio.rs", "crates/podling-core/src/stages/script.rs", "crates/podling-core/src/plugin/tts.rs", "crates/podling-core/src/plugin/sidecar_tts.rs", "crates/podling-core/src/pipeline.rs", "crates/podling-types/src/episode.rs", "sidecars/tts/podling_tts/**", "scripts/voice_design/**"]
 human: docs/architecture/speech.md
 source: docs/ideas/natural-episode-speech.md
-verified_at: a35db071bb9156b58965aaa6215ccfd6260e3569
+verified_at: 6eeb1c984f579fd78d0cfd55bbd5618bd2d4fc02
 updated: 2026-10-07
 ---
 # ARCH speech — enforced rules
@@ -13,7 +13,7 @@ updated: 2026-10-07
 - **ARCH-SPEECH-03** [decided] MUST NOT change the worker protocol (`PROTOCOL = 1`), the backends or `ADAPTER_VERSION` for pronunciation; the worker never sees the lexicon — check: no diff under `sidecars/tts/podling_tts/` for pronunciation work — cite: sidecars/tts/podling_tts/backends/__init__.py:23
 - **ARCH-SPEECH-04** [decided] MUST keep `SpokenTurn::said()`, the speech check's expected text and the quotes on the original words; a respelling never reaches `Check::new` — check: `said()` reads `text`, never `say_as` — cite: crates/podling-core/src/plugin/tts.rs:75
 - **ARCH-SPEECH-05** [decided] MUST match lexicon names whole-word and case-sensitively, longest name first, in the turn's own text only (not backchannel text); a turn with no match MUST get `say_as = None`, so its chunk key is unchanged — check: unit tests for word boundary, case, overlap order and the unchanged key of a turn without names — cite: crates/podling-core/src/lexicon.rs:131
-- **ARCH-SPEECH-06** [decided] MUST merge the user-level lexicon `pronounce.toml` (beside the `sidecars.toml` in use, by default in `~/.config/podling/`) with the episode's `[tts.pronounce]`, the episode entry winning per name; the user file is located by the CLI/pipeline like `sidecars.toml` and never named by the episode — check: merge test where both define a name — cite: crates/podling-core/src/pipeline.rs:337
+- **ARCH-SPEECH-06** [decided] MUST merge the user-level lexicon `pronounce.toml` (beside the `sidecars.toml` in use, by default in `~/.config/podling/`) with the episode's `[tts.pronounce]`, the episode entry winning per name; the user file is located by the CLI/pipeline like `sidecars.toml` and never named by the episode — check: merge test where both define a name — cite: crates/podling-core/src/pipeline.rs:321
 - **ARCH-SPEECH-07** [decided] MUST put the episode lexicon inside `TtsConfig::Sidecar` as `pronounce` (default empty), so an episode without `[tts]` is unchanged, and MUST bump `SCHEMA_VERSION` and refresh the schema snapshot — check: schema snapshot diff shows only the new optional field; `SCHEMA_VERSION` incremented — cite: crates/podling-types/src/episode.rs:603
 - **ARCH-SPEECH-08** [superseded by ARCH-SPEECH-18] MUST accept a lexicon entry as `Name = "say"` or `Name = { say = "...", heard = ["..."] }` (untagged), rejecting an empty name, an empty `say` or an empty `heard` item at deserialisation — check: deserialisation tests for both shapes and each rejection — cite: crates/podling-types/src/episode.rs:402
 - **ARCH-SPEECH-09** [decided] MUST apply `heard` variants to the transcript's words only, mapping each variant to the name's words before WER and quote matching — check: test where Whisper's variant scores 0 WER against the original name — cite: crates/podling-core/src/stages/verify_audio.rs:417
