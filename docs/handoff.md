@@ -5,23 +5,20 @@
 > was finished. NLI grounding in extraction and Phase 5 (episode audio) were
 > merged before it.
 
-> **Status (2026-10-07):** stance-precision is merged to main; its follow-up
-> stance-two-way is built on branch `worktree-stance-quantity`.
-> `score_stances` VERSION 7 refuses a number-against-number contradiction
-> whose premise names the claim's subject only in sentences without a number,
-> and one the NLI model doesn't also find with claim and premise swapped (see
+> **Status (2026-10-07):** stance-precision, stance-two-way and
+> stance-whole-window are done. `score_stances` VERSION 8 refuses a
+> number-against-number contradiction that the NLI model doesn't also find
+> with claim and premise swapped. It reads the claim back against each
+> numbered sentence and, for a window that also has a numberless sentence,
+> the whole window. The word-overlap subject rule of VERSIONs 3–7 is gone (see
 > `docs/architecture.md`, score_stances). On 85 labelled pairs, contradicts
-> precision is 92.9% (VERSION 2: 80.0%) at recall 92.9%. Two misses: c18, a
-> count the model reads as a subset (the approved cost), and t03, a
-> contradiction stated in a sentence without a number inside a numbered
-> window, found by `/scrutinise` and not yet decided on: the claim is read
-> back only against the numbered sentences (`docs/plans/stance-two-way.md`
-> and `docs/plans/scrutinise-stance-two-way.md`, Reports). The lifeboat case is addressed and the live check below has been
-> run: cold runs (llama3.1:8b) show "706 persons were saved." Contested and
-> "The vessel was provided with lifeboats for 1,176 persons." single-source on
-> Titanic, and 0 Contested of 9 claims on Tunguska. One known limit remains: a
-> pronoun that means another noun (pairs n35, n36) still keeps the model's
-> contradiction.
+> precision is 93.1% (VERSION 2: 80.0%) at recall 96.4%. The one miss is c18, a
+> count the model reads as a subset (the approved cost); t03 is recovered
+> (`docs/plans/stance-whole-window.md`, Report). Cold live runs
+> (llama3.1:8b) show "706 persons were saved." as the only Contested claim on
+> Titanic, with the lifeboat capacity single-source, and 0 Contested of 7
+> claims on Tunguska. One known limit remains: the model calls n35 and n36 (a
+> pronoun meaning another noun) a contradiction both ways.
 
 ## Goal
 

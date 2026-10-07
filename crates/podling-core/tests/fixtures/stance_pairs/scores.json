@@ -498,7 +498,7 @@
       "similarity_pm": 747,
       "entailment_pm": 1,
       "contradiction_pm": 997,
-      "reverse_contradiction_pm": 995
+      "reverse_contradiction_pm": 998
     },
     {
       "id": "n29",
@@ -570,7 +570,7 @@
       "similarity_pm": 799,
       "entailment_pm": 0,
       "contradiction_pm": 999,
-      "reverse_contradiction_pm": 995
+      "reverse_contradiction_pm": 997
     },
     {
       "id": "n34",
@@ -642,7 +642,7 @@
       "similarity_pm": 883,
       "entailment_pm": 0,
       "contradiction_pm": 1000,
-      "reverse_contradiction_pm": 2
+      "reverse_contradiction_pm": 1000
     }
   ]
 }

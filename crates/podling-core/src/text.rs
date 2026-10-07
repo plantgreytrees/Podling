@@ -8,11 +8,11 @@ use std::ops::Range;
 ///
 /// A sentence ends at `.`, `!` or `?` followed by whitespace or the end of the
 /// text. Deliberately simple: real claim extraction is the language model's
-/// job. Besides the fake provider and tests, the stance gate
-/// (`score_stances::number_is_about_the_subject`) reads it, so its known
-/// limit matters there: an abbreviation ends a sentence ("Dr. Kulik" splits
-/// after "Dr."). Changing how it splits changes stance results, so bump
-/// `ScoreStances` VERSION with it.
+/// job. Besides the fake provider and tests, the stance check
+/// (`score_stances::reverse_hypotheses`) reads it, so its known limit matters
+/// there: an abbreviation ends a sentence ("Dr. Kulik" splits after "Dr.").
+/// Changing how it splits changes stance results, so bump `ScoreStances`
+/// VERSION with it.
 pub fn sentences(text: &str) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -30,8 +30,9 @@ pub fn sentences(text: &str) -> Vec<Range<usize>> {
 }
 
 /// Words that carry no claim content, so they can't ground one.
-/// The stance gate reads these through [`content_words`]: changing the list
-/// changes stance results, so bump `ScoreStances` VERSION with it.
+/// Claim grounding (`extract_claims::is_grounded`) reads these through
+/// [`content_words`]: changing the list changes which claims ground, so bump
+/// `ExtractClaims` VERSION with it.
 const STOP_WORDS: &[&str] = &[
     "the", "and", "that", "with", "from", "this", "for", "are", "was", "were", "has", "had",
     "have", "its", "his", "her", "their", "they", "them", "over", "into", "about", "also", "but",
