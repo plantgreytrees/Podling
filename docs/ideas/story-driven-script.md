@@ -1,13 +1,13 @@
 ---
 slug: story-driven-script
-status: pursue-with-changes
+status: architected
 verdict: pursue-with-changes
 confidence: medium
 depth: standard
 isolation: isolated
 created: 2026-10-07
 updated: 2026-10-07
-related: [docs/ideas/natural-episode-speech.md, docs/architecture/speech.rules.md, docs/plans/phase5-tts-audio.md, docs/plans/phase4-adjudicator.md, docs/handoff.md, docs/architecture.md]
+related: [docs/architecture/story.rules.md, docs/architecture/privacy.rules.md, docs/ideas/natural-episode-speech.md, docs/architecture/speech.rules.md, docs/plans/phase5-tts-audio.md, docs/plans/phase4-adjudicator.md, docs/handoff.md, docs/architecture.md]
 touches:
   - crates/podling-core/src/stages/script.rs            # INSTRUCTIONS/AUDIO_RULES (arc, focus); later a sectioned writer
   - crates/podling-core/src/plugin/llm.rs               # PROMPT_VERSION (ARCH-SPEECH-16); a new LlmTask only if a section/outline call is added
