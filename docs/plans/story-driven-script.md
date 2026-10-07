@@ -299,7 +299,45 @@ for the hosted example. The tracks share only `tests/pipeline.rs` (3.6 moves the
 6.5 adds a test); whichever lands second merges on top of the first.
 
 ## Baseline table
-_pending — filled by 2.4 (today's prompt, llama3.1:8b, local Ollama, N=5 per episode)._
+Today's prompt (`WriteScript::VERSION` 12, `PROMPT_VERSION` 8), measured 2026-10-07 at commit
+`ce8e757` with `script_eval` (N=5 per episode). Model llama3.1:8b (Q4_K_M, digest `46e0c10c…`,
+the same weights as the Ollama container) on a native GPU Ollama at `127.0.0.1:11435`
+(`OLLAMA_CONTEXT_LENGTH=16384`), temperature 0.2. Saved runs: `podling run` of
+`examples/{titanic,tunguska}/episode-ollama.toml` (local `[llm]`/`[embedding]`, NLI on) at the
+same commit. Titanic ledger: 10 claims (9 SingleSource, 1 Contested with a verdict). Tunguska
+ledger: 7 claims (6 SingleSource, 1 Corroborated), no verdicts. Target 5 minutes (750 words).
+
+**Titanic** — topic "how the 1912 Titanic inquiries disagreed"
+
+| run | ok | attempts | unknown-citation rejections | secs | words | word ratio | turns | quotes | citations | coverage | judged cited |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | no | 3 | 0 | 128 | — | — | — | — | — | — | — (turn 3: source 2 has 1 sentences, so sentence 1 does not exist) |
+| 2 | no | 3 | 0 | 96 | — | — | — | — | — | — | — (turn 3: the text puts "Iceberg right ahead." in quotation marks) |
+| 3 | yes | 2 | 0 | 91 | 280 | 0.37 | 10 | 1 | 10 | 9/10 (0.90) | 1/1 |
+| 4 | yes | 2 | 0 | 69 | 131 | 0.17 | 7 | 1 | 7 | 7/10 (0.70) | 1/1 |
+| 5 | yes | 3 | 0 | 128 | 245 | 0.33 | 11 | 1 | 11 | 9/10 (0.90) | 1/1 |
+
+Summary: eventual pass **3/5**, first-try pass 0/5, mean attempts 2.60, mean word ratio
+**0.29** (passing runs), mean quotes 1.0, mean coverage 0.83, unknown-citation rejections **0**,
+judged Contested cited 3/3.
+
+**Tunguska** — topic "the 1908 Tunguska explosion"
+
+| run | ok | attempts | unknown-citation rejections | secs | words | word ratio | turns | quotes | citations | coverage | judged cited |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | yes | 1 | 0 | 14 | 37 | 0.05 | 2 | 0 | 2 | 2/7 (0.29) | 0/0 |
+| 2 | no | 3 | 0 | 94 | — | — | — | — | — | — | — (turn 2: source 1 has 1 sentences, so sentence 1 does not exist) |
+| 3 | yes | 2 | 0 | 84 | 115 | 0.15 | 6 | 3 | 7 | 7/7 (1.00) | 0/0 |
+| 4 | yes | 1 | 0 | 11 | 37 | 0.05 | 2 | 0 | 2 | 2/7 (0.29) | 0/0 |
+| 5 | yes | 1 | 0 | 10 | 37 | 0.05 | 2 | 0 | 2 | 2/7 (0.29) | 0/0 |
+
+Summary: eventual pass **4/5**, first-try pass 3/5, mean attempts 1.60, mean word ratio
+**0.08** (passing runs), mean quotes 0.8, mean coverage 0.46, unknown-citation rejections **0**,
+judged Contested cited 0/0.
+
+Note for ARCH-STORY-08: today's prompt is already far below the 0.70 word-ratio line on both
+episodes (the Tunguska example has no `[tts]`, so it gets no length rule at all — rule 9 is in
+`AUDIO_RULES` only).
 
 ## Arc table
 _pending — filled by 4.1._
