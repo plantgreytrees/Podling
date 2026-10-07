@@ -23,7 +23,7 @@ pub use claim::{Claim, Evidence, EvidenceBasis, InvalidPerMille, PerMille, Stanc
 pub use document::{Chunk, Document, SourceRef, TextSpan};
 pub use envelope::{ArtifactKind, Envelope, SCHEMA_VERSION};
 pub use episode::{
-    AnalyserConfig, AsrConfig, CastMember, EmbeddingConfig, Encode, EpisodeSpec,
+    AnalyserConfig, AsrConfig, CastMember, DataPolicy, EmbeddingConfig, Encode, EpisodeSpec,
     GENERATED_VOICE_LICENCE, Gaps, Lexicon, LexiconError, LlmConfig, MixConfig, Mode, NliConfig,
     Pronunciation, ProvenanceError, SourceSpec, TtsConfig, VoiceProvenance, VoiceRef,
     VoiceRefError, provenance_path,

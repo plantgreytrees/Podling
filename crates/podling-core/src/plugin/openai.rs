@@ -11,7 +11,7 @@
 
 use std::time::{Duration, Instant};
 
-use podling_types::LlmConfig;
+use podling_types::{DataPolicy, LlmConfig};
 use serde_json::{Value, json};
 
 use super::http::{Transport, TransportConfig, config_error};
@@ -33,6 +33,8 @@ pub struct OpenAiCompat {
     model: String,
     temperature: Option<f32>,
     max_output_tokens: Option<u32>,
+    /// The episode's declared policy, in the fingerprint when set.
+    data_policy: Option<DataPolicy>,
     /// Set by `unload_after = true`.
     unload: Option<OllamaUnload>,
 }
@@ -59,6 +61,7 @@ impl OpenAiCompat {
             timeout_secs,
             max_output_tokens,
             unload_after,
+            data_policy,
         } = config
         else {
             return Err(config_error("not an open_ai_compat configuration"));
@@ -97,6 +100,7 @@ impl OpenAiCompat {
             model: model.clone(),
             temperature: *temperature,
             max_output_tokens: *max_output_tokens,
+            data_policy: *data_policy,
             unload,
         })
     }
@@ -182,15 +186,21 @@ impl LlmProvider for OpenAiCompat {
     }
 
     /// Never includes the key: rotating it must not invalidate the cache.
+    /// A declared `data_policy` is included; an undeclared one adds nothing,
+    /// so a local episode keeps its cache keys.
     fn fingerprint(&self) -> Value {
-        json!({
+        let mut fingerprint = json!({
             "provider": PLUGIN,
             "base_url": self.transport.base_url(),
             "model": self.model,
             "temperature": self.temperature,
             "max_output_tokens": self.max_output_tokens,
             "prompt_version": PROMPT_VERSION,
-        })
+        });
+        if let Some(policy) = self.data_policy {
+            fingerprint["data_policy"] = json!(policy);
+        }
+        fingerprint
     }
 
     fn complete(&self, request: &CompletionRequest) -> Result<Completion> {
@@ -276,6 +286,7 @@ mod tests {
             timeout_secs: None,
             max_output_tokens: Some(512),
             unload_after: false,
+            data_policy: None,
         }
     }
 
@@ -371,6 +382,28 @@ mod tests {
         };
         assert_eq!(build("a", "key-1"), build("a", "key-2"));
         assert_ne!(build("a", "key-1"), build("b", "key-1"));
+    }
+
+    #[test]
+    fn a_declared_data_policy_is_in_the_fingerprint_and_the_key_never_is() {
+        let key = "sk-super-secret-value";
+        let build = |policy: Option<DataPolicy>| {
+            let mut cfg = config("https://api.example/v1", Some("K"));
+            if let LlmConfig::OpenAiCompat { data_policy, .. } = &mut cfg {
+                *data_policy = policy;
+            }
+            OpenAiCompat::from_config_with_env(&cfg, |_| Some(key.into()))
+                .unwrap()
+                .fingerprint()
+        };
+        let declared = build(Some(DataPolicy::ZeroRetention));
+        let undeclared = build(None);
+        assert_eq!(declared["data_policy"], "zero_retention");
+        assert!(undeclared.get("data_policy").is_none(), "{undeclared}");
+        assert_ne!(declared, undeclared);
+        for fingerprint in [declared, undeclared] {
+            assert!(!fingerprint.to_string().contains(key), "{fingerprint}");
+        }
     }
 
     #[test]
