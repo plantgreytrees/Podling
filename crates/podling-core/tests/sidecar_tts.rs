@@ -38,6 +38,13 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_sidecar.py")
 }
 
+/// The marker a test's worker carries on its command line: the test's tag
+/// and this run's pid, so concurrent runs of the suite (other worktrees'
+/// gates) never find each other's workers in `/proc`.
+fn needle(tag: &str) -> String {
+    format!("podling-test-{}-{tag}", std::process::id())
+}
+
 /// A unique tag per test, so a test can find its own worker in `/proc`.
 fn stub(mode: &str, tag: &str) -> SidecarProfile {
     SidecarProfile {
@@ -47,7 +54,7 @@ fn stub(mode: &str, tag: &str) -> SidecarProfile {
             "--mode".into(),
             mode.into(),
             "--tag".into(),
-            format!("podling-test-{tag}"),
+            needle(tag),
         ],
     }
 }
@@ -63,7 +70,7 @@ fn start(profile: &SidecarProfile) -> Result<SidecarTts, CoreError> {
 
 /// Pids of live (not zombie) processes whose command line contains `tag`.
 fn running(tag: &str) -> Vec<u32> {
-    let needle = format!("podling-test-{tag}");
+    let needle = needle(tag);
     let mut pids = Vec::new();
     for entry in std::fs::read_dir("/proc").unwrap().flatten() {
         let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) else {
@@ -86,6 +93,36 @@ fn alive(pid: u32) -> bool {
             .rsplit_once(')')
             .is_some_and(|(_, rest)| rest.starts_with(" Z"))
     })
+}
+
+#[test]
+fn another_runs_worker_is_not_counted() {
+    if !python_ok() {
+        return;
+    }
+    // A worker of another run of this suite (another worktree's gate, say),
+    // tagged the way that run would tag it, with its own pid.
+    let foreign = format!("podling-test-{}-decoy", std::process::id() + 1);
+    let mut decoy = Command::new("python3")
+        .args([
+            "-c",
+            "import time; time.sleep(30)",
+            "podling-test-decoy",
+            &foreign,
+        ])
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !alive(decoy.id()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let seen = running("decoy");
+    decoy.kill().unwrap();
+    decoy.wait().unwrap();
+    assert!(
+        seen.is_empty(),
+        "another run's worker was counted: {seen:?}"
+    );
 }
 
 fn turn(speaker: &str, text: &str, emotion: Emotion) -> SpokenTurn {

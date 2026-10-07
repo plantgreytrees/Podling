@@ -21,7 +21,11 @@ use std::path::{Path, PathBuf};
 use podling_core::plugin::{
     CrossEncoderNli, EmbeddingProvider, NliPair, NliProvider, OpenAiEmbeddings, cosine,
 };
-use podling_core::stages::score_stances::{StanceEvidence, decide};
+use podling_core::stage::Stage;
+use podling_core::stages::score_stances::{
+    ScoreStances, StanceEvidence, decide, reverse_hypotheses,
+};
+use podling_core::text::numbers;
 use podling_types::{EmbeddingConfig, PerMille, Stance};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -78,6 +82,11 @@ struct Scored {
     similarity_pm: PerMille,
     entailment_pm: PerMille,
     contradiction_pm: PerMille,
+    /// The claim (as premise) against each of the premise's numbered
+    /// sentences (as hypotheses), the highest contradiction; absent unless
+    /// both texts hold a number. See `StanceEvidence::reverse_contradiction`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reverse_contradiction_pm: Option<PerMille>,
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -178,13 +187,7 @@ impl Report {
                 "scores.json is stale for {}: run score_the_stance_pairs",
                 pair.id
             );
-            let got = rule(&StanceEvidence {
-                claim: &pair.claim,
-                premise: &pair.premise,
-                similarity: scored.similarity_pm,
-                entailment: scored.entailment_pm,
-                contradiction: scored.contradiction_pm,
-            });
+            let got = rule(&evidence(pair, scored));
             let want = pair.label.stance();
             for (stance, counts) in [
                 (Stance::Supports, &mut report.supports),
@@ -241,47 +244,51 @@ fn stance_precision_report() {
     let before = Report::of(decide_v2);
     let after = Report::of(decide);
     before.print("before: VERSION 2 rule on the labelled pair set");
-    after.print("after: score_stances::decide on the labelled pair set");
+    after.print(&format!(
+        "after: VERSION {} rule (score_stances::decide) on the labelled pair set",
+        <ScoreStances<'_> as Stage>::VERSION
+    ));
 
-    let mut better = false;
-    for (name, b, a) in [
-        ("supports", &before.supports, &after.supports),
-        ("contradicts", &before.contradicts, &after.contradicts),
-    ] {
-        // A gate that only removes stances raises precision for free by
-        // dropping right ones too, so recall must hold as well.
-        let (br, ar) = (b.recall().unwrap(), a.recall().unwrap());
-        assert!(ar >= br, "{name} recall fell: {br:.3} -> {ar:.3}");
-        let (b, a) = (b.precision().unwrap(), a.precision().unwrap());
-        assert!(a >= b, "{name} precision fell: {b:.3} -> {a:.3}");
-        better |= a > b;
+    // The current rule's figures, pinned exactly: a rule change that moves
+    // any of them, for better or worse, must update them here on purpose,
+    // with the printed before/after as its justification. Against VERSION 2,
+    // the two-way check trades c18 (a count the model reads as a subset, see
+    // `holds_both_ways`) for n21 n33 n34 n37 t02. VERSION 8 reads the whole
+    // window the other way too, which recovers t03 (the contradiction sits in
+    // a sentence without a number) once the subject rule is gone.
+    let pinned = |c: &Counts| (c.tp, c.fp, c.missed, c.false_positives.join(" "));
+    assert_eq!(pinned(&after.supports), (14, 0, 5, String::new()));
+    assert_eq!(pinned(&after.contradicts), (27, 2, 1, "n35 n36".to_owned()));
+
+    // The off-subject windows the model over-calls get no stance at all.
+    for (pair, scored) in pairs().iter().zip(&scores().pairs) {
+        if !["n21", "n33"].contains(&pair.id.as_str()) {
+            continue;
+        }
+        assert!(
+            decide_v2(&evidence(pair, scored)) == Some(Stance::Contradicts),
+            "{}: the model no longer over-calls it; pick another pair",
+            pair.id
+        );
+        assert_eq!(decide(&evidence(pair, scored)), None, "{}", pair.id);
     }
-    assert!(better, "no stance's precision improved");
+}
 
-    let kulik = pairs()
-        .into_iter()
-        .zip(scores().pairs)
-        .find(|(p, _)| {
-            p.claim == "Kulik reached the site in 1927."
-                && p.premise == "No impact crater was found."
-        })
-        .unwrap();
-    let (pair, scored) = &kulik;
-    assert_ne!(
-        decide(&StanceEvidence {
-            claim: &pair.claim,
-            premise: &pair.premise,
-            similarity: scored.similarity_pm,
-            entailment: scored.entailment_pm,
-            contradiction: scored.contradiction_pm,
-        }),
-        Some(Stance::Contradicts)
-    );
+fn evidence<'a>(pair: &'a Pair, scored: &Scored) -> StanceEvidence<'a> {
+    StanceEvidence {
+        claim: &pair.claim,
+        premise: &pair.premise,
+        similarity: scored.similarity_pm,
+        entailment: scored.entailment_pm,
+        contradiction: scored.contradiction_pm,
+        reverse_contradiction: scored.reverse_contradiction_pm,
+    }
 }
 
 /// Scores every pair with the real NLI model and embedder, the way the stage
-/// does (premise = source window, hypothesis = claim), and rewrites
-/// `scores.json`.
+/// does (premise = source window, hypothesis = claim, and for two numbered
+/// texts the reverse: premise = claim, hypothesis = each numbered window
+/// sentence), and rewrites `scores.json`.
 #[test]
 #[ignore = "needs the NLI model and an embedding server; see the module docs"]
 fn score_the_stance_pairs() {
@@ -312,6 +319,27 @@ fn score_the_stance_pairs() {
         })
         .collect();
     let nli_scores = nli.score(&nli_pairs).unwrap();
+    let reverse: Vec<Option<PerMille>> = pairs
+        .iter()
+        .map(|p| {
+            let hypotheses = reverse_hypotheses(&p.premise);
+            if numbers(&p.claim).is_empty() || hypotheses.is_empty() {
+                return None;
+            }
+            let reverse_pairs: Vec<NliPair<'_>> = hypotheses
+                .into_iter()
+                .map(|hypothesis| NliPair {
+                    premise: &p.claim,
+                    hypothesis,
+                })
+                .collect();
+            nli.score(&reverse_pairs)
+                .unwrap()
+                .iter()
+                .map(|s| PerMille::from_probability(s.contradiction))
+                .max()
+        })
+        .collect();
     let texts: Vec<&str> = pairs
         .iter()
         .flat_map(|p| [p.claim.as_str(), p.premise.as_str()])
@@ -324,12 +352,14 @@ fn score_the_stance_pairs() {
         .iter()
         .zip(&nli_scores)
         .zip(vectors.chunks(2))
-        .map(|((p, s), v)| Scored {
+        .zip(reverse)
+        .map(|(((p, s), v), reverse_contradiction_pm)| Scored {
             id: p.id.clone(),
             text_hash: text_hash(p),
             similarity_pm: PerMille::from_probability(cosine(&v[0], &v[1])),
             entailment_pm: PerMille::from_probability(s.entailment),
             contradiction_pm: PerMille::from_probability(s.contradiction),
+            reverse_contradiction_pm,
         })
         .collect();
     let scores = Scores {

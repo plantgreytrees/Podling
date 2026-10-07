@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current as of 2026-10-06. It covers Phase 1 (core contracts), the
+> **Status:** current as of 2026-10-07. It covers Phase 1 (core contracts), the
 > `/scrutinise` fixes, Phase 2 (the OpenAI-compatible LLM provider) and its
 > scrutinise fixes (unreferenced-quotation check, claim grounding, script input
 > size warning), `{{quote:N}}` placeholders in script turns, claim grounding that
@@ -10,8 +10,8 @@
 > `/scrutinise` fixes (backchannel-aware speech checks, a weights- and
 > adapter-aware TTS cache key, a voice licence allow-list, and stopping the
 > sidecar's whole process tree). Phase 5 was built before Phase 4. It also
-> covers stance precision (the number-subject rule in `score_stances`, VERSION 6,
-> measured on a labelled pair set).
+> covers stance precision (the two-way check on numeric contradictions in
+> `score_stances`, VERSION 8, measured on a labelled pair set).
 
 This document describes the state after Phases 4 and 5. Where the design
 is heading is recorded in [`.claude/CLAUDE.md`](../.claude/CLAUDE.md).
@@ -381,32 +381,43 @@ evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are s
 - entailment ≥ 0.800: `Supports`;
 - else contradiction ≥ 0.950 **and** cosine ≥ 0.60: `Contradicts`. NLI models over-call
   contradiction between sentences that merely share a topic (0.991 for the 1927
-  expedition window below), hence the high bar and the same-subject requirement. When claim and premise both hold a number, a premise that
-  names the claim's subject (shares a non-number content word with it) only in
-  sentences without a number is refused: in a window "The explosion was heard far away.
-  Kulik's expedition reached the site in 1927.", the 1927 dates the expedition, so it
-  doesn't contradict "The explosion happened in June 1908." (0.991 from the model). A
-  premise sharing no word with the claim ("The blast occurred in 1907.") is reworded,
-  not off-subject, and keeps the model's call. A sentence holding a pronoun or possessive
-  anywhere ("He got there in 1931.", "In 1931 he got there.", "His arrival came in
-  1931.") also names what the sentence before it names: word overlap can't tell
-  which noun the pronoun means, so such a window keeps the model's call even when the
-  pronoun means another noun ("Kulik studied meteorites in Petrograd. It became Leningrad
-  in 1924."), trading those false contradictions for not dropping real ones;
+  expedition window below), hence the high bar and the similarity floor. When claim and
+  premise both hold a number, the contradiction must also hold **both ways**: the claim,
+  read as the premise, must contradict at ≥ 0.950 one of the window's numbered
+  sentences or, when the window also has a sentence without a number, the whole window
+  (`reverse_hypotheses`; scored only for candidates that would otherwise contradict, in
+  one extra batch). NLI models over-call a number that only shares a topic one way:
+  "The vessel was provided with lifeboats for 1,176 persons." against "From these boats
+  he took on board 712 persons" scores 0.997 forward but 0.010 back, while "706 persons
+  were saved." scores 0.997 / 0.995. A number about something else fails the same way:
+  in "The explosion was heard hundreds of kilometres away. Kulik's expedition reached the
+  site in 1927." the 1927 dates the expedition, and "The explosion happened in June
+  1908." scores 0.991 forward but 0.080 back. Reading the whole window lets a
+  contradiction stated without a number count: "Kulik reached the site in 1927."
+  against "Kulik never reached the site. The expedition set off in 1927." scores 1.000
+  both ways. The cost: a count the model reads as a subset ("80 million trees" against
+  "8 million fir trunks", 0.000 back) is no longer a contradiction. Number filtering
+  rests on the NLI model alone. VERSIONs 3–7 also refused a premise that named the
+  claim's subject only in sentences without a number (word overlap, with a pronoun
+  carry-over); VERSION 8 drops that rule, because the two-way check refuses the same
+  pairs and the subject rule also refused t03;
 - else nothing.
 
-**Measured precision.** `tests/stance_precision.rs` runs the rule on 82 hand-labelled
-pairs scored once by the real models (`tests/fixtures/stance_pairs/`); the test fails if
-the rule's precision or recall falls below the VERSION 2 rule's on that set, and
+**Measured precision.** `tests/stance_precision.rs` runs the rule on 85 hand-labelled
+pairs scored once by the real models, both ways (`tests/fixtures/stance_pairs/`); the
+test pins the current rule's counts and false-positive ids exactly, so any rule change
+must update them on purpose, and
 `cargo test -p podling-core --test stance_precision -- --nocapture report` prints the
-before/after table. With the number-subject rule (VERSION 6): supports precision 100% /
-recall 74%, contradicts 87% / 100% (four false positives, all pronouns meaning another
-noun); without it (VERSION 2), contradicts precision is 81% (six window false
-positives). VERSION 3's stricter rule (the number's own sentence must share a word) cost
-contradicts recall 81% on reworded subjects, VERSION 4 (no pronoun carry-over) 92% on
-pronoun windows, and VERSION 5 (only a sentence-opening pronoun) 92% on fronted-date and
-possessive windows. A set this small shows the rule fits it, not that it generalises; see
-[the plan's reports](plans/scrutinise-stance-precision.md#report-round-3).
+before/after table. VERSION 8: supports precision 100% / recall 73.7%, contradicts
+93.1% / 96.4%. The false positives are n35 and n36 ("Kulik reached the site in 1927."
+against "Kulik studied meteorites in Petrograd. It became Leningrad in 1924."), which
+the model calls a contradiction both ways (≥ 0.997 forward, 0.998 back). The miss is c18, the subset
+count above. The VERSION 2 rule (thresholds only) gives contradicts 80.0% / 100%, with
+seven false positives. VERSION 7 (the subject rule plus a two-way check against the
+numbered sentences only) had 92.9% / 92.9%, also missing t03. VERSION 6 (the subject
+rule with no two-way check) had 86.7% / 100% on the first 82 pairs, with false positives
+n34 n35 n36 n37. A set this small shows the rule fits it, not that it generalises; see
+[the plan's report](plans/stance-whole-window.md#report).
 
 A chunk gives a claim at most one piece of evidence, from its most decisive window, and
 entailment wins over contradiction, so a chunk is never both for and against.
