@@ -27,7 +27,7 @@ use crate::plugin::{
     EmbeddingProvider, NliPair, NliProvider, cosine, embed_checked, score_checked,
 };
 use crate::stage::Stage;
-use crate::text::{content_words, is_number, numbers, sentences};
+use crate::text::{numbers, sentences};
 
 /// Premise windows retrieved per claim (the cost bound).
 pub const RETRIEVE_K: usize = 4;
@@ -72,7 +72,12 @@ impl Stage for ScoreStances<'_> {
     // before it, so a contradiction told by pronoun isn't refused.
     // 6: the pronoun may sit anywhere in the sentence ("In 1931 he got
     // there.", "His arrival came in 1931."), not only first.
-    const VERSION: u32 = 6;
+    // 7: a number-against-number contradiction must also hold with claim and
+    // premise swapped (`StanceEvidence::reverse_contradiction`).
+    // 8: the reverse check also reads the whole window when one of its
+    // sentences has no number (`reverse_hypotheses`), and replaces the
+    // subject rule of 3-7: a number about something else fails it too.
+    const VERSION: u32 = 8;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -143,18 +148,59 @@ impl Stage for ScoreStances<'_> {
             })
             .collect();
         let scores = score_checked(self.nli, Self::ID, &pairs)?;
+        let mut judgements: Vec<Judged> = candidates
+            .iter()
+            .zip(&scores)
+            .map(|(candidate, score)| Judged {
+                window: candidate.window,
+                similarity: candidate.similarity,
+                entailment: PerMille::from_probability(score.entailment),
+                contradiction: PerMille::from_probability(score.contradiction),
+                reverse_contradiction: None,
+            })
+            .collect();
+
+        // A number-against-number contradiction must also hold the other way
+        // round, the claim as premise against each of the window's numbered
+        // sentences. Only candidates that would contradict if it did are
+        // scored, again in one call. Asking `decide` with the best possible
+        // reverse score keeps the rule in one place.
+        let mut reverse_pairs: Vec<NliPair<'_>> = Vec::new();
+        let mut reverse_of: Vec<(usize, usize)> = Vec::new(); // (judgement, pair count)
+        for (j, (candidate, judged)) in candidates.iter().zip(&judgements).enumerate() {
+            let claim = input.claims[candidate.claim].text();
+            let premise = windows[candidate.window].text;
+            let hypotheses = reverse_hypotheses(premise);
+            let would_contradict = Judged {
+                reverse_contradiction: Some(PerMille::from_probability(1.0)),
+                ..*judged
+            }
+            .stance(claim, premise)
+                == Some(Stance::Contradicts);
+            if numbers(claim).is_empty() || hypotheses.is_empty() || !would_contradict {
+                continue;
+            }
+            reverse_of.push((j, hypotheses.len()));
+            reverse_pairs.extend(hypotheses.into_iter().map(|hypothesis| NliPair {
+                premise: claim,
+                hypothesis,
+            }));
+        }
+        let reverse_scores = score_checked(self.nli, Self::ID, &reverse_pairs)?;
+        let mut next = reverse_scores.iter();
+        for (j, count) in reverse_of {
+            judgements[j].reverse_contradiction = next
+                .by_ref()
+                .take(count)
+                .map(|s| PerMille::from_probability(s.contradiction))
+                .max();
+        }
 
         // Keep, per claim and chunk, the one window that decides: the best
         // entailment if any window supports the claim, otherwise the best
         // qualifying contradiction. A chunk is never both for and against.
         let mut decided: BTreeMap<(usize, usize), (Stance, Judged)> = BTreeMap::new();
-        for (candidate, score) in candidates.iter().zip(&scores) {
-            let judged = Judged {
-                window: candidate.window,
-                similarity: candidate.similarity,
-                entailment: PerMille::from_probability(score.entailment),
-                contradiction: PerMille::from_probability(score.contradiction),
-            };
+        for (candidate, judged) in candidates.iter().zip(judgements) {
             let premise = windows[candidate.window].text;
             let Some(stance) = judged.stance(input.claims[candidate.claim].text(), premise) else {
                 continue;
@@ -201,6 +247,7 @@ impl Stage for ScoreStances<'_> {
             claims = claims.len(),
             windows = windows.len(),
             pairs = pairs.len(),
+            reverse_pairs = reverse_pairs.len(),
             supports,
             contradicts,
             "stances scored"
@@ -215,11 +262,13 @@ struct Candidate {
     similarity: PerMille,
 }
 
+#[derive(Clone, Copy)]
 struct Judged {
     window: usize,
     similarity: PerMille,
     entailment: PerMille,
     contradiction: PerMille,
+    reverse_contradiction: Option<PerMille>,
 }
 
 /// Everything one premise window's stance on a claim is decided from: the two
@@ -234,6 +283,10 @@ pub struct StanceEvidence<'a> {
     pub similarity: PerMille,
     pub entailment: PerMille,
     pub contradiction: PerMille,
+    /// The highest contradiction of the claim, read as the premise, against
+    /// each of [`reverse_hypotheses`]`(premise)`; `None` when not scored.
+    /// Only a number-against-number contradiction needs it.
+    pub reverse_contradiction: Option<PerMille>,
 }
 
 /// The stance a premise establishes on a claim, if any. Compared on the
@@ -243,7 +296,7 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
         Some(Stance::Supports)
     } else if evidence.contradiction.get() >= CONTRADICT_PM
         && evidence.similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM
-        && number_is_about_the_subject(evidence.claim, evidence.premise)
+        && holds_both_ways(evidence)
     {
         Some(Stance::Contradicts)
     } else {
@@ -251,59 +304,45 @@ pub fn decide(evidence: &StanceEvidence<'_>) -> Option<Stance> {
     }
 }
 
-/// When the claim and the premise both state a number, false if the premise
-/// names the claim's subject (shares a word that isn't a number) only in
-/// sentences without a number: its number is then about something else. In
-/// "The explosion was heard far away. Kulik's expedition reached the site in
-/// 1927." against "The explosion happened in June 1908.", the model reads
-/// 1927 as a contradicting date, but it dates the expedition, not the
-/// explosion. A premise that shares no word with the claim at all ("The
-/// blast occurred in 1907.") is reworded, not off-subject, so the model's
-/// call stands. A sentence holding a pronoun or possessive anywhere ("He got
-/// there in 1931.", "In 1931 he got there.", "His arrival came in 1931.")
-/// also names what the sentence before it names: word overlap can't tell
-/// which noun the pronoun means, so it keeps the model's call rather than
-/// drop a real contradiction. True when either text has no number, so the
-/// rule only judges number-against-number contradictions.
-fn number_is_about_the_subject(claim: &str, premise: &str) -> bool {
-    if numbers(claim).is_empty() || numbers(premise).is_empty() {
+/// When the claim and the premise both state a number, whether the
+/// contradiction also holds read the other way round. NLI models over-call a
+/// differing count that only shares a topic one way: "The vessel was provided
+/// with lifeboats for 1,176 persons." is "contradicted" by "From these boats
+/// he took on board 712 persons" (0.997), but the claim doesn't contradict
+/// that sentence (0.010), while "706 persons were saved." does both ways
+/// (0.997 / 0.995). A number about something else fails the same way: "The
+/// explosion happened in June 1908." against "... Kulik's expedition reached
+/// the site in 1927." (the 1927 dates the expedition). The cost: a count the
+/// model reads as a subset ("8 million fir trunks" of "80 million trees") is
+/// no longer a contradiction. Number filtering rests on the model alone here:
+/// no word-overlap rule backs it.
+fn holds_both_ways(evidence: &StanceEvidence<'_>) -> bool {
+    if numbers(evidence.claim).is_empty() || numbers(evidence.premise).is_empty() {
         return true;
     }
-    let subject = |text: &str| -> BTreeSet<String> {
-        content_words(text)
-            .into_iter()
-            .filter(|w| !is_number(w))
-            .collect()
-    };
-    let claim_subject = subject(claim);
-    let mut previous = BTreeSet::new();
-    let mut named_without_number = false;
-    for range in sentences(premise) {
-        let sentence = &premise[range];
-        let mut named = subject(sentence);
-        if refers_back(sentence) {
-            named.extend(previous);
-        }
-        let names_subject = !named.is_disjoint(&claim_subject);
-        if numbers(sentence).is_empty() {
-            named_without_number |= names_subject;
-        } else if names_subject {
-            return true;
-        }
-        previous = named;
-    }
-    !named_without_number
+    evidence
+        .reverse_contradiction
+        .is_some_and(|r| r.get() >= CONTRADICT_PM)
 }
 
-/// Whether `sentence` holds a pronoun or possessive that may refer back to an
-/// earlier sentence, wherever it sits ("In 1931 he got there.").
-fn refers_back(sentence: &str) -> bool {
-    const PRONOUNS: &[&str] = &[
-        "he", "she", "it", "they", "this", "these", "his", "her", "its", "their", "him", "them",
-    ];
-    sentence
-        .split(|c: char| !c.is_alphanumeric())
-        .any(|w| PRONOUNS.contains(&w.to_lowercase().as_str()))
+/// The hypotheses the claim is read against for
+/// [`StanceEvidence::reverse_contradiction`]: each sentence of `premise` that
+/// holds a number, then the whole window when it also has a sentence without
+/// one. The numbered sentences come one by one so the claim is judged against
+/// the numbered statement itself; the whole window lets a contradiction the
+/// window states without a number ("Kulik never reached the site. The
+/// expedition set off in 1927.") be found both ways. Empty when no sentence
+/// holds a number.
+pub fn reverse_hypotheses(premise: &str) -> Vec<&str> {
+    let (numbered, numberless): (Vec<&str>, Vec<&str>) = sentences(premise)
+        .into_iter()
+        .map(|range| &premise[range])
+        .partition(|sentence| !numbers(sentence).is_empty());
+    let mut hypotheses = numbered;
+    if !hypotheses.is_empty() && !numberless.is_empty() {
+        hypotheses.push(premise);
+    }
+    hypotheses
 }
 
 impl Judged {
@@ -315,6 +354,7 @@ impl Judged {
             similarity: self.similarity,
             entailment: self.entailment,
             contradiction: self.contradiction,
+            reverse_contradiction: self.reverse_contradiction,
         })
     }
 }
@@ -539,102 +579,145 @@ mod tests {
     }
 
     #[test]
-    fn a_number_about_something_else_does_not_contradict() {
-        let evidence = |premise| StanceEvidence {
-            claim: "The explosion happened in June 1908.",
+    fn a_number_about_something_else_fails_the_reverse_check() {
+        // Reverse scores from the real NLI model (`stance_pairs` n21, t03).
+        let pm = |p| PerMille::from_probability(p);
+        let evidence = |claim, premise, reverse| StanceEvidence {
+            claim,
+            premise,
+            similarity: pm(0.7),
+            entailment: pm(0.0),
+            contradiction: pm(0.99),
+            reverse_contradiction: Some(pm(reverse)),
+        };
+        // The window's only year dates the expedition, not the explosion:
+        // read the other way the claim doesn't contradict it.
+        let other_subject = "The explosion was heard hundreds of kilometres away. Kulik's \
+                             expedition reached the site in 1927.";
+        assert_eq!(
+            decide(&evidence(
+                "The explosion happened in June 1908.",
+                other_subject,
+                0.080
+            )),
+            None
+        );
+        // A contradiction stated in the sentence without the number holds
+        // both ways once the whole window is read.
+        let numberless = "Kulik never reached the site. The expedition set off in 1927.";
+        assert_eq!(
+            decide(&evidence(
+                "Kulik reached the site in 1927.",
+                numberless,
+                1.0
+            )),
+            Some(Stance::Contradicts)
+        );
+    }
+
+    #[test]
+    fn a_numeric_contradiction_must_hold_both_ways() {
+        let evidence = |claim, reverse| StanceEvidence {
+            claim,
+            premise: "From these boats he took on board 712 persons, one of them died shortly \
+                      afterwards.",
+            similarity: PerMille::from_probability(0.7),
+            entailment: PerMille::from_probability(0.0),
+            contradiction: PerMille::from_probability(0.997),
+            reverse_contradiction: reverse,
+        };
+        let pm = |p| Some(PerMille::from_probability(p));
+        // The lifeboat capacity only shares a topic with the count saved:
+        // the model calls it a contradiction one way only.
+        let capacity = "The vessel was provided with lifeboats for 1,176 persons.";
+        assert_eq!(decide(&evidence(capacity, pm(0.010))), None);
+        // Not scored the other way: refused, never assumed.
+        assert_eq!(decide(&evidence(capacity, None)), None);
+        // Just under the threshold the other way is not enough.
+        assert_eq!(decide(&evidence(capacity, pm(0.949))), None);
+        // A real disagreement on the count holds both ways.
+        let saved = "706 persons were saved.";
+        assert_eq!(
+            decide(&evidence(saved, pm(0.995))),
+            Some(Stance::Contradicts)
+        );
+        assert_eq!(
+            decide(&evidence(saved, pm(0.95))),
+            Some(Stance::Contradicts)
+        );
+    }
+
+    #[test]
+    fn a_contradiction_without_numbers_ignores_the_reverse_score() {
+        let evidence = |claim, premise| StanceEvidence {
+            claim,
             premise,
             similarity: PerMille::from_probability(0.7),
             entailment: PerMille::from_probability(0.0),
             contradiction: PerMille::from_probability(0.99),
+            reverse_contradiction: None,
         };
-        // The window's only year dates the expedition, not the explosion.
-        let other_subject =
-            "The explosion was heard far away. Kulik's expedition reached the site in 1927.";
-        assert_eq!(decide(&evidence(other_subject)), None);
-        // The same year beside the claim's subject does contradict it.
-        let same_subject = "The explosion was heard far away. The explosion happened in 1927.";
-        assert_eq!(decide(&evidence(same_subject)), Some(Stance::Contradicts));
-        // Without a number in the premise the gate doesn't apply.
-        let no_number = "Kulik's expedition found no crater.";
-        assert_eq!(decide(&evidence(no_number)), Some(Stance::Contradicts));
-        // A reworded subject shares no word at all: the model's call stands.
-        let reworded = "Witnesses heard thunder. The blast occurred in 1907.";
-        assert_eq!(decide(&evidence(reworded)), Some(Stance::Contradicts));
+        // Neither text holds a number.
+        assert_eq!(
+            decide(&evidence(
+                "No impact crater was found at the site.",
+                "Kulik found a large crater at the site."
+            )),
+            Some(Stance::Contradicts)
+        );
+        // Only the premise holds one.
+        assert_eq!(
+            decide(&evidence(
+                "No impact crater was found at the site.",
+                "Kulik found a crater at the site in 1927."
+            )),
+            Some(Stance::Contradicts)
+        );
     }
 
     #[test]
-    fn a_claim_without_a_number_skips_the_subject_rule() {
-        let evidence = StanceEvidence {
-            claim: "No impact crater was found at the site.",
-            premise: "The explosion was heard far away. Kulik reached the site in 1927.",
-            similarity: PerMille::from_probability(0.7),
-            entailment: PerMille::from_probability(0.0),
-            contradiction: PerMille::from_probability(0.99),
-        };
-        assert_eq!(decide(&evidence), Some(Stance::Contradicts));
+    fn reverse_hypotheses_are_the_numbered_sentences_and_a_mixed_window() {
+        // A sentence without a number: the whole window is read too.
+        let mixed = "Kulik never reached the site. The expedition set off in 1927.";
+        assert_eq!(
+            reverse_hypotheses(mixed),
+            vec!["The expedition set off in 1927.", mixed]
+        );
+        // Every sentence numbered: just the sentences.
+        assert_eq!(
+            reverse_hypotheses("706 persons were saved. 712 were taken on board."),
+            vec!["706 persons were saved.", "712 were taken on board."]
+        );
+        // No number anywhere: nothing to read back.
+        assert!(reverse_hypotheses("The ship sank. Rescue came at dawn.").is_empty());
     }
 
     #[test]
-    fn a_pronoun_carries_the_subject_into_the_numbered_sentence() {
-        let evidence = |premise| StanceEvidence {
-            claim: "Kulik reached the site in 1927.",
-            premise,
-            similarity: PerMille::from_probability(0.8),
-            entailment: PerMille::from_probability(0.0),
-            contradiction: PerMille::from_probability(0.99),
-        };
-        let pronoun = "Leonid Kulik led the first expedition to the site. He got there in 1931.";
-        assert_eq!(decide(&evidence(pronoun)), Some(Stance::Contradicts));
-        // The pronoun needn't open the sentence, and a possessive counts.
-        let fronted = "Leonid Kulik led the first expedition to the site. In 1931 he got there.";
-        assert_eq!(decide(&evidence(fronted)), Some(Stance::Contradicts));
-        let possessive =
-            "Leonid Kulik led the first expedition to the site. His arrival came in 1931.";
-        assert_eq!(decide(&evidence(possessive)), Some(Stance::Contradicts));
-        // The pronoun may mean another noun of that sentence; word overlap
-        // can't tell, so this one is left to the model too.
-        let elsewhere = "Kulik studied meteorites in Petrograd. It became Leningrad in 1924.";
-        assert_eq!(decide(&evidence(elsewhere)), Some(Stance::Contradicts));
-        // Without a pronoun the numbered sentence is about something else.
-        let no_pronoun =
-            "Leonid Kulik led the first expedition. Petrograd became Leningrad in 1924.";
-        assert_eq!(decide(&evidence(no_pronoun)), None);
-    }
-
-    #[test]
-    fn one_shared_word_keeps_the_models_call() {
-        // Trade-off: any shared word, even an incidental month, counts as
-        // naming the subject, so a number about another event can still
-        // contradict when the model over-calls it.
-        let evidence = StanceEvidence {
-            claim: "The explosion happened in June 1908.",
-            premise: "Kulik's expedition reached the site in June 1927.",
-            similarity: PerMille::from_probability(0.7),
-            entailment: PerMille::from_probability(0.0),
-            contradiction: PerMille::from_probability(0.99),
-        };
-        assert_eq!(decide(&evidence), Some(Stance::Contradicts));
-    }
-
-    #[test]
-    fn the_stage_refuses_a_number_about_something_else() {
-        /// Calls every premise holding a number a contradiction.
-        struct NumbersContradict;
-        impl NliProvider for NumbersContradict {
+    fn the_stage_needs_the_contradiction_both_ways() {
+        const CAPACITY: &str = "The boats took on board 1176 persons.";
+        const TAKEN: &str = "The boats took on board 712 persons.";
+        /// Contradiction 1.0 whenever CAPACITY is the hypothesis, and `back`
+        /// for every other pair: with `back` 0 the contradiction is one-way.
+        struct OneWay {
+            back: f32,
+            pairs: std::cell::Cell<usize>,
+        }
+        impl NliProvider for OneWay {
             fn id(&self) -> &str {
-                "numbers-contradict"
+                "one-way"
             }
             fn fingerprint(&self) -> Value {
                 Value::Null
             }
             fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+                self.pairs.set(self.pairs.get() + pairs.len());
                 Ok(pairs
                     .iter()
                     .map(|p| {
-                        let c = if numbers(p.premise).is_empty() {
-                            0.0
-                        } else {
+                        let c = if p.hypothesis == CAPACITY {
                             1.0
+                        } else {
+                            self.back
                         };
                         NliScores {
                             entailment: 0.0,
@@ -645,26 +728,125 @@ mod tests {
                     .collect())
             }
         }
-        let claim = "The great explosion happened in 1908.";
-        let contradicted = |window: &str| {
-            let input = input(&[("a", claim), ("b", window)]);
-            let claims = run(&NumbersContradict, &input);
-            matches!(status_of(&claims, claim).0, ClaimStatus::Contested { .. })
-        };
-        // The two-sentence window is similar enough to be judged, so only the
-        // subject rule stops it: its year dates Kulik's arrival, not the
-        // explosion.
-        let off_subject = "The great explosion happened. Kulik arrived in 1927.";
-        let v = FakeEmbedding.embed(&[claim, off_subject]).unwrap();
+        // Similar enough that only the reverse check can refuse it.
+        let v = FakeEmbedding.embed(&[CAPACITY, TAKEN]).unwrap();
         let similarity = PerMille::from_probability(cosine(&v[0], &v[1]));
         assert!(
             similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM,
             "{similarity:?}"
         );
-        assert!(!contradicted(off_subject));
-        assert!(contradicted(
-            "The great explosion happened. The explosion happened in 1927."
+        let input = input(&[("a", CAPACITY), ("b", TAKEN)]);
+
+        let one_way = OneWay {
+            back: 0.0,
+            pairs: Default::default(),
+        };
+        let claims = run(&one_way, &input);
+        assert_eq!(claims, input.claims, "a one-way contradiction adds nothing");
+        // Two forward pairs, then one reverse pair for CAPACITY, the only
+        // forward contradiction.
+        assert_eq!(one_way.pairs.get(), 3);
+
+        let two_way = OneWay {
+            back: 1.0,
+            pairs: Default::default(),
+        };
+        let claims = run(&two_way, &input);
+        for text in [CAPACITY, TAKEN] {
+            let (status, _) = status_of(&claims, text);
+            assert!(
+                matches!(status, ClaimStatus::Contested { .. }),
+                "{text}: {status:?}"
+            );
+        }
+        // Two forward pairs, then one reverse pair for each claim.
+        assert_eq!(two_way.pairs.get(), 4);
+    }
+
+    #[test]
+    fn reverse_scores_go_to_their_own_candidate() {
+        const X: &str = "The boats took on board 712 persons.";
+        const Y: &str = "The boats took on board 20 persons.";
+        const S1: &str = "The boats took on board 706 persons.";
+        const S2: &str = "The boats took on board 705 persons.";
+        /// Forward: X and Y are contradicted by every window holding S1.
+        /// Reverse: only X against S2 contradicts. Records each batch.
+        #[derive(Default)]
+        struct Scripted(std::cell::RefCell<Vec<Vec<(String, String)>>>);
+        impl NliProvider for Scripted {
+            fn id(&self) -> &str {
+                "scripted"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+                self.0.borrow_mut().push(
+                    pairs
+                        .iter()
+                        .map(|p| (p.premise.to_owned(), p.hypothesis.to_owned()))
+                        .collect(),
+                );
+                Ok(pairs
+                    .iter()
+                    .map(|p| {
+                        let forward = [X, Y].contains(&p.hypothesis) && p.premise.contains(S1);
+                        let reverse = (p.premise, p.hypothesis) == (X, S2);
+                        let c = if forward || reverse { 1.0 } else { 0.0 };
+                        NliScores {
+                            entailment: 0.0,
+                            neutral: 1.0 - c,
+                            contradiction: c,
+                        }
+                    })
+                    .collect())
+            }
+        }
+        // Group b's windows are S1, "S1 S2" (two numbered sentences) and S2.
+        let window = format!("{S1} {S2}");
+        let mut input = input(&[("a", X), ("y", Y), ("b", &window)]);
+        input.claims.retain(|c| [X, Y].contains(&c.text()));
+        for claim in [X, Y] {
+            for premise in [S1, window.as_str()] {
+                let v = FakeEmbedding.embed(&[claim, premise]).unwrap();
+                let similarity = PerMille::from_probability(cosine(&v[0], &v[1]));
+                assert!(
+                    similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM,
+                    "{claim} / {premise}: {similarity:?}"
+                );
+            }
+        }
+
+        let nli = Scripted::default();
+        let claims = run(&nli, &input);
+        // X holds only through the two-sentence window, whose reverse score
+        // is the higher of its two sentences; Y's reverse scores are all low.
+        assert!(matches!(
+            status_of(&claims, X).0,
+            ClaimStatus::Contested { .. }
         ));
+        assert!(matches!(
+            status_of(&claims, Y).0,
+            ClaimStatus::SingleSource { .. }
+        ));
+        // Two batches: forward, then the reverse pairs of the four
+        // contradicting candidates (each claim against S1 and "S1 S2").
+        let batches = nli.0.into_inner();
+        assert_eq!(batches.len(), 2);
+        let mut reverse = batches[1].clone();
+        reverse.sort();
+        let pair = |p: &str, h: &str| (p.to_owned(), h.to_owned());
+        assert_eq!(
+            reverse,
+            vec![
+                pair(Y, S2),
+                pair(Y, S1),
+                pair(Y, S1),
+                pair(X, S2),
+                pair(X, S1),
+                pair(X, S1),
+            ]
+        );
     }
 
     #[test]
