@@ -23,6 +23,17 @@ def test_provenance_has_exactly_the_rust_fields():
     assert fields == rust_struct_fields("RawVoiceProvenance")
 
 
+def test_the_clip_hash_is_podlings_blake3(tmp_path):
+    # The same vector as `the_clip_hash_matches_the_voice_design_tool` in
+    # crates/podling-types/tests/roundtrip.rs.
+    clip = tmp_path / "host.wav"
+    clip.write_bytes(b"podling voice")
+    assert (
+        design.clip_hash(clip)
+        == "86a92eb5d621332263d4a33849079e862874f8de9e3c6f46d43e0f7bceac97ea"
+    )
+
+
 def test_the_licence_is_podlings_generated_licence():
     source = EPISODE_RS.read_text(encoding="utf-8")
     assert f'GENERATED_VOICE_LICENCE: &str = "{design.LICENCE}"' in source
@@ -56,6 +67,26 @@ def args(tmp_path: Path, **overrides) -> list[str]:
         **overrides,
     }
     return [part for pair in values.items() for part in pair]
+
+
+def test_main_records_the_hash_of_the_clip_it_wrote(tmp_path, monkeypatch):
+    import json
+
+    import blake3
+    import numpy as np
+
+    # No model or GPU: the snapshot, the memory check and the voice are stubs.
+    monkeypatch.setattr(design, "snapshot", lambda model: tmp_path / "0123abcd")
+    monkeypatch.setattr(design, "free_mib", lambda: design.NEEDS_MIB)
+    tone = np.sin(np.arange(2400, dtype=np.float32) / 8).astype(np.float32)
+    monkeypatch.setattr(design, "generate", lambda model_dir, args: (tone, 24000))
+
+    design.main(args(tmp_path))
+
+    clip = tmp_path / "host.wav"
+    provenance = json.loads(design.provenance_path(clip).read_text(encoding="utf-8"))
+    assert provenance["clip_blake3"] == blake3.blake3(clip.read_bytes()).hexdigest()
+    assert provenance["weights_commit"] == "0123abcd"
 
 
 def test_good_arguments_parse(tmp_path):

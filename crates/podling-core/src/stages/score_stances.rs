@@ -161,10 +161,11 @@ impl Stage for ScoreStances<'_> {
             .collect();
 
         // A number-against-number contradiction must also hold the other way
-        // round, the claim as premise against each of the window's numbered
-        // sentences. Only candidates that would contradict if it did are
-        // scored, again in one call. Asking `decide` with the best possible
-        // reverse score keeps the rule in one place.
+        // round, the claim as premise against each of `reverse_hypotheses`:
+        // the window's numbered sentences, plus the whole window when it also
+        // has a sentence without a number. Only candidates that would
+        // contradict if it did are scored, again in one call. Asking `decide`
+        // with the best possible reverse score keeps the rule in one place.
         let mut reverse_pairs: Vec<NliPair<'_>> = Vec::new();
         let mut reverse_of: Vec<(usize, usize)> = Vec::new(); // (judgement, pair count)
         for (j, (candidate, judged)) in candidates.iter().zip(&judgements).enumerate() {
@@ -847,6 +848,71 @@ mod tests {
                 pair(X, S1),
             ]
         );
+    }
+
+    #[test]
+    fn the_stage_reads_a_mixed_window_back_whole() {
+        const CLAIM: &str = "Kulik reached the site in 1927.";
+        const NUMBERED: &str = "The expedition set off in 1927.";
+        const WINDOW: &str = "Kulik never reached the site. The expedition set off in 1927.";
+        /// Contradicts only between the claim and the whole window, both
+        /// ways: the contradiction sits in the sentence without a number.
+        /// Records each batch.
+        #[derive(Default)]
+        struct Scripted(std::cell::RefCell<Vec<Vec<(String, String)>>>);
+        impl NliProvider for Scripted {
+            fn id(&self) -> &str {
+                "scripted"
+            }
+            fn fingerprint(&self) -> Value {
+                Value::Null
+            }
+            fn score(&self, pairs: &[NliPair<'_>]) -> Result<Vec<NliScores>> {
+                self.0.borrow_mut().push(
+                    pairs
+                        .iter()
+                        .map(|p| (p.premise.to_owned(), p.hypothesis.to_owned()))
+                        .collect(),
+                );
+                Ok(pairs
+                    .iter()
+                    .map(|p| {
+                        let both = [(WINDOW, CLAIM), (CLAIM, WINDOW)];
+                        let c = if both.contains(&(p.premise, p.hypothesis)) {
+                            1.0
+                        } else {
+                            0.0
+                        };
+                        NliScores {
+                            entailment: 0.0,
+                            neutral: 1.0 - c,
+                            contradiction: c,
+                        }
+                    })
+                    .collect())
+            }
+        }
+        let mut input = input(&[("a", CLAIM), ("b", WINDOW)]);
+        input.claims.retain(|c| c.text() == CLAIM);
+        let v = FakeEmbedding.embed(&[CLAIM, WINDOW]).unwrap();
+        let similarity = PerMille::from_probability(cosine(&v[0], &v[1]));
+        assert!(
+            similarity.get() >= MIN_CONTRADICT_SIMILARITY_PM,
+            "{similarity:?}"
+        );
+
+        let nli = Scripted::default();
+        let claims = run(&nli, &input);
+        assert!(matches!(
+            status_of(&claims, CLAIM).0,
+            ClaimStatus::Contested { .. }
+        ));
+        // Forward, then the claim read back against the numbered sentence and
+        // the whole window.
+        let batches = nli.0.into_inner();
+        assert_eq!(batches.len(), 2);
+        let pair = |p: &str, h: &str| (p.to_owned(), h.to_owned());
+        assert_eq!(batches[1], vec![pair(CLAIM, NUMBERED), pair(CLAIM, WINDOW)]);
     }
 
     #[test]

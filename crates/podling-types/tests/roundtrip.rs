@@ -348,6 +348,13 @@ fn a_pronounce_entry_with_nothing_in_it_is_refused() {
             "Kulik = { say = \"Koolick\", heard = [\"\"] }",
             "empty `heard`",
         ),
+        ("\" Kulik\" = \"Koolick\"", "leading or trailing whitespace"),
+        (
+            "\"Kulik \" = { say = \"Koolick\" }",
+            "leading or trailing whitespace",
+        ),
+        // A table without `say` names the missing field.
+        ("Kulik = { heard = [\"Koolik\"] }", "missing field `say`"),
     ] {
         let err = toml::from_str::<EpisodeSpec>(&with_pronounce(entries))
             .unwrap_err()
@@ -380,6 +387,12 @@ fn a_later_lexicon_wins_per_name() {
         Lexicon::new([(" ".into(), say("x"))].into()),
         Err(LexiconError::EmptyName)
     );
+    for padded in [" Kulik", "Kulik ", "\tKulik"] {
+        assert_eq!(
+            Lexicon::new([(padded.into(), say("x"))].into()),
+            Err(LexiconError::PaddedName(padded.into()))
+        );
+    }
 }
 
 const PROVENANCE: &str = r#"{
@@ -387,8 +400,43 @@ const PROVENANCE: &str = r#"{
   "weights_commit": "0123abcd",
   "design_prompt": "A warm, lively woman in her thirties.",
   "seed": 1234,
-  "tool_version": "0.1.0"
+  "tool_version": "0.1.0",
+  "clip_blake3": "86a92eb5d621332263d4a33849079e862874f8de9e3c6f46d43e0f7bceac97ea"
 }"#;
+
+/// blake3 of `b"podling voice"`; the same vector is checked in
+/// scripts/voice_design/tests/test_design.py.
+const CLIP_BLAKE3: &str = "86a92eb5d621332263d4a33849079e862874f8de9e3c6f46d43e0f7bceac97ea";
+
+#[test]
+fn the_clip_hash_matches_the_voice_design_tool() {
+    assert_eq!(
+        blake3::hash(b"podling voice").to_hex().as_str(),
+        CLIP_BLAKE3
+    );
+}
+
+#[test]
+fn voice_provenance_needs_a_lowercase_clip_hash() {
+    let provenance: VoiceProvenance = serde_json::from_str(PROVENANCE).unwrap();
+    assert_eq!(provenance.clip_blake3().to_hex().as_str(), CLIP_BLAKE3);
+    // Written back as it was read.
+    let json = serde_json::to_value(&provenance).unwrap();
+    assert_eq!(json["clip_blake3"], CLIP_BLAKE3);
+
+    let without = PROVENANCE.replace(&format!(",\n  \"clip_blake3\": \"{CLIP_BLAKE3}\""), "");
+    let err = serde_json::from_str::<VoiceProvenance>(&without).unwrap_err();
+    assert!(err.to_string().contains("clip_blake3"), "{err}");
+    for bad in [
+        CLIP_BLAKE3.to_uppercase(),
+        CLIP_BLAKE3[..62].to_owned(),
+        format!("{}zz", &CLIP_BLAKE3[..62]),
+    ] {
+        let json = PROVENANCE.replace(CLIP_BLAKE3, &bad);
+        let err = serde_json::from_str::<VoiceProvenance>(&json).unwrap_err();
+        assert!(err.to_string().contains("64 lowercase hex"), "{bad}: {err}");
+    }
+}
 
 #[test]
 fn voice_provenance_needs_every_field() {

@@ -1,7 +1,9 @@
 """A stand-in TTS worker for Podling's tests: just enough of protocol v1.
 
 `--mode` picks a misbehaviour; Podling appends `--port 0 --run-dir <dir>`.
-Every request body is saved to `<run-dir>/last_request.json`.
+Every request body is saved to `<run-dir>/last_request.json`, and appended
+as one JSON line to `--capture <file>` when given: the run dir is deleted
+with the worker, the capture file outlives the run.
 """
 
 import argparse
@@ -19,6 +21,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument("--mode", default="ok")
 parser.add_argument("--tag", default="")  # lets a test find this process
+parser.add_argument("--capture", type=Path)
 parser.add_argument("--port", type=int, required=True)
 parser.add_argument("--run-dir", type=Path, required=True)
 args = parser.parse_args()
@@ -100,6 +103,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         (args.run_dir / "last_request.json").write_text(json.dumps(body))
+        if args.capture:
+            with args.capture.open("a", encoding="utf-8") as capture:
+                capture.write(json.dumps(body) + "\n")
         if args.mode == "busy":
             self.reply(503, {"error": "only 900 MiB of GPU memory is free"})
             return

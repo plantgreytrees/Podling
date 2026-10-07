@@ -78,7 +78,9 @@ Vanavara = { say = "Vanavahra", heard = ["Vanavarra", "Vana Vara"] }
 
 An episode can add or override names in `[tts.pronounce]`, in the same form;
 the episode wins per name. No file is no lexicon; a file that does not parse
-stops the run before any stage, naming the file.
+stops the run before any stage, naming the file. A name with leading or
+trailing whitespace, an empty `say` or `heard` item, or a table without `say`
+does not parse.
 
 - Use it for names only, each respelt as one plain word with no hyphens. In
   the word test, respelling ordinary words made them worse.

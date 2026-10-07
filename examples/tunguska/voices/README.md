@@ -52,7 +52,7 @@ voice = { reference = "voices/designed-host.wav", transcript = "The forest was f
 
 Podling accepts `LicenseRef-Podling-Generated` only with a valid provenance
 file beside the clip (`designed-host.wav.provenance.json`: `model`,
-`weights_commit`, `design_prompt`, `seed`, `tool_version`). Without one, the
+`weights_commit`, `design_prompt`, `seed`, `tool_version`, `clip_blake3`). Without one, or if its hash is not the clip's, the
 run stops before any stage, naming the speaker and the missing file.
 
 Whether a designed clip may carry an open licence is not decided yet, so

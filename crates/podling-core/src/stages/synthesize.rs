@@ -76,7 +76,7 @@ impl Voices {
                 ),
             })?;
             if voice.licence() == GENERATED_VOICE_LICENCE {
-                check_provenance(&member.id, &path)?;
+                check_provenance(&member.id, &path, &bytes)?;
             }
             let resolved = VoiceRef::new(&path, voice.transcript(), voice.licence())
                 .expect("checked when the episode was parsed");
@@ -133,12 +133,18 @@ impl Voices {
 }
 
 /// A [`GENERATED_VOICE_LICENCE`] clip must have its provenance beside it, so
-/// a designed voice can be told from a copied one and made again.
-fn check_provenance(speaker: &SpeakerId, clip: &Path) -> Result<()> {
+/// a designed voice can be told from a copied one and made again. The
+/// provenance must name this clip's hash (`bytes`), not another clip's.
+fn check_provenance(speaker: &SpeakerId, clip: &Path, bytes: &[u8]) -> Result<()> {
     let path = provenance_path(clip);
     let problem = match fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<VoiceProvenance>(&text) {
-            Ok(_) => return Ok(()),
+            Ok(provenance) if *provenance.clip_blake3() == blake3::hash(bytes) => return Ok(()),
+            Ok(provenance) => format!(
+                "records clip_blake3 {} that does not match the clip's {}",
+                provenance.clip_blake3().to_hex(),
+                blake3::hash(bytes).to_hex()
+            ),
             Err(err) => format!("is not valid ({err})"),
         },
         Err(err) => format!("cannot be read ({err})"),
@@ -1114,28 +1120,62 @@ mod tests {
 
     #[test]
     fn a_generated_voice_with_bad_provenance_is_refused() {
-        for bad in [
-            "not json",
-            r#"{"model": "m", "weights_commit": "c", "design_prompt": "p", "seed": 1}"#,
-            r#"{"model": "", "weights_commit": "c", "design_prompt": "p", "seed": 1,
-                "tool_version": "0.1.0"}"#,
+        // Each bad file, and a word its error must name.
+        let empty_model = provenance_for(blake3::hash(b"designed").to_hex().as_str()).replace(
+            r#""model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign""#,
+            r#""model": """#,
+        );
+        for (bad, named) in [
+            ("not json".to_owned(), "is not valid"),
+            (
+                r#"{"model": "m", "weights_commit": "c", "design_prompt": "p", "seed": 1}"#
+                    .to_owned(),
+                "missing field",
+            ),
+            // Complete but for an empty field, so the emptiness check is reached.
+            (empty_model, "\"model\""),
         ] {
             let dir = tempfile::tempdir().unwrap();
-            let (member, path) = generated_voice(dir.path(), Some(bad));
+            let (member, path) = generated_voice(dir.path(), Some(&bad));
             let message = config_message(Voices::resolve(&[member], dir.path()).unwrap_err());
-            assert!(message.contains(&path.display().to_string()), "{message}");
+            assert!(
+                message.contains(&path.display().to_string()) && message.contains(named),
+                "{message}"
+            );
         }
+    }
+
+    /// A full provenance file recording `clip_blake3`.
+    fn provenance_for(clip_blake3: &str) -> String {
+        format!(
+            r#"{{"model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+            "weights_commit": "abc123", "design_prompt": "a warm, low voice",
+            "seed": 7, "tool_version": "0.1.0", "clip_blake3": "{clip_blake3}"}}"#
+        )
     }
 
     #[test]
     fn a_generated_voice_with_its_provenance_is_accepted() {
         let dir = tempfile::tempdir().unwrap();
-        let provenance = r#"{"model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-            "weights_commit": "abc123", "design_prompt": "a warm, low voice",
-            "seed": 7, "tool_version": "0.1.0"}"#;
-        let (member, _) = generated_voice(dir.path(), Some(provenance));
+        // `generated_voice` writes the clip `b"designed"`.
+        let provenance = provenance_for(blake3::hash(b"designed").to_hex().as_str());
+        let (member, _) = generated_voice(dir.path(), Some(&provenance));
         let voices = Voices::resolve(&[member], dir.path()).unwrap();
         assert_eq!(voices.credits()[0].licence, GENERATED_VOICE_LICENCE);
+    }
+
+    #[test]
+    fn a_generated_voice_whose_provenance_names_another_clip_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = blake3::hash(b"another clip").to_hex();
+        let (member, path) = generated_voice(dir.path(), Some(&provenance_for(other.as_str())));
+        let message = config_message(Voices::resolve(&[member], dir.path()).unwrap_err());
+        assert!(
+            message.contains("does not match")
+                && message.contains(other.as_str())
+                && message.contains(&path.display().to_string()),
+            "{message}"
+        );
     }
 
     /// FakeTts that notes each turn it is asked to say, as `(text, say_as)`.

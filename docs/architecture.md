@@ -420,7 +420,7 @@ evidence on it yet are candidates; the 4 most similar, at cosine ≥ 0.30, are s
 
 **Measured precision.** `tests/stance_precision.rs` runs the rule on 85 hand-labelled
 pairs scored once by the real models, both ways (`tests/fixtures/stance_pairs/`); the
-test pins the current rule's counts and false-positive ids exactly, so any rule change
+test pins the current rule's counts, false-positive ids and missed ids exactly, so any rule change
 must update them on purpose, and
 `cargo test -p podling-core --test stance_precision -- --nocapture report` prints the
 before/after table. VERSION 8: supports precision 100% / recall 73.7%, contradicts
@@ -437,7 +437,9 @@ n34 n35 n36 n37. A set this small shows the rule fits it, not that it generalise
 A chunk gives a claim at most one piece of evidence, from its most decisive window, and
 entailment wins over contradiction, so a chunk is never both for and against.
 
-**Cost bound.** At most 4 NLI pairs per claim for stances, plus 2 × 8 per claim for
+**Cost bound.** At most 4 NLI pairs per claim for stances, plus up to 2 reverse pairs for
+each of those windows that would contradict a numbered claim (a window has at most two
+sentences, so at most two `reverse_hypotheses`), 12 in all; plus 2 × 8 per claim for
 clustering, and one embedding per claim and per window. Both stages are cached by
 content, so a rerun costs nothing, and a fully cached run never loads the NLI model.
 
@@ -575,7 +577,9 @@ synthesised as separate short clips for the second track (`synthesize_overlays`)
 [`lexicon.rs`](../crates/podling-core/src/lexicon.rs) reads the user-level
 `pronounce.toml` beside the `sidecars.toml` in use, and lays the episode's
 `[tts.pronounce]` over it, the episode winning per name. An entry is
-`Kulik = "Koolick"`, or `Kulik = { say = "Koolick", heard = ["Koolik"] }`. The
+`Kulik = "Koolick"`, or `Kulik = { say = "Koolick", heard = ["Koolik"] }`. A name
+with leading or trailing whitespace, an empty `say` or `heard` item, or a table
+without `say` is refused when the file is read, each with its own message. The
 lexicon is for names only: in the word test, respelling ordinary words made
 them worse. It has two uses, kept apart:
 - *Respellings, for the model only.* `spoken()` in
@@ -632,10 +636,10 @@ A `LicenseRef-Podling-Generated` clip is one the user designed with the
 offline tool in [`scripts/voice_design/`](../scripts/voice_design/README.md),
 which is never a sidecar and never run by the pipeline. Such a clip needs
 `<clip>.provenance.json` beside it (`model`, `weights_commit`,
-`design_prompt`, `seed`, `tool_version`; `VoiceProvenance` in `episode.rs`), so
+`design_prompt`, `seed`, `tool_version`, and `clip_blake3`, the blake3 hash of the clip's bytes; `VoiceProvenance` in `episode.rs`), so
 it can be told from a recording and made again. `Voices::resolve` in
 `synthesize.rs` checks this with the other clips, before any stage runs, and
-refuses a missing or invalid file with an error naming the speaker and the path.
+refuses a missing or invalid file, or one whose hash is not the clip's, with an error naming the speaker and the path.
 
 ## Why a claim ledger, not debating agents
 
