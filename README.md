@@ -161,8 +161,9 @@ export TOGETHER_API_KEY=...   # never put the key in the episode file
 then the passages behind each Contested claim, then the claim ledger and numbered
 source sentences for the script) is sent to
 that provider, which is why Podling refuses a hosted `base_url` unless the section
-declares `data_policy = "zero_retention"`. With a local server nothing leaves your
-machine, so that is the default. The key is sent only as an `Authorization:
+declares `data_policy = "zero_retention"`. A local server (on this machine, or at
+a private address on your own network, which then receives the same text) keeps
+your sources off the internet, so that is the default. The key is sent only as an `Authorization:
 Bearer` header. It is never written to the cache, the artifacts, a log line or an error
 message. Cached outputs derived from your sources are stored under `--cache-dir`.
 
