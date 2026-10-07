@@ -112,10 +112,12 @@ impl Transport {
             .api_key_env
             .map(|name| read_key(section, name, &env))
             .transpose()?;
-        if api_key.is_some() && !base_url.starts_with("https://") && reach == Reach::Hosted {
+        // Wider than `Reach::Hosted`: a private LAN address is local for the
+        // policy, but a key sent to it over plain http still crosses a network.
+        if api_key.is_some() && !base_url.starts_with("https://") && !is_loopback(host(&base_url)) {
             tracing::warn!(
                 %base_url,
-                "the API key will be sent over plain http to a non-local host"
+                "the API key will be sent over plain http to a non-loopback host"
             );
         }
 
@@ -419,6 +421,15 @@ fn host(base_url: &str) -> &str {
     }
 }
 
+/// Whether `host` (as [`host`] returns it) never leaves this machine:
+/// `localhost` in any case, 127.0.0.0/8 or `::1`. Like [`Reach::of`], a name
+/// is never resolved, so `localhost.example.com` is not loopback.
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host.parse::<Ipv4Addr>().is_ok_and(|v4| v4.is_loopback())
+        || host.parse::<Ipv6Addr>().is_ok_and(|v6| v6.is_loopback())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{BufRead, BufReader, Write};
@@ -472,6 +483,26 @@ mod tests {
             "http://h/v1",
         ] {
             assert_eq!(Reach::of(hosted), Reach::Hosted, "{hosted}");
+        }
+    }
+
+    #[test]
+    fn only_localhost_and_loopback_addresses_are_loopback() {
+        assert_eq!(host("http://[::1]:8080/v1"), "::1");
+        for loopback in ["localhost", "LOCALHOST", "127.0.0.1", "127.5.0.1", "::1"] {
+            assert!(is_loopback(loopback), "{loopback}");
+        }
+        // Private LAN addresses are local to `Reach`, but not loopback.
+        for other in [
+            "10.0.0.5",
+            "172.16.0.1",
+            "192.168.1.2",
+            "fd00::1",
+            "localhost.example.com",
+            "127.0.0.1.nip.io",
+            "api.together.xyz",
+        ] {
+            assert!(!is_loopback(other), "{other}");
         }
     }
 
