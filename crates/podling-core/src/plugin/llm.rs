@@ -12,9 +12,11 @@ use serde_json::{Value, json};
 use crate::error::{CoreError, ProviderFailure, Result};
 use crate::text::sentences;
 
-/// Version of the stage prompts and the input shapes they describe. Part of
-/// both LLM stages' cache keys: bump it when a prompt or an input layout
-/// changes in a way the instruction text alone would not show.
+/// Version of the claim-extraction prompt and its input shape, in the
+/// `extract_claims` cache key only: bump it when that prompt or its input
+/// layout changes in a way the instruction text alone would not show. Until
+/// [`SCRIPT_PROMPT_VERSION`] was split off it keyed the script stage too, so
+/// its history below also covers the script request.
 ///
 /// 2: a turn's text carries `{{quote:N}}` placeholders where its quotes go,
 ///    instead of the quoted words.
@@ -32,6 +34,14 @@ use crate::text::sentences;
 ///    sentence lists the quotations inside it (`quoted`), and a quote may name
 ///    one of them (`part`).
 pub const PROMPT_VERSION: u32 = 8;
+
+/// Version of the script prompt and its input shape, in the `script` cache
+/// key only. Kept apart from [`PROMPT_VERSION`] so a script-only change
+/// doesn't re-run claim extraction.
+///
+/// 1: split from [`PROMPT_VERSION`] 8; the request's ledger lists the claims
+///    in the order they first appear in `sources`, not by claim id.
+pub const SCRIPT_PROMPT_VERSION: u32 = 1;
 
 /// Version of the adjudicator's prompt and input shape, in its cache key only.
 /// Kept apart from [`PROMPT_VERSION`] so a change to the adjudicator doesn't

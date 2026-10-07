@@ -33,15 +33,6 @@
       },
       {
         "speaker": "guest",
-        "text": "One source reports: No impact crater was found.",
-        "emotion": "curious",
-        "citations": [
-          "27d97049c4916338b5f69ae47776487b32efb5dfa28f21eacf48433229aa8644"
-        ],
-        "quotes": []
-      },
-      {
-        "speaker": "host",
         "text": "Independent sources agree: In June 1908 an explosion flattened about 80 million trees over the Tunguska forest.",
         "emotion": "serious",
         "citations": [
@@ -50,7 +41,7 @@
         "quotes": []
       },
       {
-        "speaker": "guest",
+        "speaker": "host",
         "text": "One source reports: The heat was so strong that my shirt almost burned.",
         "emotion": "curious",
         "citations": [
@@ -59,11 +50,20 @@
         "quotes": []
       },
       {
-        "speaker": "host",
+        "speaker": "guest",
         "text": "One source reports: At breakfast the sky split in two.",
         "emotion": "curious",
         "citations": [
           "8c2c22bf60ff779929b1ec2df4202ed60ad4de3c357349217198a4fd4a4fb9d3"
+        ],
+        "quotes": []
+      },
+      {
+        "speaker": "host",
+        "text": "One source reports: No impact crater was found.",
+        "emotion": "curious",
+        "citations": [
+          "27d97049c4916338b5f69ae47776487b32efb5dfa28f21eacf48433229aa8644"
         ],
         "quotes": []
       },

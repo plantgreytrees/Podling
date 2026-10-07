@@ -160,11 +160,12 @@ and are still cache hits.
    fingerprint in their config, so the cache invalidates. `OpenAiCompat`'s
    fingerprint holds the base URL, model, temperature, max output tokens and a
    request-layout version, and never the API key, so rotating a key keeps the cache.
-4. **You changed a prompt or the shape of an LLM input.** Bump
-   [`PROMPT_VERSION`](../crates/podling-core/src/plugin/llm.rs). `extract_claims`
-   and `script` put it in their config fingerprint next to the instruction text.
-   The adjudicator has its own `ADJUDICATE_PROMPT_VERSION`, so changing its prompt
-   doesn't re-run claim extraction.
+4. **You changed a prompt or the shape of an LLM input.** Bump that stage's
+   prompt version, in [`llm.rs`](../crates/podling-core/src/plugin/llm.rs):
+   `PROMPT_VERSION` for `extract_claims`, `SCRIPT_PROMPT_VERSION` for `script`,
+   `ADJUDICATE_PROMPT_VERSION` for `adjudicate`. Each stage puts only its own in
+   its config fingerprint, next to the instruction text, so changing the script
+   prompt doesn't re-run claim extraction.
 5. **You changed an embedding or NLI provider's behaviour.** Rule 3 applies to
    them too: `EmbeddingProvider::fingerprint()` and `NliProvider::fingerprint()`
    are in all three grounding stages' cache keys (`ground_claims`, `cluster_claims`,
@@ -309,6 +310,20 @@ check stays in front of it either way, unchanged, as the exact-number gate.
 text and status only
 ([`LedgerClaim`](../crates/podling-core/src/plugin/llm.rs)), never its evidence. An
 8B model cited a chunk id from a merged claim's evidence as a claim, twice.
+
+**The script is told as a story.** The request lists the claims in the order they
+first appear in the sources: by the lowest position in the run's chunks of any of a
+claim's evidence chunks, ties by claim id. Only the request is reordered; the `Ledger`
+artifact keeps claim-id order. The instructions ask for a story arc on top of the
+grounding rules, which stay as they were: a cold open (a concrete scene or a quote),
+one through-line taken from the episode's `topic`, which is its angle, anecdote
+followed by reflection, the judged Contested claims as the turning point told as a
+dispute, and a closing reflection. For audio, the length rule asks for the claims that
+serve the through-line rather than every usable claim. `WriteScript` logs the
+request's claim order at `debug` and each accepted script's word ratio (from
+[`script_metrics`](../crates/podling-core/src/script_metrics.rs)) at `info`. The
+ignored `script_eval_live` test measures scripts from a saved run against the same
+metrics.
 
 ## Grounding with embeddings and NLI
 
