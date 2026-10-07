@@ -63,7 +63,7 @@ flowchart LR
 
 ## Trade-offs & known limits
 - **Order is a heuristic.** First appearance is not always chronological (a report may open with its conclusion). Revisit if listening shows confused timelines.
-- **`MAX_SCRIPT_TOKENS` is still 8,192 per call** (`script.rs:152`). A 30–60-minute episode in one call is impossible, so long episodes depend on the act writer.
+- **`MAX_SCRIPT_TOKENS` is still 8,192 per call** (`script.rs:219`). A 30–60-minute episode in one call is impossible, so long episodes depend on the act writer.
 - **Thin evidence.** Metrics measure length and grounding, not brilliance. The blind listen stays the judge of quality (LLM judges don't track expert judgment: https://arxiv.org/abs/2309.14556).
 
 ## Glossary

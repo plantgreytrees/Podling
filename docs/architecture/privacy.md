@@ -40,7 +40,7 @@ flowchart LR
 | id | decision | why | rejected alternatives |
 |---|---|---|---|
 | ARCH-PRIVACY-01 | Local = localhost, loopback and private IP literals (user's choice) | Covers this machine and a home server. A hostname can't prove where DNS sends it | Loopback only (a home server would need a false "hosted" declaration) |
-| ARCH-PRIVACY-02 | Enforced in `Transport::new`, local by default (user's choice) | The single constructor every HTTP provider uses (`openai.rs:69`, `openai_embeddings.rs:61`, `ollama.rs:43`, `sidecar_tts.rs:155`), so a new provider can't bypass it. Fails before the LLM spends time | Allow by default with an opt-in `local_only`; a pipeline-level check (a new provider could miss it) |
+| ARCH-PRIVACY-02 | Enforced in `Transport::new`, local by default (user's choice) | The single constructor every HTTP provider uses (`openai.rs:72`, `openai_embeddings.rs:64`, `ollama.rs:47`, `sidecar_tts.rs:155`), so a new provider can't bypass it. Fails before the LLM spends time | Allow by default with an opt-in `local_only`; a pipeline-level check (a new provider could miss it) |
 | ARCH-PRIVACY-03/05 | `data_policy = "zero_retention"` on `[llm]` / `[embedding]` (user's choice) | One field with one meaning, recorded and fingerprinted | Raw `extra_body` passthrough (no guarantee); one provider kind per host |
 | ARCH-PRIVACY-04 | Unload inherits `[llm]`'s policy; the sidecar gets none | Unload talks to the same server; a remote TTS sidecar would receive the script | Separate declarations |
 | ARCH-PRIVACY-06 | Keep no-redirects and no-credentials-in-URL | Without them a local server could bounce text to a hosted one | — |
