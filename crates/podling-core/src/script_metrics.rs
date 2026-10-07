@@ -6,7 +6,7 @@
 //! script's word ratio and the live evaluation harness can compare prompts
 //! with the same numbers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use podling_types::{ClaimId, ClaimStatus, Ledger, Script, Verdicts};
 
@@ -24,8 +24,11 @@ pub struct ScriptMetrics {
     pub quotes: usize,
     /// Citations over all turns, repeats counted.
     pub citations: usize,
-    /// Distinct ledger claims cited.
+    /// Distinct usable (non-Unsupported) ledger claims cited.
     pub distinct_cited: usize,
+    /// Distinct ledger claims cited that the ledger holds as Unsupported;
+    /// kept out of `distinct_cited` so `coverage` never exceeds 1.0.
+    pub cited_unsupported: usize,
     /// Ledger claims the script may use: every status but Unsupported.
     pub usable_claims: usize,
     /// `distinct_cited / usable_claims`; 0.0 when nothing is usable.
@@ -41,8 +44,21 @@ pub struct ScriptMetrics {
 impl ScriptMetrics {
     pub fn of(script: &Script, ledger: &Ledger, verdicts: &Verdicts, target_minutes: u16) -> Self {
         let turns = script.turns();
-        let in_ledger: BTreeSet<&ClaimId> = ledger.entries().iter().map(|e| e.claim.id()).collect();
+        let status: BTreeMap<&ClaimId, &ClaimStatus> = ledger
+            .entries()
+            .iter()
+            .map(|e| (e.claim.id(), &e.status))
+            .collect();
         let cited = cited_claims(script);
+        let cited_statuses: Vec<&ClaimStatus> = cited
+            .iter()
+            .filter_map(|id| status.get(id).copied())
+            .collect();
+        let cited_unsupported = cited_statuses
+            .iter()
+            .filter(|s| matches!(s, ClaimStatus::Unsupported))
+            .count();
+        let distinct_cited = cited_statuses.len() - cited_unsupported;
 
         let words = turns
             .iter()
@@ -53,12 +69,11 @@ impl ScriptMetrics {
             .iter()
             .filter(|e| e.status != ClaimStatus::Unsupported)
             .count();
-        let distinct_cited = cited.iter().filter(|id| in_ledger.contains(id)).count();
         let judged: Vec<&ClaimId> = verdicts
             .as_slice()
             .iter()
             .map(|v| v.claim())
-            .filter(|id| in_ledger.contains(id))
+            .filter(|id| status.contains_key(id))
             .collect();
 
         Self {
@@ -68,6 +83,7 @@ impl ScriptMetrics {
             quotes: turns.iter().map(|t| t.quotes.len()).sum(),
             citations: turns.iter().map(|t| t.citations.len()).sum(),
             distinct_cited,
+            cited_unsupported,
             usable_claims,
             coverage: ratio(distinct_cited, usable_claims),
             judged_contested: judged.len(),
@@ -75,7 +91,7 @@ impl ScriptMetrics {
             unknown_citations: turns
                 .iter()
                 .flat_map(|t| &t.citations)
-                .filter(|id| !in_ledger.contains(id))
+                .filter(|id| !status.contains_key(id))
                 .count(),
         }
     }
@@ -246,6 +262,25 @@ mod tests {
         let m = ScriptMetrics::of(&s, &ledger, &Verdicts::default(), 5);
         assert_eq!(m.usable_claims, 1);
         assert_eq!(m.coverage, 1.0);
+    }
+
+    #[test]
+    fn cited_unsupported_claims_are_counted_apart_so_coverage_stays_within_one() {
+        let used = supported("The sky split in two.");
+        let used_id = used.id().clone();
+        let unsupported = Claim::new("Nobody saw it.");
+        let unsupported_id = unsupported.id().clone();
+        let ledger = Ledger::from_claims([used, unsupported]);
+        let s = script(vec![
+            turn("It split.", &[&used_id]),
+            turn("Nobody saw.", &[&unsupported_id, &unsupported_id]),
+        ]);
+        let m = ScriptMetrics::of(&s, &ledger, &Verdicts::default(), 5);
+        assert_eq!(m.distinct_cited, 1);
+        assert_eq!(m.cited_unsupported, 1);
+        assert_eq!(m.usable_claims, 1);
+        assert_eq!(m.coverage, 1.0);
+        assert_eq!(m.unknown_citations, 0);
     }
 
     #[test]

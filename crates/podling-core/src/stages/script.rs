@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
 use podling_types::{
-    Beat, BeatKind, Chunk, ClaimId, Document, Ledger, Pace, Quote, Script, Speaker, TextSpan, Turn,
-    TurnRange, Verdict, Verdicts,
+    Beat, BeatKind, Chunk, ClaimId, Document, EpisodeSpec, Ledger, Pace, Quote, Script, Speaker,
+    TextSpan, Turn, TurnRange, Verdict, Verdicts,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -70,6 +70,39 @@ pub struct ScriptInput {
     /// `std::ops::Not::not` is `!` as a function, so false is skipped.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub audio: bool,
+}
+
+impl ScriptInput {
+    /// The script stage's input for `spec`'s episode: `topic`,
+    /// `target_minutes`, `cast` and `audio` come from the spec, the rest from
+    /// the stages before. The pipeline and the live eval harness both build
+    /// the input here, so the harness measures what the pipeline would send.
+    pub fn for_episode(
+        spec: &EpisodeSpec,
+        ledger: Ledger,
+        verdicts: Verdicts,
+        chunks: Vec<Chunk>,
+        documents: Vec<Document>,
+    ) -> Self {
+        Self {
+            topic: spec.topic.clone(),
+            target_minutes: spec.target_minutes,
+            ledger,
+            verdicts,
+            chunks,
+            documents,
+            cast: spec
+                .cast
+                .iter()
+                .map(|member| Speaker {
+                    id: member.id.clone(),
+                    name: member.name.clone(),
+                    role: member.role.clone(),
+                })
+                .collect(),
+            audio: spec.tts.is_some(),
+        }
+    }
 }
 
 pub struct WriteScript<'a> {
@@ -1392,6 +1425,51 @@ mod tests {
             still, ledger_order,
             "the ledger itself keeps claim-id order"
         );
+    }
+
+    #[test]
+    fn a_claim_seen_in_several_chunks_is_placed_by_its_earliest() {
+        let doc = document("# Title\n\nThe sky split in two. Trees fell.");
+        let first = Chunk::from_document(&doc, TextSpan::new(9, 30).unwrap(), vec![]).unwrap();
+        let second =
+            Chunk::from_document(&doc, TextSpan::new(31, doc.text().len()).unwrap(), vec![])
+                .unwrap();
+        let mut texts = ["The sky split in two.", "Trees fell.", "The forest burned."];
+        texts.sort_by_key(|t| Claim::id_for(t));
+        // `spanning` sorts after both others by id, and its later chunk is
+        // listed first: only its earliest chunk can put it before `later`.
+        let earlier = evidenced(texts[0], &doc, &first);
+        let later = evidenced(texts[1], &doc, &second);
+        let mut spanning = evidenced(texts[2], &doc, &second);
+        spanning.add_evidence(Evidence {
+            chunk: first.id().clone(),
+            source: doc.source().id(),
+            independence_group: doc.source().independence_group.clone(),
+            stance: Stance::Supports,
+            basis: None,
+        });
+        assert_eq!(spanning.evidence().len(), 2, "evidence in both chunks");
+        let expected = [
+            earlier.id().clone(),
+            spanning.id().clone(),
+            later.id().clone(),
+        ];
+
+        let input = ScriptInput {
+            ledger: Ledger::from_claims([later, spanning, earlier]),
+            ..empty_input(vec![doc], vec![first, second])
+        };
+        let llm = Recording::default();
+        WriteScript { llm: &llm }.run(&input).unwrap();
+
+        let request = llm.0.borrow().clone().unwrap();
+        let sent: Vec<ClaimId> = request.input["ledger"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| serde_json::from_value(c["id"].clone()).unwrap())
+            .collect();
+        assert_eq!(sent, expected);
     }
 
     #[test]

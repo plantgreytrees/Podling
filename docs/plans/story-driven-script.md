@@ -431,6 +431,9 @@ commits.
 - `audio_e2e::the_user_and_episode_lexicons_reach_the_worker_the_episode_winning` failed once
   ("Peer disconnected") under full-suite load during unit 6; it passed 3/3 alone and on the
   next full run. Treated as a load flake, not changed.
+- The coverage figures in this plan's tables were computed before story-followups narrowed
+  the numerator to usable claims (cited Unsupported claims now count apart as
+  `cited_unsupported`), so they can read higher than later runs; the tables are left as recorded.
 
 ## Verification background   (citations — for the reviewer, not the executor)
 - Script prompt, `PROMPT_VERSION` in the script fingerprint — `crates/podling-core/src/stages/script.rs:23-58`, `:102-107`.
