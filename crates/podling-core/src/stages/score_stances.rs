@@ -74,7 +74,9 @@ impl Stage for ScoreStances<'_> {
     // there.", "His arrival came in 1931."), not only first.
     // 7: a number-against-number contradiction must also hold with claim and
     // premise swapped (`StanceEvidence::reverse_contradiction`).
-    const VERSION: u32 = 7;
+    // 8: the reverse check also reads the whole window when one of its
+    // sentences has no number (`reverse_hypotheses`).
+    const VERSION: u32 = 8;
     type Input = StanceInput;
     type Output = Vec<Claim>;
 
@@ -322,16 +324,24 @@ fn holds_both_ways(evidence: &StanceEvidence<'_>) -> bool {
         .is_some_and(|r| r.get() >= CONTRADICT_PM)
 }
 
-/// The sentences of `premise` that hold a number: the hypotheses the claim is
-/// read against for [`StanceEvidence::reverse_contradiction`]. Sentence by
-/// sentence, not the whole window, so the claim is judged against the
-/// numbered statement rather than the window's other sentences.
+/// The hypotheses the claim is read against for
+/// [`StanceEvidence::reverse_contradiction`]: each sentence of `premise` that
+/// holds a number, then the whole window when it also has a sentence without
+/// one. The numbered sentences come one by one so the claim is judged against
+/// the numbered statement itself; the whole window lets a contradiction the
+/// window states without a number ("Kulik never reached the site. The
+/// expedition set off in 1927.") be found both ways. Empty when no sentence
+/// holds a number.
 pub fn reverse_hypotheses(premise: &str) -> Vec<&str> {
-    sentences(premise)
+    let (numbered, numberless): (Vec<&str>, Vec<&str>) = sentences(premise)
         .into_iter()
         .map(|range| &premise[range])
-        .filter(|sentence| !numbers(sentence).is_empty())
-        .collect()
+        .partition(|sentence| !numbers(sentence).is_empty());
+    let mut hypotheses = numbered;
+    if !hypotheses.is_empty() && !numberless.is_empty() {
+        hypotheses.push(premise);
+    }
+    hypotheses
 }
 
 /// When the claim and the premise both state a number, false if the premise
@@ -816,12 +826,20 @@ mod tests {
     }
 
     #[test]
-    fn reverse_hypotheses_are_the_numbered_sentences() {
+    fn reverse_hypotheses_are_the_numbered_sentences_and_a_mixed_window() {
+        // A sentence without a number: the whole window is read too.
+        let mixed = "Kulik never reached the site. The expedition set off in 1927.";
         assert_eq!(
-            reverse_hypotheses("The ship sank. 706 persons were saved. Rescue came at dawn."),
-            vec!["706 persons were saved."]
+            reverse_hypotheses(mixed),
+            vec!["The expedition set off in 1927.", mixed]
         );
-        assert!(reverse_hypotheses("The ship sank.").is_empty());
+        // Every sentence numbered: just the sentences.
+        assert_eq!(
+            reverse_hypotheses("706 persons were saved. 712 were taken on board."),
+            vec!["706 persons were saved.", "712 were taken on board."]
+        );
+        // No number anywhere: nothing to read back.
+        assert!(reverse_hypotheses("The ship sank. Rescue came at dawn.").is_empty());
     }
 
     #[test]
