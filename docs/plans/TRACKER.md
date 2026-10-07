@@ -56,6 +56,8 @@ are in [TRACKER-archive.md](./TRACKER-archive.md); open work is in the live ledg
 | [story-driven-script](./story-driven-script.md) | 6 (sds-transport-policy) | http Transport local/hosted policy | COMPLETE | all 6 acceptance criteria ticked; 95d8e68 merged 6dd427a into worktree-story-dr… | 2026-10-07 |
 | [story-driven-script](./story-driven-script.md) | sds-arc-measure | — | COMPLETE | all 4 acceptance criteria ticked; 7787fcb merged 1cd801b; tables recorded; ARCH… | 2026-10-07 |
 | [story-driven-script](./story-driven-script.md) | sds-transport-policy | — | COMPLETE | all 6 acceptance criteria ticked; 95d8e68 merged 6dd427a into worktree-story-dr… | 2026-10-07 |
+| [story-followups](./story-followups.md) | 1 (sfu-story) | script metrics + ScriptInput | COMPLETE | all 7 acceptance criteria ticked; all 7 acceptance criteria ticked; 92db58a mer… | 2026-10-07 |
+| [story-followups](./story-followups.md) | 2 (sfu-privacy) | http key warning | COMPLETE | all 3 acceptance criteria ticked; all 3 acceptance criteria ticked; ab8b978 mer… | 2026-10-07 |
 | [phase5-tts-audio](../../phase5-tts-audio) | 5 | — | COMPLETE | all 2 acceptance criteria ticked; merge a90c25f into worktree-phase5-tts-plan; … | 2026-10-05 |
 
 <!-- craftsman:ledger:end -->
