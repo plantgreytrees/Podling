@@ -86,6 +86,7 @@ fn provider(base_url: &str, key: Option<&str>) -> OpenAiEmbeddings {
         api_key_env: key.map(|_| "PODLING_TEST_KEY".into()),
         timeout_secs: None,
         unload_after: false,
+        data_policy: None,
     };
     OpenAiEmbeddings::from_config_with_env(&config, |_| key.map(Into::into))
         .unwrap()
@@ -184,6 +185,7 @@ fn live_embeddings() {
         api_key_env: None,
         timeout_secs: None,
         unload_after: false,
+        data_policy: None,
     })
     .unwrap();
     let v = provider

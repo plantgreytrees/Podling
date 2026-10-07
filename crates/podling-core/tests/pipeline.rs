@@ -9,7 +9,8 @@ use podling_core::plugin::{
 };
 use podling_core::{CoreError, DiskCache, GroundingCounts, RunReport, pipeline};
 use podling_types::{
-    Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script, Stance, Verdicts,
+    Chunk, ClaimStatus, DataPolicy, Document, EmbeddingConfig, EpisodeSpec, EvidenceBasis, Ledger,
+    LlmConfig, Script, Stance, Verdicts,
 };
 use serde_json::{Value, json};
 
@@ -97,7 +98,10 @@ fn writes_every_artifact_in_a_versioned_envelope() {
 /// `podling run --episode tests/fixtures/episode.toml --no-cache`). Only the
 /// envelope's `schema_version` may differ. Artifacts added since (the
 /// adjudicator's verdicts) have no golden; nothing is Contested without NLI,
-/// so the verdicts are empty.
+/// so the verdicts are empty. `script.json` was rewritten when the script
+/// request began listing claims in source order (story-driven-script): the
+/// fake writes one turn per claim in request order, so the same turns come in
+/// a new order.
 #[test]
 fn no_nli_config_writes_todays_artifacts() {
     let tmp = tempfile::tempdir().unwrap();
@@ -147,6 +151,61 @@ fn without_tts_no_audio_is_made() {
     expected.sort();
     assert_eq!(written, expected);
     assert_eq!(cache.stats().unwrap().blobs, 0);
+}
+
+/// Local by default: a hosted `base_url` with no `data_policy` stops the run
+/// before any stage, so no source text is sent and nothing is written or
+/// cached. The same for `[llm]` and `[embedding]`.
+#[test]
+fn a_hosted_server_without_a_data_policy_is_refused_before_any_stage() {
+    let hosted =
+        "kind = \"open_ai_compat\"\nbase_url = \"https://api.together.xyz/v1\"\nmodel = \"m\"";
+    for section in ["llm", "embedding"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut episode = spec(&fixtures());
+        if section == "llm" {
+            episode.llm = toml::from_str(hosted).unwrap();
+        } else {
+            episode.embedding = Some(toml::from_str(hosted).unwrap());
+            episode.nli = Some(toml::from_str("kind = \"fake\"").unwrap());
+        }
+        let out = tmp.path().join("out");
+        let cache = DiskCache::new(tmp.path().join("cache"));
+
+        let err = pipeline::run(&episode, &fixtures(), Some(&cache), &out).unwrap_err();
+        assert!(
+            matches!(&err, CoreError::Config { message }
+                if message.contains(&format!("{section}.data_policy = \"zero_retention\""))),
+            "{section}: {err}"
+        );
+        let written = fs::read_dir(&out).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(written, 0, "{section}: an artifact was written");
+        let stats = cache.stats().unwrap();
+        assert_eq!((stats.entries, stats.blobs), (0, 0), "{section}: cached");
+    }
+}
+
+/// The hosted example declares its `[llm]` zero-retention and keeps its
+/// `[embedding]` local.
+#[test]
+fn the_together_example_declares_zero_retention() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/titanic/episode-together.toml");
+    let episode: EpisodeSpec = toml::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert!(matches!(
+        episode.llm,
+        LlmConfig::OpenAiCompat {
+            data_policy: Some(DataPolicy::ZeroRetention),
+            ..
+        }
+    ));
+    assert!(matches!(
+        episode.embedding,
+        Some(EmbeddingConfig::OpenAiCompat {
+            data_policy: None,
+            ..
+        })
+    ));
 }
 
 fn read_body<T: serde::de::DeserializeOwned>(out: &Path, kind: &str) -> T {
@@ -621,6 +680,10 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
 /// and bumped `PROMPT_VERSION` to 7, the fake LLM to 7 and `script` to 11 (its
 /// input gained the verdicts), so the LLM stages moved again; analyse's key,
 /// a hash of the script it reads, shows the script itself did not change.
+/// story-driven-script split `SCRIPT_PROMPT_VERSION` off `PROMPT_VERSION`,
+/// ordered the script request's claims by source and bumped `script` to 13:
+/// `script` moved, and so did `analyse`, because the fake script now speaks
+/// the claims in source order; `extract_claims` did not.
 const NO_NLI_KEYS: [(&str, &str); 7] = [
     (
         "ingest",
@@ -644,11 +707,11 @@ const NO_NLI_KEYS: [(&str, &str); 7] = [
     ),
     (
         "script",
-        "db0ce133885efec5041e02d4656058624f94d5da17074c53d0380fb7682dd875",
+        "aa4bfe5c7aa0ec7780fe427818f8113e3826d06ef6e7bc93fe2fada2419823e5",
     ),
     (
         "analyse",
-        "038465e90df3d8074e5054c6b0c489c397aaa33443cfe556cf8d76e07ff058b9",
+        "68915896a2a2dc82243424d16518199ea4d1e8541c9de0602b07b9de67692786",
     ),
 ];
 

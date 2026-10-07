@@ -1,0 +1,43 @@
+# The Titanic episode with the script and claims written by a hosted
+# open-weight model on Together AI; embeddings and NLI stay on this machine.
+#
+# Podling sends source text only to localhost or a private address unless the
+# section declares `data_policy = "zero_retention"`. Declare it only once the
+# endpoint neither trains on nor retains your requests: on Together, turn off
+# both training on your data and storing prompts and responses in your
+# account's privacy settings (or have a zero-data-retention agreement) before
+# running this.
+#
+#   export TOGETHER_API_KEY=...
+#   ollama pull nomic-embed-text
+#   hf download cross-encoder/nli-deberta-v3-base \
+#     --local-dir examples/titanic/models/nli-deberta-v3-base
+#   cargo run -p podling-cli -- run --episode examples/titanic/episode-together.toml
+
+title = "The Titanic inquiries"
+topic = "how the 1912 Titanic inquiries disagreed"
+target_minutes = 5
+sources = [
+  { kind = "local_files", root = "sources/us-senate", independence_group = "us-senate" },
+  { kind = "local_files", root = "sources/british-inquiry", independence_group = "british-inquiry" },
+]
+analysers = [{ kind = "quote_verifier" }]
+
+[llm]
+kind = "open_ai_compat"
+base_url = "https://api.together.xyz/v1"
+model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+api_key_env = "TOGETHER_API_KEY"
+temperature = 0.2
+timeout_secs = 600
+data_policy = "zero_retention"
+
+[embedding]
+kind = "open_ai_compat"
+base_url = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+
+# Runs locally on the CPU (Apache-2.0).
+[nli]
+kind = "cross_encoder"
+model_dir = "models/nli-deberta-v3-base"

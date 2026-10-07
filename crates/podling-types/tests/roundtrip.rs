@@ -537,6 +537,7 @@ fn open_ai_compat_episode_parses_and_roundtrips() {
             timeout_secs: Some(120),
             max_output_tokens: Some(2048),
             unload_after: true,
+            data_policy: None,
         }
     );
     roundtrip(&spec);
@@ -555,6 +556,78 @@ fn open_ai_compat_episode_parses_and_roundtrips() {
             ..
         }
     ));
+}
+
+#[test]
+fn data_policy_parses_in_llm_and_embedding_and_is_left_out_when_unset() {
+    let hosted = EPISODE.replace(
+        "kind = \"fake\"",
+        "kind = \"open_ai_compat\"\nbase_url = \"https://api.together.xyz/v1\"\nmodel = \"m\"\ndata_policy = \"zero_retention\"",
+    );
+    let embedding = GROUNDING.replace(
+        "model = \"nomic-embed-text\"",
+        "model = \"nomic-embed-text\"\ndata_policy = \"zero_retention\"",
+    );
+    let spec: EpisodeSpec = toml::from_str(&format!("{hosted}{embedding}")).unwrap();
+    assert!(matches!(
+        spec.llm,
+        LlmConfig::OpenAiCompat {
+            data_policy: Some(DataPolicy::ZeroRetention),
+            ..
+        }
+    ));
+    assert!(matches!(
+        spec.embedding,
+        Some(EmbeddingConfig::OpenAiCompat {
+            data_policy: Some(DataPolicy::ZeroRetention),
+            ..
+        })
+    ));
+    let json = serde_json::to_value(&spec).unwrap();
+    assert_eq!(json["llm"]["data_policy"], "zero_retention");
+    assert_eq!(json["embedding"]["data_policy"], "zero_retention");
+    roundtrip(&spec);
+
+    // Unset is `None`, and serialises without the key.
+    let local: EpisodeSpec = toml::from_str(&format!(
+        "{}{GROUNDING}",
+        EPISODE.replace(
+            "kind = \"fake\"",
+            "kind = \"open_ai_compat\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"m\"",
+        )
+    ))
+    .unwrap();
+    assert!(matches!(
+        local.llm,
+        LlmConfig::OpenAiCompat {
+            data_policy: None,
+            ..
+        }
+    ));
+    let json = serde_json::to_value(&local).unwrap();
+    assert!(json["llm"].get("data_policy").is_none(), "{json}");
+    assert!(json["embedding"].get("data_policy").is_none(), "{json}");
+    let toml_out = toml::to_string(&local).unwrap();
+    assert!(!toml_out.contains("data_policy"), "{toml_out}");
+}
+
+#[test]
+fn an_unknown_data_policy_is_rejected() {
+    for value in ["\"retain\"", "\"Zero_Retention\"", "true"] {
+        let src = EPISODE.replace(
+            "kind = \"fake\"",
+            &format!(
+                "kind = \"open_ai_compat\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"m\"\ndata_policy = {value}"
+            ),
+        );
+        let err = toml::from_str::<EpisodeSpec>(&src).unwrap_err().to_string();
+        // serde names the one variant for a wrong string, and the type for a
+        // non-string.
+        assert!(
+            err.contains("zero_retention") || err.contains("invalid type"),
+            "{err}"
+        );
+    }
 }
 
 #[test]
@@ -593,6 +666,7 @@ fn embedding_and_nli_sections_parse_and_roundtrip() {
             api_key_env: None,
             timeout_secs: None,
             unload_after: false,
+            data_policy: None,
         })
     );
     assert_eq!(

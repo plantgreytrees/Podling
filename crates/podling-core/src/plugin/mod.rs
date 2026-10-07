@@ -38,8 +38,8 @@ pub use llm::{
     ADJUDICATE_PROMPT_VERSION, AdjudicationClaim, AdjudicationEvidence, ClaimDraft, ClaimsDraft,
     Completion, CompletionRequest, DEFAULT_ATTEMPTS, DraftTurn, FakeLlm, LedgerClaim,
     LedgerVerdict, LlmProvider, LlmTask, MAX_REASON_CHARS, NumberedSentence, PROMPT_VERSION,
-    QuoteRef, ScriptDraft, SourceText, VerdictDraft, complete_validated, complete_validated_with,
-    reason_excerpt,
+    QuoteRef, SCRIPT_PROMPT_VERSION, ScriptDraft, SourceText, VerdictDraft, complete_validated,
+    complete_validated_with, reason_excerpt,
 };
 pub use nli::{FakeNli, NliPair, NliProvider, NliScores, score_checked};
 pub use openai::OpenAiCompat;
