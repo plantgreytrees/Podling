@@ -5,6 +5,7 @@
 //! straight away, and works for embedding-only models too (checked against
 //! Ollama with `nomic-embed-text`, which answers `done_reason: "unload"`).
 
+use podling_types::DataPolicy;
 use serde_json::json;
 
 use super::http::{Transport, TransportConfig, config_error};
@@ -29,6 +30,9 @@ impl OllamaUnload {
         base_url: &str,
         model: &str,
         api_key_env: Option<&str>,
+        // The section's own `data_policy`: the unload request goes to the same
+        // server, so the same rule applies to it.
+        data_policy: Option<DataPolicy>,
         env: impl Fn(&str) -> Option<String>,
     ) -> Result<Self> {
         let root = base_url
@@ -47,6 +51,7 @@ impl OllamaUnload {
                 base_url: root,
                 api_key_env,
                 timeout_secs: None,
+                data_policy,
             },
             env,
         )?;
@@ -192,5 +197,29 @@ mod tests {
         assert!(message.contains("llm.unload_after"), "{message}");
         // Unflagged, any base URL is fine.
         assert!(llm("http://localhost:8080", false).is_ok());
+    }
+
+    #[test]
+    fn the_unload_transport_follows_its_sections_data_policy() {
+        use podling_types::DataPolicy;
+
+        use super::OllamaUnload;
+
+        let unload = |policy| {
+            OllamaUnload::new(
+                "llm",
+                "open_ai_compat",
+                "https://ollama.example/v1",
+                "m",
+                None,
+                policy,
+                |_| None,
+            )
+        };
+        let Err(CoreError::Config { message }) = unload(None) else {
+            panic!("a hosted unload URL with no policy must be refused");
+        };
+        assert!(message.contains("llm.data_policy"), "{message}");
+        assert!(unload(Some(DataPolicy::ZeroRetention)).is_ok());
     }
 }

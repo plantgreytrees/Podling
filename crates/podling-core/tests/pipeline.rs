@@ -9,7 +9,8 @@ use podling_core::plugin::{
 };
 use podling_core::{CoreError, DiskCache, GroundingCounts, RunReport, pipeline};
 use podling_types::{
-    Chunk, ClaimStatus, Document, EpisodeSpec, EvidenceBasis, Ledger, Script, Stance, Verdicts,
+    Chunk, ClaimStatus, DataPolicy, Document, EmbeddingConfig, EpisodeSpec, EvidenceBasis, Ledger,
+    LlmConfig, Script, Stance, Verdicts,
 };
 use serde_json::{Value, json};
 
@@ -150,6 +151,61 @@ fn without_tts_no_audio_is_made() {
     expected.sort();
     assert_eq!(written, expected);
     assert_eq!(cache.stats().unwrap().blobs, 0);
+}
+
+/// Local by default: a hosted `base_url` with no `data_policy` stops the run
+/// before any stage, so no source text is sent and nothing is written or
+/// cached. The same for `[llm]` and `[embedding]`.
+#[test]
+fn a_hosted_server_without_a_data_policy_is_refused_before_any_stage() {
+    let hosted =
+        "kind = \"open_ai_compat\"\nbase_url = \"https://api.together.xyz/v1\"\nmodel = \"m\"";
+    for section in ["llm", "embedding"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut episode = spec(&fixtures());
+        if section == "llm" {
+            episode.llm = toml::from_str(hosted).unwrap();
+        } else {
+            episode.embedding = Some(toml::from_str(hosted).unwrap());
+            episode.nli = Some(toml::from_str("kind = \"fake\"").unwrap());
+        }
+        let out = tmp.path().join("out");
+        let cache = DiskCache::new(tmp.path().join("cache"));
+
+        let err = pipeline::run(&episode, &fixtures(), Some(&cache), &out).unwrap_err();
+        assert!(
+            matches!(&err, CoreError::Config { message }
+                if message.contains(&format!("{section}.data_policy = \"zero_retention\""))),
+            "{section}: {err}"
+        );
+        let written = fs::read_dir(&out).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(written, 0, "{section}: an artifact was written");
+        let stats = cache.stats().unwrap();
+        assert_eq!((stats.entries, stats.blobs), (0, 0), "{section}: cached");
+    }
+}
+
+/// The hosted example declares its `[llm]` zero-retention and keeps its
+/// `[embedding]` local.
+#[test]
+fn the_together_example_declares_zero_retention() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/titanic/episode-together.toml");
+    let episode: EpisodeSpec = toml::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert!(matches!(
+        episode.llm,
+        LlmConfig::OpenAiCompat {
+            data_policy: Some(DataPolicy::ZeroRetention),
+            ..
+        }
+    ));
+    assert!(matches!(
+        episode.embedding,
+        Some(EmbeddingConfig::OpenAiCompat {
+            data_policy: None,
+            ..
+        })
+    ));
 }
 
 fn read_body<T: serde::de::DeserializeOwned>(out: &Path, kind: &str) -> T {

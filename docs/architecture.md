@@ -158,8 +158,10 @@ and are still cache hits.
 3. **You changed a provider's behaviour.** Make sure `LlmProvider::fingerprint()`
    changes, for example the model name or a version field. Stages include the
    fingerprint in their config, so the cache invalidates. `OpenAiCompat`'s
-   fingerprint holds the base URL, model, temperature, max output tokens and a
-   request-layout version, and never the API key, so rotating a key keeps the cache.
+   fingerprint holds the base URL, model, temperature, max output tokens, a
+   request-layout version and a declared `data_policy` (left out when unset, so a
+   local episode keeps its keys), and never the API key, so rotating a key keeps
+   the cache. `OpenAiEmbeddings` does the same with its own fields.
 4. **You changed a prompt or the shape of an LLM input.** Bump that stage's
    prompt version, in [`llm.rs`](../crates/podling-core/src/plugin/llm.rs):
    `PROMPT_VERSION` for `extract_claims`, `SCRIPT_PROMPT_VERSION` for `script`,
@@ -220,7 +222,20 @@ Deferred to later phases:
 The key, URL, limits and retry rules below live in one shared `Transport`
 ([`plugin/http.rs`](../crates/podling-core/src/plugin/http.rs)), which the
 embeddings client uses too; its config errors name its own section
-(`embedding.base_url`, `embedding.api_key_env`).
+(`embedding.base_url`, `embedding.api_key_env`). Every HTTP provider, including the
+Ollama unload request and the TTS sidecar, gets its `ureq::Agent` there and nowhere
+else.
+
+**Local by default.** `Transport::new` classifies the `base_url` host: `localhost` and
+loopback or private IP literals (127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12,
+192.168.0.0/16, fc00::/7) are local; every other host, including a name that resolves
+to a private address, is hosted. It refuses a hosted URL with a `Config` error naming
+the section and the fix unless the section declares `data_policy = "zero_retention"`
+(`DataPolicy`, on `[llm]` and `[embedding]`). Providers are built before any stage, so
+a refused section stops the run before any source text is read or sent. The Ollama
+unload transport gets its section's policy; the TTS sidecar gets none, so it can only
+ever be local. Each transport logs its section, `local` or `hosted`, and the declared
+policy at `info` when it is built.
 
 [`OpenAiCompat`](../crates/podling-core/src/plugin/openai.rs) sends
 `POST {base_url}/chat/completions`, which covers Ollama, llama.cpp
@@ -232,7 +247,7 @@ LLM task replies with an object (claim extraction returns `{ "claims": [...] }`)
 | Concern | Behaviour |
 |---|---|
 | Key | Read once from the variable named by `api_key_env`. Named but unset or empty is a `Config` error before any request. Sent only as `Authorization: Bearer`. Its `Debug` prints `[redacted]`, and error excerpts and logs never contain it. |
-| URL | Must be `http://` or `https://`, with no credentials, query or fragment. A key over plain `http` to a non-local host logs a warning. Redirects are off, so the header can't follow one to another host. |
+| URL | Must be `http://` or `https://`, with no credentials, query or fragment. A hosted host needs `data_policy = "zero_retention"` (above). A key over plain `http` to a hosted host logs a warning. Redirects are off, so the header can't follow one to another host. |
 | Limits | Per-request timeout (default 120 s); response bodies over 4 MiB are rejected while being read; an error body is quoted up to 512 bytes. |
 | Retries | A 429 or 5xx is retried twice (0.5 s, then 1 s). A timeout, a 4xx or a transport error is not. Separately, `complete_validated` re-asks when a reply fails validation (once, or twice for the script). |
 | Errors | `CoreError::Provider` carries a `ProviderFailure` kind (`Http(status)`, `Unreachable`, `TimedOut`, `CutOff`, `Other`; the LLM stages retry a `CutOff` reply as a rejection); `CoreError::provider()` finds it and the failing plugin through stage wrappers. The CLI picks its fix hint from the kind, never from the message wording, and takes the URL, model and key variable from `[embedding]` when the plugin is `open_ai_compat_embeddings`, otherwise from `[llm]`. |
