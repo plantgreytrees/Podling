@@ -42,7 +42,7 @@ units:
         - crates/podling-core/tests/pipeline.rs
         - crates/podling-cli/tests/cli.rs
         - docs/architecture.md
-    arch: [ARCH-STORY-03, ARCH-STORY-04, ARCH-STORY-06, ARCH-STORY-11]
+    arch: [ARCH-STORY-03, ARCH-STORY-04, ARCH-STORY-06, ARCH-STORY-11, ARCH-SPEECH-04, ARCH-SPEECH-11]
     tooling: { implementer: implementer, gates: [code-reviewer, idiom-reviewer],
                skills: [], guards: [cargo fmt, cargo clippy --all-targets -- -D warnings, cargo test], mcp: [] }
   - id: 2

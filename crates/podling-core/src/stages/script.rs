@@ -139,7 +139,11 @@ impl Stage for WriteScript<'_> {
     //     instructions ask for a story arc (cold open, a through-line from
     //     `topic`, the judged Contested claims as the turning point, a closing
     //     reflection); keyed by `SCRIPT_PROMPT_VERSION`, not `PROMPT_VERSION`.
-    const VERSION: u32 = 13;
+    // 14: a reply is rejected, and retried, unless it cites at least half of
+    //     the usable claims (`check_coverage`) across at least two turns, or if
+    //     a turn's text speaks a claim id; a one-turn script that cited nothing
+    //     was accepted until now.
+    const VERSION: u32 = 14;
     type Input = ScriptInput;
     type Output = Script;
 
@@ -192,20 +196,17 @@ impl Stage for WriteScript<'_> {
                  e.g. OLLAMA_CONTEXT_LENGTH=16384"
             );
         }
-        let script =
+        let (script, metrics) =
             complete_validated_with(self.llm, Self::ID, &request, SCRIPT_ATTEMPTS, |text| {
-                build_script(text, input)
+                accept_script(text, input)
             })?;
-        let metrics = ScriptMetrics::of(
-            &script,
-            &input.ledger,
-            &input.verdicts,
-            input.target_minutes,
-        );
         tracing::info!(
             word_ratio = metrics.word_ratio,
             words = metrics.words,
             target_minutes = input.target_minutes,
+            coverage = metrics.coverage,
+            distinct_cited = metrics.distinct_cited,
+            usable_claims = metrics.usable_claims,
             "script accepted"
         );
         Ok(script)
@@ -297,6 +298,58 @@ fn source_texts(chunks: &[Chunk], documents: &[Document]) -> Vec<SourceText> {
         .collect()
 }
 
+/// A reply that passes [`build_script`] and then the coverage floor, with the
+/// metrics the floor was judged on, so the caller logs them without
+/// computing them twice.
+fn accept_script(
+    text: &str,
+    input: &ScriptInput,
+) -> std::result::Result<(Script, ScriptMetrics), String> {
+    let script = build_script(text, input)?;
+    let metrics = ScriptMetrics::of(
+        &script,
+        &input.ledger,
+        &input.verdicts,
+        input.target_minutes,
+    );
+    check_coverage(&metrics)?;
+    Ok((script, metrics))
+}
+
+/// The fewest turns a script may have once the ledger has claims to tell.
+const MIN_TURNS: usize = 2;
+
+/// A script must tell at least half of the usable claims, each in a turn of
+/// its own, and have two turns. Live, llama3.1:8b sometimes answers with one
+/// turn that cites nothing; with no floor that reply passed every check and
+/// became the episode. A ledger with fewer than two usable claims has too
+/// little to tell, so it is never floored. The length is deliberately not a
+/// word count: a small ledger caps what any target length can ask for.
+fn check_coverage(metrics: &ScriptMetrics) -> std::result::Result<(), String> {
+    if metrics.usable_claims < 2 {
+        return Ok(());
+    }
+    let needed = metrics.usable_claims.div_ceil(2);
+    if metrics.distinct_cited >= needed && metrics.turns >= MIN_TURNS {
+        return Ok(());
+    }
+    Err(format!(
+        "the script cites {} of {} usable claims and has {} turn(s); cite at least {needed} \
+         of them, each in a turn of its own, in at least {MIN_TURNS} turns",
+        metrics.distinct_cited, metrics.usable_claims, metrics.turns
+    ))
+}
+
+/// Whether `text` speaks a claim id: one of the ledger's ids as written, or
+/// any run of 64 lowercase hex digits (an id's length, however it is wrapped).
+/// An id belongs in `citations`; spoken, it is read out letter by letter.
+fn speaks_a_claim_id(text: &str, known: &BTreeSet<&ClaimId>) -> bool {
+    known.iter().any(|id| text.contains(&id.to_string()))
+        || text
+            .split(|c: char| !matches!(c, '0'..='9' | 'a'..='f'))
+            .any(|run| run.len() >= 64)
+}
+
 /// Parses the model's reply and checks every reference in it: cited claims
 /// must be in the ledger, quotes must resolve to real source text, and each
 /// turn's `{{quote:N}}` placeholders are filled in from those quotes.
@@ -325,6 +378,11 @@ fn build_script(text: &str, input: &ScriptInput) -> std::result::Result<Script, 
         if let Some(unknown) = turn.citations.iter().find(|id| !known.contains(id)) {
             return Err(format!(
                 "turn {i} cites claim {unknown}, which is not in the ledger"
+            ));
+        }
+        if speaks_a_claim_id(&turn.text, &known) {
+            return Err(format!(
+                "turn {i} speaks a claim id in its text; put ids only in `citations`"
             ));
         }
         let quotes = turn
@@ -1523,5 +1581,173 @@ mod tests {
             message.contains(&format!("no turn cites the contested claim(s) {judged}")),
             "{message}"
         );
+    }
+
+    /// A ledger of `n` claims, each with one supporting piece of evidence, so
+    /// each is SingleSource and usable; and their ids in order.
+    fn single_source_ledger(n: usize) -> (Ledger, Vec<ClaimId>) {
+        let (doc, chunk) = doc_and_chunk();
+        let claims: Vec<Claim> = (0..n)
+            .map(|i| {
+                let mut claim = Claim::new(format!("Claim number {i}."));
+                claim.add_evidence(Evidence {
+                    chunk: chunk.id().clone(),
+                    source: doc.source().id(),
+                    independence_group: doc.source().independence_group.clone(),
+                    stance: Stance::Supports,
+                    basis: None,
+                });
+                claim
+            })
+            .collect();
+        let ids = claims.iter().map(|c| c.id().clone()).collect();
+        (Ledger::from_claims(claims), ids)
+    }
+
+    fn input_with(ledger: Ledger) -> ScriptInput {
+        ScriptInput {
+            ledger,
+            ..empty_input(vec![], vec![])
+        }
+    }
+
+    /// A reply with one host turn per `(text, citations)` pair.
+    fn reply(turns: &[(&str, &[ClaimId])]) -> String {
+        let turns: Vec<Value> = turns
+            .iter()
+            .map(|(text, citations)| {
+                json!({
+                    "speaker": "host", "text": text, "emotion": "neutral",
+                    "citations": citations, "quotes": [],
+                })
+            })
+            .collect();
+        json!({
+            "cast": [{ "id": "host", "name": "Ada", "role": "host" }],
+            "turns": turns,
+        })
+        .to_string()
+    }
+
+    /// Answers every call with the same reply, and counts the calls.
+    struct Fixed {
+        reply: String,
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl LlmProvider for Fixed {
+        fn id(&self) -> &str {
+            "fixed"
+        }
+        fn fingerprint(&self) -> Value {
+            Value::Null
+        }
+        fn complete(&self, _: &CompletionRequest) -> Result<Completion> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(Completion {
+                text: self.reply.clone(),
+            })
+        }
+    }
+
+    /// The reply a live llama3.1:8b gave three times on 2026-10-07: one turn,
+    /// no citations, for a ledger of nine claims. Every check but the floor
+    /// accepted it.
+    const ONE_TURN: &str = "Welcome to our show, where we explore the mysteries of the past. \
+        Today, we're discussing the 1908 Tunguska explosion. Let's start with some \
+        eyewitness accounts.";
+
+    #[test]
+    fn a_one_turn_script_citing_nothing_is_rejected_on_every_attempt() {
+        let (ledger, _) = single_source_ledger(9);
+        let llm = Fixed {
+            reply: reply(&[(ONE_TURN, &[])]),
+            calls: Default::default(),
+        };
+        let err = WriteScript { llm: &llm }
+            .run(&input_with(ledger))
+            .unwrap_err();
+        assert_eq!(llm.calls.get(), SCRIPT_ATTEMPTS.get());
+        let message = reason(&err);
+        assert!(
+            message.contains("cites 0 of 9 usable claims and has 1 turn(s)")
+                && message.contains("cite at least 5"),
+            "{message}"
+        );
+    }
+
+    /// Whether a script of `turns` accepts, for `usable` claims of which the
+    /// first `cited` are cited (in the last turn only, so the turn count is
+    /// the number of texts).
+    fn accepted(usable: usize, cited: usize, turn_count: usize) -> bool {
+        let (ledger, ids) = single_source_ledger(usable);
+        let texts = vec!["Something was said."; turn_count];
+        let mut turns: Vec<(&str, &[ClaimId])> = texts.iter().map(|t| (*t, &ids[..0])).collect();
+        if let Some(last) = turns.last_mut() {
+            last.1 = &ids[..cited];
+        }
+        accept_script(&reply(&turns), &input_with(ledger)).is_ok()
+    }
+
+    #[test]
+    fn the_floor_is_half_the_usable_claims_and_two_turns() {
+        // ceil(9 / 2) = 5 claims, two turns.
+        assert!(accepted(9, 5, 2));
+        assert!(!accepted(9, 4, 2), "one claim short");
+        assert!(!accepted(9, 9, 1), "one turn");
+        // ceil(4 / 2) = 2: an even count needs exactly half.
+        assert!(accepted(4, 2, 2));
+        assert!(!accepted(4, 1, 2));
+    }
+
+    #[test]
+    fn a_ledger_with_one_usable_claim_has_no_floor() {
+        assert!(accepted(1, 1, 1));
+        assert!(accepted(1, 0, 1));
+        assert!(accepted(0, 0, 1));
+    }
+
+    #[test]
+    fn claims_nobody_supports_are_not_counted_toward_the_floor() {
+        // Three claims with no evidence are Unsupported: nothing usable to tell.
+        let ledger = Ledger::from_claims((0..3).map(|i| Claim::new(format!("Unbacked {i}."))));
+        assert!(accept_script(&reply(&[(ONE_TURN, &[])]), &input_with(ledger)).is_ok());
+    }
+
+    /// The text of the turn that read out a claim id on 2026-10-07.
+    const SPOKEN_ID: &str = "According to one source, no impact crater was found. \
+        (citations: [27d97049c4916338b5f69ae47776487b32efb5dfa28f21eacf48433229aa8644])";
+
+    #[test]
+    fn a_claim_id_in_the_text_of_a_turn_is_rejected() {
+        let (ledger, ids) = single_source_ledger(1);
+        let input = input_with(ledger);
+        let err = accept_script(&reply(&[(SPOKEN_ID, &ids[..1])]), &input).unwrap_err();
+        assert!(err.contains("turn 0 speaks a claim id"), "{err}");
+
+        let spoken = format!("A claim, {}, was made.", ids[0]);
+        let err = accept_script(&reply(&[(&spoken, &ids[..1])]), &input).unwrap_err();
+        assert!(err.contains("turn 0 speaks a claim id"), "{err}");
+
+        let plain = SPOKEN_ID.split(" (citations").next().unwrap();
+        assert!(accept_script(&reply(&[(plain, &ids[..1])]), &input).is_ok());
+    }
+
+    #[test]
+    fn only_a_run_of_64_hex_digits_counts_as_a_spoken_id() {
+        let known = BTreeSet::new();
+        let id = "27d97049c4916338b5f69ae47776487b32efb5dfa28f21eacf48433229aa8644";
+        assert!(speaks_a_claim_id(&format!("see [{id}]"), &known));
+        assert!(!speaks_a_claim_id(&format!("see [{}]", &id[..63]), &known));
+        // A number or a short hex-looking word is ordinary speech.
+        assert!(!speaks_a_claim_id(
+            "About 80000000 trees; a decade ago.",
+            &known
+        ));
+        // A run broken by a non-hex character is not one id.
+        assert!(!speaks_a_claim_id(
+            &format!("{}g{}", &id[..32], &id[32..]),
+            &known
+        ));
     }
 }

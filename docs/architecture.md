@@ -512,6 +512,12 @@ accounts, say which side the sources favour or that it is unresolved, explain
 why, and never state either side as settled. Every judged claim must be cited by
 some turn; a script that leaves one out is rejected naming it (a live script
 once dropped both of its judged claims).
+A script must also cite at least half of the usable claims (`ceil(n / 2)`, for a
+ledger of two or more) across at least two turns, and no turn's text may speak a
+claim id; either is rejected and retried like any other (a live script once
+answered with one uncited turn, and another read a claim id aloud). `ScriptMetrics`
+stays pure; the check lives in `check_coverage` in
+[`stages/script.rs`](../crates/podling-core/src/stages/script.rs).
 
 ## Episode audio
 
