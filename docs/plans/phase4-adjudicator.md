@@ -146,7 +146,7 @@ stage reads the verdict.
 ### Step 1 — verdict-contracts (., rust, normal)
 Tooling: implementer · gates code-reviewer, api-reviewer, idiom-reviewer · skills language-aware-planning
 Depends on: none
-- [ ] 1.1 Add `crates/podling-types/src/verdict.rs`:
+- [x] 1.1 Add `crates/podling-types/src/verdict.rs`:
   - `Favours { Supporting, Contradicting, Unresolved }`, snake_case.
   - `EvidenceRef { chunk: ChunkId, stance: Stance, premise: Option<TextSpan> }`. `premise` is skipped when `None`. It names one `Evidence` of the claim: `premise` is the `EvidenceBasis::Nli` span, and `None` means the evidence has no span.
   - `Verdict { claim: ClaimId, favours: Favours, explanation: String, cites: Vec<EvidenceRef>, fallback: Option<String> }`, built through `Verdict::new(..) -> Result<Self, InvalidVerdict>`, with deserialisation going through the same check (`try_from` a raw struct).
@@ -157,30 +157,33 @@ Depends on: none
   - `fallback.is_some()` ⇒ `favours == Unresolved`.
   - `cites` is non-empty, sorted and de-duplicated.
   → accept: unit tests build each invalid shape and get `Err`; the valid ones round-trip through serde.
-- [ ] 1.2 Add `Verdicts(Vec<Verdict>)`. It serialises as a bare JSON array (`#[serde(try_from = "Vec<Verdict>", into = "Vec<Verdict>")]`); `Verdicts::new` sorts by claim id and rejects a duplicate claim. Export from `lib.rs`. → accept: `Verdicts::default()` serialises as `[]`; two verdicts for one claim → `Err`.
+- [x] 1.2 Add `Verdicts(Vec<Verdict>)`. It serialises as a bare JSON array (`#[serde(try_from = "Vec<Verdict>", into = "Vec<Verdict>")]`); `Verdicts::new` sorts by claim id and rejects a duplicate claim. Export from `lib.rs`. → accept: `Verdicts::default()` serialises as `[]`; two verdicts for one claim → `Err`.
 > **Amended during execution:** 1.3 and 1.4 moved into step 2, where the pipeline
 > starts writing `verdicts.json`. Adding the kind on its own leaves the pipeline
 > and CLI tests that iterate `ArtifactKind::ALL` red until a file is written,
 > and no unit merges red. Step 1 merged the types and their tests (1.1, 1.2, 1.5).
-- [ ] 1.3 `ArtifactKind::Verdicts` (`as_str` = `verdicts`), placed after `Ledger` in `ALL`; `schema::of` → `enveloped::<Verdicts>()`. → accept: `schema::all()` has 8 kinds.
-- [ ] 1.4 `SCHEMA_VERSION` 3→4. Add `schema_snapshot__verdicts.snap` and accept it with insta. Pin version 4 in `schema_version_is_pinned`. → accept: `cargo test -p podling-types` is green, and the only new snapshot is verdicts.
-- [ ] 1.5 Round-trip test of `Envelope<Verdicts>` in `tests/roundtrip.rs`. → accept: passes.
+>
+> **Ticked 2026-10-09 by /sync-docs:** steps 1–2 shipped in cd352ce (stage 3876528);
+> 2.9 rests on 3876528's byte-for-byte claim plus the 2.6 golden test.
+- [x] 1.3 `ArtifactKind::Verdicts` (`as_str` = `verdicts`), placed after `Ledger` in `ALL`; `schema::of` → `enveloped::<Verdicts>()`. → accept: `schema::all()` has 8 kinds.
+- [x] 1.4 `SCHEMA_VERSION` 3→4. Add `schema_snapshot__verdicts.snap` and accept it with insta. Pin version 4 in `schema_version_is_pinned`. → accept: `cargo test -p podling-types` is green, and the only new snapshot is verdicts.
+- [x] 1.5 Round-trip test of `Envelope<Verdicts>` in `tests/roundtrip.rs`. → accept: passes.
 
 ### Step 2 — adjudicate-stage (., rust, high)
 Tooling: implementer · gates code-reviewer, security-auditor, idiom-reviewer, observability-reviewer · skills language-aware-planning
 Depends on: verdict-contracts
-- [ ] 2.1 `plugin/llm.rs`:
+- [x] 2.1 `plugin/llm.rs`:
   - Add `LlmTask::AdjudicateClaim`. Input: `{ "claim": {id, text}, "evidence": [AdjudicationEvidence] }`, where `AdjudicationEvidence { n, stance, source_title, independence_group, text }`. Output: `VerdictDraft { claim, favours, explanation, cites: [n] }`.
   - Add `pub const ADJUDICATE_PROMPT_VERSION: u32 = 1`. It is separate from `PROMPT_VERSION`, so later adjudicator prompt changes don't force re-extraction.
 
   → accept: compiles; the types are documented.
-- [ ] 2.2 `FakeLlm` answers `AdjudicateClaim` deterministically:
+- [x] 2.2 `FakeLlm` answers `AdjudicateClaim` deterministically:
   - `favours: unresolved`, citing the first index of each stance present.
   - Explanation: "The <group> source and the <group> source give different accounts, and the sources do not settle which is right." No quotation marks.
   - Bump the fake's fingerprint version 3→4.
 
   → accept: unit test; the reply validates.
-- [ ] 2.3 New `stages/adjudicate.rs`.
+- [x] 2.3 New `stages/adjudicate.rs`.
 
   `AdjudicateInput { cases: Vec<Case> }`, built by `AdjudicateInput::new(&Ledger, &[Chunk], &[Document])` from **Contested entries only**. A `Case` holds the claim and its numbered evidence texts:
   - `Nli`: the premise span's text.
@@ -201,29 +204,29 @@ Depends on: verdict-contracts
   - Indices are resolved to `EvidenceRef`.
 
   → accept: unit tests for each rejection reason name it in the error.
-- [ ] 2.4 Fallback and logging.
+- [x] 2.4 Fallback and logging.
   - Only `CoreError::InvalidProviderOutput` from the case becomes `Verdict { favours: Unresolved, cites: first ref of each non-empty side, explanation: "The sources disagree, and the adjudicator gave no usable verdict.", fallback: Some(reason) }`.
   - Every other error propagates and fails the stage, so nothing gets cached.
   - `tracing::info!` logs `contested`, `calls`, `supporting`, `contradicting`, `unresolved` and `fallbacks`; `warn!` logs each fallback with the claim id and reason.
 
   → accept: a test with a provider that always replies with garbage gives `Unresolved` + `fallback`, after exactly 2 calls; a provider returning `CoreError::Provider` fails the stage.
-- [ ] 2.5 `pipeline.rs`: run `Adjudicate` through `cached()` after `ledger` and before `script`, then `write(out_dir, ArtifactKind::Verdicts, &verdicts)`. → accept: the stage order is ingest, chunk, extract_claims, [cluster_claims, score_stances], ledger, adjudicate, script, analyse.
-- [ ] 2.6 `tests/pipeline.rs`:
+- [x] 2.5 `pipeline.rs`: run `Adjudicate` through `cached()` after `ledger` and before `script`, then `write(out_dir, ArtifactKind::Verdicts, &verdicts)`. → accept: the stage order is ingest, chunk, extract_claims, [cluster_claims, score_stances], ledger, adjudicate, script, analyse.
+- [x] 2.6 `tests/pipeline.rs`:
   - `STAGES` gains `adjudicate`.
   - `a_contradicting_source_contests_both_claims` lists it.
   - `no_nli_config_writes_todays_artifacts` compares every file **present in `fixtures/golden`** (the 7 pre-phase-4 kinds) and asserts `verdicts.json`'s body is `[]`.
 
   → accept: the golden test is green with no golden file edited.
-- [ ] 2.7 `podling-cli/tests/cli.rs`:
+- [x] 2.7 `podling-cli/tests/cli.rs`:
   - `STAGES` gains `adjudicate`, so there are 7 rows and `"7 entries"`.
   - The schema-export list gains `verdicts`.
 
   → accept: `cargo test -p podling-cli` is green.
-- [ ] 2.8 Test `no_contested_claims_means_no_adjudicator_call`: a counting LLM on the `paraphrase` fixture (grounding on, no Contested claims) and on the default fixture (no grounding) records zero `AdjudicateClaim` requests, and `verdicts.json` is `[]`. → accept: passes.
-- [ ] 2.9 Golden byte check outside the test suite: run `podling run --no-cache` for `tests/fixtures/episode.toml` and `examples/tunguska/episode.toml`, then diff the bodies against `$CLAUDE_JOB_DIR/tmp/golden/{fixtures,tunguska}`. Only `schema_version` lines may differ. → accept: the diff is empty apart from those lines.
-- [ ] 2.10 Test `contradiction_fixture_has_one_verdict_per_contested_claim`: the verdicts' claim ids equal the ledger's Contested claim ids, and every verdict cites both sides. → accept: passes.
-- [ ] 2.11 Test `a_cached_run_makes_no_adjudicator_call`: a second run with the same cache is a hit for `adjudicate`. → accept: passes.
-- [ ] 2.12 Test that injected source text never reaches the adjudicator's `instructions`. → accept: passes.
+- [x] 2.8 Test `no_contested_claims_means_no_adjudicator_call`: a counting LLM on the `paraphrase` fixture (grounding on, no Contested claims) and on the default fixture (no grounding) records zero `AdjudicateClaim` requests, and `verdicts.json` is `[]`. → accept: passes.
+- [x] 2.9 Golden byte check outside the test suite: run `podling run --no-cache` for `tests/fixtures/episode.toml` and `examples/tunguska/episode.toml`, then diff the bodies against `$CLAUDE_JOB_DIR/tmp/golden/{fixtures,tunguska}`. Only `schema_version` lines may differ. → accept: the diff is empty apart from those lines.
+- [x] 2.10 Test `contradiction_fixture_has_one_verdict_per_contested_claim`: the verdicts' claim ids equal the ledger's Contested claim ids, and every verdict cites both sides. → accept: passes.
+- [x] 2.11 Test `a_cached_run_makes_no_adjudicator_call`: a second run with the same cache is a hit for `adjudicate`. → accept: passes.
+- [x] 2.12 Test that injected source text never reaches the adjudicator's `instructions`. → accept: passes.
 
 ### Step 3 — script-integration (., rust, high)
 Tooling: implementer · gates code-reviewer, idiom-reviewer · skills language-aware-planning
