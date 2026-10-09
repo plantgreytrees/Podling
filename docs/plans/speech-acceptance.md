@@ -112,9 +112,10 @@ Needs the GPU sidecar and an LLM (see the live-run notes in `phase5-tts-audio.md
 
 **Stopped 2026-10-07, inconclusive.** The off arm's script named neither name at 10 minutes or at
 30 minutes twice (the second with a new shared cache). Only the off arm was run, since the on arm
-shares its script. The script stage writes one turn at version 12, a regression: see
-`phase5-tts-audio.md` "Lexicon A/B". 2.2–2.4 and step 3 wait for a fix to the script stage, then
-run unchanged.
+shares its script. Each try got a one-turn script. That is llama3.1:8b's variance, which the
+script stage accepted because it had no coverage check, not a change made at version 12 (see
+`phase5-tts-audio.md` "Lexicon A/B" and `investigate-script-short-accepted.md`). The fix,
+isa-guard, merged at 3227adf (script version 14). 2.2–2.4 and step 3 now run unchanged.
 
 ### Step 3 — sa-listen (., user, normal)
 Depends on: sa-live
