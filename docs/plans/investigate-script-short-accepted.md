@@ -130,9 +130,9 @@ Needs the native GPU Ollama on `127.0.0.1:11435` with `OLLAMA_CONTEXT_LENGTH=163
 
 ### Step 3 — isa-docs (., none, normal)
 Depends on: none
-- [ ] 3.1 In `docs/plans/phase5-tts-audio.md`, change "Lexicon A/B (speech-acceptance, 2026-10-07): inconclusive" so that its *Why* bullet no longer says the script stage regressed at version 12. Say instead that llama3.1:8b sometimes writes a one- or two-turn script, measured in `story-driven-script.md` "Baseline table". The stage accepted it because it had no coverage check, and the same input replayed later wrote 9–12 turns naming Kulik. Point to this plan → accept: no sentence in the section calls it a regression or blames version 12.
-- [ ] 3.2 In `docs/plans/speech-acceptance.md`, change the "Stopped 2026-10-07" note the same way. 2.2–2.4 and step 3 now wait for isa-guard, then run unchanged → accept: the note names `investigate-script-short-accepted` and no longer says "a regression".
-- [ ] 3.3 Move tracker row `speech-acceptance/sa-live` to BLOCKED again (via `tracker.mjs`), with evidence naming this plan in place of the version-12 claim → accept: `tracker.mjs status` shows the new evidence.
+- [x] 3.1 In `docs/plans/phase5-tts-audio.md`, change "Lexicon A/B (speech-acceptance, 2026-10-07): inconclusive" so that its *Why* bullet no longer says the script stage regressed at version 12. Say instead that llama3.1:8b sometimes writes a one- or two-turn script, measured in `story-driven-script.md` "Baseline table". The stage accepted it because it had no coverage check, and the same input replayed later wrote 9–12 turns naming Kulik. Point to this plan → accept: no sentence in the section calls it a regression or blames version 12.
+- [x] 3.2 In `docs/plans/speech-acceptance.md`, change the "Stopped 2026-10-07" note the same way. 2.2–2.4 and step 3 now wait for isa-guard, then run unchanged → accept: the note names `investigate-script-short-accepted` and no longer says "a regression".
+- [x] 3.3 Move tracker row `speech-acceptance/sa-live` to BLOCKED again (via `tracker.mjs`), with evidence naming this plan in place of the version-12 claim → accept: `tracker.mjs status` shows the new evidence.
 
 ### Step 4 — isa-followups (., none, normal) — follow-up row, not driven by this run
 Depends on: isa-measure
