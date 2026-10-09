@@ -321,7 +321,8 @@ fn completion(content: &Value) -> (u16, String) {
 }
 
 /// A stand-in model: every chunk is one claim, and the script cites the first
-/// claim and quotes the first sentence of the first source.
+/// claim and quotes the first sentence of the first source, then closes with a
+/// turn citing the rest (the script stage rejects one that cites under half).
 fn tiny_model(request: &Value) -> (u16, String) {
     let instructions = request["messages"][0]["content"].as_str().unwrap();
     let input: Value =
@@ -331,6 +332,13 @@ fn tiny_model(request: &Value) -> (u16, String) {
         return completion(&json!({ "claims": [{ "text": text }] }));
     }
     let claim = &input["ledger"][0]["id"];
+    let rest: Vec<&Value> = input["ledger"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .skip(1)
+        .map(|entry| &entry["id"])
+        .collect();
     let source = input["sources"]
         .as_array()
         .unwrap()
@@ -346,6 +354,12 @@ fn tiny_model(request: &Value) -> (u16, String) {
             "emotion": "neutral",
             "citations": [claim],
             "quotes": [{ "source": source["source"], "sentence": first["sentence"] }],
+        }, {
+            "speaker": "host",
+            "text": "That is what the sources give us.",
+            "emotion": "neutral",
+            "citations": rest,
+            "quotes": [],
         }],
     }))
 }

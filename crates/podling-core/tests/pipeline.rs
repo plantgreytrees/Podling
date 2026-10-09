@@ -684,6 +684,9 @@ fn without_embedding_and_nli_no_stance_stage_runs() {
 /// ordered the script request's claims by source and bumped `script` to 13:
 /// `script` moved, and so did `analyse`, because the fake script now speaks
 /// the claims in source order; `extract_claims` did not.
+/// investigate-script-short-accepted bumped `script` to 14 (a coverage floor
+/// and a spoken-claim-id check, both in the stage's validator): only `script`
+/// moved, since the fake script is unchanged and still passes both.
 const NO_NLI_KEYS: [(&str, &str); 7] = [
     (
         "ingest",
@@ -707,7 +710,7 @@ const NO_NLI_KEYS: [(&str, &str); 7] = [
     ),
     (
         "script",
-        "aa4bfe5c7aa0ec7780fe427818f8113e3826d06ef6e7bc93fe2fada2419823e5",
+        "24de78f811abd74c1d32d61a775abf2cdb87486b287814f0989023923e5fcf41",
     ),
     (
         "analyse",
