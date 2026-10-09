@@ -600,15 +600,19 @@ not made.
   | 3 | 30 | new shared cache | 9 | 1 turn, 101 tokens | neither | 1 chunk, take 0, 0 ‰, verified |
 
   Try 3 used a new cache because the same inputs would have hit the cached script from try 2.
-- *Why: the script stage regressed.* With the same sources, model and claim count (9), the
-  2026-10-05 runs above at script version 10 wrote 10–18 turns and named Kulik. At version 12 every
-  try writes one host turn. In try 2 the turn's spoken text ends with
-  "(citations: [27d97049…])": the claim hash was synthesised, and Whisper's mismatch on it explains
-  the 112 ‰. Versions 11 (1dcb270) and 12 (cd738bd) changed the prompt. 12 added "every judged
-  `contested` entry must be cited" and removed the rule on where ids go; later commits added
-  three attempts with rejection feedback (5d1ce63) without a version bump. Which change causes
-  the one-turn scripts is not yet proven.
-- *Next.* Fix the script stage (an `/investigate`), then rerun this A/B unchanged: the tool
+- *Why: the stage accepted a thin script; it did not regress.* llama3.1:8b sometimes answers
+  the script request with one or two short turns. That was measured on the same server at
+  version 12 and at version 13 (`story-driven-script.md` "Baseline table" and "Arc table": 3/5
+  Tunguska scripts were 2 turns and 37 words). The stage accepted these because nothing checked
+  how much of the ledger a script covered. Replaying try 3's exact input on the same binary
+  wrote 9–12 turns naming Kulik in 4 of 5 replays, and a rebuilt version 10 also wrote long
+  scripts. So the one-turn tries were the model's variance, not a version change. In try 2 the
+  turn's spoken text ends with "(citations: [27d97049…])": the claim hash was synthesised, and
+  Whisper's mismatch on it explains the 112 ‰. Diagnosis and fix:
+  [`investigate-script-short-accepted.md`](investigate-script-short-accepted.md). Script
+  version 14 (3227adf) rejects and retries a script that cites under half the usable claims or
+  has under 2 turns, and a turn that speaks a claim id.
+- *Next.* Rerun this A/B unchanged on script version 14: the tool
   (`crates/podling-cli/examples/lexicon_ab.rs`) and the episode copies are ready.
 
 ## Scope Steps (executable core)
